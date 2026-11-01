@@ -1,5 +1,5 @@
 // Клиент API. В разработке — относительный /api через прокси Vite,
-// в продакшене — VITE_API_URL (например, https://api.vladinc.ru).
+// в продакшене — VITE_API_URL (например, https://api.balesnolandia.vladislavb.ru).
 const BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 export class ApiError extends Error {

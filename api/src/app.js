@@ -6,6 +6,7 @@ import websocket from '@fastify/websocket';
 import { config } from './config.js';
 import { HttpError } from './lib/errors.js';
 import { allowedOrigins } from './lib/settings.js';
+import { VERSION } from './lib/version.js';
 import { wsRoutes } from './routes/ws.js';
 import { authRoutes } from './routes/auth.js';
 import { commonRoutes } from './routes/common.js';
@@ -52,7 +53,7 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
     return reply.status(500).send({ error: 'server_error', message: 'Ошибка сервера' });
   });
 
-  app.get('/api/health', async () => ({ ok: true, time: new Date().toISOString() }));
+  app.get('/api/health', async () => ({ ok: true, version: VERSION, time: new Date().toISOString() }));
 
   await app.register(wsRoutes);
   await app.register(authRoutes, { prefix: '/api' });

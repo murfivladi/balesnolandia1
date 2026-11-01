@@ -1002,7 +1002,7 @@ export const IT = {
   "Адреса и почта": "Indirizzi e posta",
   "Адреса": "Indirizzi",
   "Адрес сайта": "Indirizzo del sito",
-  "Для ссылок в QR, чеках и письмах. Пусто — https://vladinc.ru/balesnolandia": "Per i link nei QR, negli scontrini e nelle email. Vuoto — https://vladinc.ru/balesnolandia",
+  "Для ссылок в QR, чеках и письмах. Пусто — адрес из деплоя": "Per i link nei QR, negli scontrini e nelle email. Vuoto — indirizzo del deploy",
   "Дополнительные адреса фронтенда (CORS)": "Indirizzi frontend aggiuntivi (CORS)",
   "Через запятую. Адрес сайта разрешён всегда.": "Separati da virgola. L'indirizzo del sito è sempre consentito.",
   "Почта (SMTP)": "Posta (SMTP)",

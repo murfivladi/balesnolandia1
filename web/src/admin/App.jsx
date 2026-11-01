@@ -690,12 +690,12 @@ function ServerSettings() {
           toast(t('Сохранено'), 'ok');
         }}>
           <h2>{t('Адреса')}</h2>
-          <Input label={t('Адрес сайта')} placeholder="https://vladinc.ru/balesnolandia" value={f.public_web_url} onChange={set('public_web_url')} hint={t('Для ссылок в QR, чеках и письмах. Пусто — https://vladinc.ru/balesnolandia')} />
-          <Input label={t('Дополнительные адреса фронтенда (CORS)')} placeholder="https://www.vladinc.ru" value={f.cors_origins} onChange={set('cors_origins')} hint={t('Через запятую. Адрес сайта разрешён всегда.')} />
+          <Input label={t('Адрес сайта')} placeholder="https://balesnolandia.vladislavb.ru" value={f.public_web_url} onChange={set('public_web_url')} hint={t('Для ссылок в QR, чеках и письмах. Пусто — адрес из деплоя')} />
+          <Input label={t('Дополнительные адреса фронтенда (CORS)')} placeholder="https://www.balesnolandia.vladislavb.ru" value={f.cors_origins} onChange={set('cors_origins')} hint={t('Через запятую. Адрес сайта разрешён всегда.')} />
           <h2 style={{ marginTop: 8 }}>{t('Почта (SMTP)')}</h2>
           <p className="small muted">{t('Пока SMTP не задан, письма с кодами входа пишутся в лог сервера — входите по паролю.')}</p>
           <div className="grid grid-2">
-            <Input label={t('SMTP-сервер')} placeholder="smtp.vladinc.ru" value={f.smtp_host} onChange={set('smtp_host')} />
+            <Input label={t('SMTP-сервер')} placeholder="smtp.vladislavb.ru" value={f.smtp_host} onChange={set('smtp_host')} />
             <Input label={t('Порт')} type="number" min={1} max={65535} value={f.smtp_port} onChange={set('smtp_port')} />
           </div>
           <label className="check"><input type="checkbox" checked={!!f.smtp_secure} onChange={set('smtp_secure')} /> {t('SSL/TLS (порт 465)')}</label>
@@ -703,7 +703,7 @@ function ServerSettings() {
             <Input label={t('Логин')} autoComplete="off" value={f.smtp_user} onChange={set('smtp_user')} />
             <Input label={t('Пароль')} type="password" autoComplete="new-password" placeholder={f.smtp_password_set ? '••••••••' : ''} value={f.smtp_password} onChange={set('smtp_password')} hint={f.smtp_password_set ? t('Задан. Оставьте пустым, чтобы не менять.') : null} />
           </div>
-          <Input label={t('Отправитель')} placeholder="Балесноландия <no-reply@vladinc.ru>" value={f.mail_from} onChange={set('mail_from')} />
+          <Input label={t('Отправитель')} placeholder="Балесноландия <no-reply@vladislavb.ru>" value={f.mail_from} onChange={set('mail_from')} />
         </Form>
       </div>
       <div className="stack">

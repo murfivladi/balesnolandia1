@@ -1,4 +1,11 @@
-import 'dotenv/config';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+
+// Настройки: .env (разработка) и bln.env рядом с server.mjs — его собирает деплой из секретов
+// и загружает по FTP вместе с кодом.
+export const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: [path.resolve('.env'), path.resolve('bln.env'), path.join(APP_DIR, '.env'), path.join(APP_DIR, 'bln.env')], quiet: true });
 
 const env = process.env;
 const list = (v) => (v || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -15,12 +22,18 @@ export const config = {
     password: env.DB_PASSWORD || 'bln',
     database: env.DB_NAME || 'bln',
   },
-  jwtSecret: env.JWT_SECRET || 'dev-secret-change-me',
-  // Для продакшена всё по умолчанию настроено на vladinc.ru; адреса и почта уточняются в админке.
-  cookieDomain: env.COOKIE_DOMAIN || (prod ? '.vladinc.ru' : undefined),
+  // В продакшене без JWT_SECRET секрет создаётся при первом запуске и хранится в базе (lib/secrets.js).
+  jwtSecret: env.JWT_SECRET || (prod ? null : 'dev-secret-change-me'),
+  // Миграции при старте — по умолчанию в продакшене, чтобы деплой был только загрузкой файлов.
+  migrateOnStart: env.MIGRATE_ON_START ? env.MIGRATE_ON_START === 'true' : prod,
+  // Перезапуск после новой загрузки (файл VERSION изменился) — процесс завершается, менеджер процессов поднимает заново.
+  restartOnDeploy: (env.RESTART_ON_DEPLOY || 'on') === 'on',
+  // Адреса пишет в .env деплой (deploy/setup-server.sh); адрес сайта и почта уточняются в админке.
+  // Cookie по умолчанию — только для хоста API: браузер шлёт их с сайта, потому что это один сайт (vladislavb.ru).
+  cookieDomain: env.COOKIE_DOMAIN || undefined,
   cookieSecure: env.COOKIE_SECURE ? env.COOKIE_SECURE === 'true' : prod,
-  corsOrigins: list(env.CORS_ORIGINS || (prod ? 'https://vladinc.ru,https://www.vladinc.ru' : 'http://localhost:5173')),
-  publicWebUrl: (env.PUBLIC_WEB_URL || (prod ? 'https://vladinc.ru/balesnolandia' : 'http://localhost:5173/balesnolandia')).replace(/\/$/, ''),
+  corsOrigins: list(env.CORS_ORIGINS || (prod ? 'https://balesnolandia.vladislavb.ru' : 'http://localhost:5173')),
+  publicWebUrl: (env.PUBLIC_WEB_URL || (prod ? 'https://balesnolandia.vladislavb.ru' : 'http://localhost:5173')).replace(/\/$/, ''),
   adminEmails: list(env.ADMIN_EMAILS).map((e) => e.toLowerCase()),
   mail: {
     transport: env.MAIL_TRANSPORT || 'console',
@@ -29,11 +42,8 @@ export const config = {
     secure: env.SMTP_SECURE !== 'false',
     user: env.SMTP_USER,
     password: env.SMTP_PASSWORD,
-    from: env.MAIL_FROM || 'Балесноландия <no-reply@vladinc.ru>',
+    from: env.MAIL_FROM || 'Балесноландия <no-reply@vladislavb.ru>',
   },
   gameClock: (env.GAME_CLOCK || 'on') === 'on',
 };
 
-if (config.env === 'production' && config.jwtSecret === 'dev-secret-change-me') {
-  throw new Error('JWT_SECRET must be set in production');
-}

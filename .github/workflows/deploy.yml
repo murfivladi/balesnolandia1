@@ -1,6 +1,8 @@
 name: Deploy
 
-# push в main → тесты → сборка фронтенда → FTP на shared hosting → API на VPS → миграции → pm2 reload
+# push в main → тесты → сборка → FTP: сайт и API на хостинг (Vladhost).
+# На сервере ничего не запускается: API при старте сам применяет миграции,
+# а после загрузки новой версии сам перезапускается.
 on:
   push:
     branches: [main]
@@ -45,13 +47,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     env:
-      # Обязательные секреты: FTP_HOST, FTP_USER, FTP_PASSWORD, FTP_DIR, VPS_HOST, VPS_USER и VPS_PASS (или VPS_SSH_KEY).
-      # Остальное — со значениями по умолчанию; адреса сайта и почта настраиваются в админке.
-      API_DOMAIN: ${{ vars.API_DOMAIN || 'bln-api.vladinc.ru' }}
-      APP_DIR: ${{ secrets.VPS_APP_DIR || '/srv/balesnolandia' }}
-      SSH_TARGET: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
-      # Пароль VPS: вход по SSH (если нет VPS_SSH_KEY) и sudo (если VPS_USER не root)
-      SSHPASS: ${{ secrets.VPS_PASS }}
+      SITE_DOMAIN: ${{ vars.SITE_DOMAIN || 'balesnolandia.vladislavb.ru' }}
+      API_DOMAIN: ${{ vars.API_DOMAIN || 'api.balesnolandia.vladislavb.ru' }}
+      # Vladhost: FTPS (явный TLS). Если сертификат FTP-сервера не проходит проверку — переменная FTP_SECURITY=loose.
+      FTP_PROTOCOL: ${{ vars.FTP_PROTOCOL || 'ftps' }}
+      FTP_SECURITY: ${{ vars.FTP_SECURITY || 'strict' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -60,71 +60,106 @@ jobs:
           cache: npm
       - run: npm ci
 
-      - name: Адреса API
+      - name: Проверка секретов
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_API_HOST: ${{ secrets.FTP_API_HOST }}
+          FTP_API_USER: ${{ secrets.FTP_API_USER }}
+          FTP_API_PASSWORD: ${{ secrets.FTP_API_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
-          echo "API_URL=${{ secrets.API_URL }}" >> "$GITHUB_ENV"
-          echo "WS_URL=${{ secrets.WS_URL }}" >> "$GITHUB_ENV"
-          [ -n "${{ secrets.API_URL }}" ] || echo "API_URL=https://$API_DOMAIN" >> "$GITHUB_ENV"
-          [ -n "${{ secrets.WS_URL }}" ] || echo "WS_URL=wss://$API_DOMAIN/ws" >> "$GITHUB_ENV"
+          missing=""
+          for k in FTP_HOST FTP_USER FTP_PASSWORD FTP_API_HOST FTP_API_USER FTP_API_PASSWORD DB_NAME DB_PASSWORD; do
+            [ -n "${!k}" ] || missing="$missing $k"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Не заданы секреты:$missing (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
 
-      - name: Сборка фронтенда
-        run: VITE_API_URL="$API_URL" VITE_WS_URL="$WS_URL" npm run build
+      - name: Сборка сайта
+        run: npm run build -w web
+        env:
+          VITE_API_URL: https://${{ env.API_DOMAIN }}
+          VITE_WS_URL: wss://${{ env.API_DOMAIN }}/ws
 
-      - name: Фронтенд → shared hosting (FTP)
+      - name: Сборка API (один файл server.mjs + миграции + bln.env)
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+        run: |
+          npm run build -w api
+          # Настройки для первого запуска; остальное (почта, адреса) — в админке.
+          # PORT не пишем: его передаёт панель хостинга.
+          {
+            echo "NODE_ENV=production"
+            echo "DB_HOST=${DB_HOST:-127.0.0.1}"
+            echo "DB_PORT=${DB_PORT:-3306}"
+            echo "DB_NAME=$DB_NAME"
+            echo "DB_USER=${DB_USER:-$DB_NAME}"
+            echo "DB_PASSWORD=$DB_PASSWORD"
+            echo "ADMIN_EMAILS=$ADMIN_EMAILS"
+            echo "PUBLIC_WEB_URL=https://$SITE_DOMAIN"
+            echo "CORS_ORIGINS=https://$SITE_DOMAIN"
+          } > api/dist/bln.env
+          # Метка версии выкладывается последней — по ней API понимает, что пора перезапуститься.
+          mkdir -p release-version
+          echo "$GITHUB_SHA" > release-version/VERSION
+
+      - name: Сайт → FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_HOST }}
+          port: ${{ secrets.FTP_PORT || 21 }}
           username: ${{ secrets.FTP_USER }}
           password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          security: ${{ env.FTP_SECURITY }}
           local-dir: ./web/dist/
-          server-dir: ${{ secrets.FTP_DIR }}
+          server-dir: ${{ secrets.FTP_DIR || './' }}
 
-      - name: Доступ к VPS (ключ или пароль)
-        env:
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      - name: API → FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_API_HOST }}
+          port: ${{ secrets.FTP_API_PORT || 21 }}
+          username: ${{ secrets.FTP_API_USER }}
+          password: ${{ secrets.FTP_API_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          security: ${{ env.FTP_SECURITY }}
+          local-dir: ./api/dist/
+          server-dir: ${{ secrets.FTP_API_DIR || './' }}
+
+      - name: API → FTP (метка версии)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_API_HOST }}
+          port: ${{ secrets.FTP_API_PORT || 21 }}
+          username: ${{ secrets.FTP_API_USER }}
+          password: ${{ secrets.FTP_API_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          security: ${{ env.FTP_SECURITY }}
+          local-dir: ./release-version/
+          server-dir: ${{ secrets.FTP_API_DIR || './' }}
+          state-name: .ftp-deploy-version.json
+
+      - name: Проверка API и сайта
         run: |
-          install -m 700 -d ~/.ssh
-          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
-          if [ -n "$VPS_SSH_KEY" ]; then
-            printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
-            chmod 600 ~/.ssh/deploy_key
-            echo "SSH=ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes $SSH_TARGET" >> "$GITHUB_ENV"
-          elif [ -n "$SSHPASS" ]; then
-            sudo apt-get install -y -qq sshpass >/dev/null
-            echo "SSH=sshpass -e ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no $SSH_TARGET" >> "$GITHUB_ENV"
-          else
-            echo "Задайте секрет VPS_PASS (пароль) или VPS_SSH_KEY (ключ)"; exit 1
+          for i in $(seq 1 24); do
+            v=$(curl -fsS "https://$API_DOMAIN/api/health" 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+            if [ "$v" = "$GITHUB_SHA" ]; then echo "API работает, версия $v"; break; fi
+            sleep 5
+          done
+          if [ "$v" != "$GITHUB_SHA" ]; then
+            echo "::error::API на https://$API_DOMAIN не отвечает новой версией (сейчас: ${v:-нет ответа})."
+            echo "Проверьте в панели сайта $API_DOMAIN вкладку «Среда»: Node.js, команда запуска «node server.mjs», журнал приложения."
+            exit 1
           fi
-
-      - name: Проверка входа на VPS
-        run: |
-          $SSH 'echo "Вход на VPS: $(id -un)@$(hostname)"'
-
-      - name: Код API → VPS
-        run: |
-          tar czf - --exclude='api/.env' --exclude='node_modules' \
-              package.json package-lock.json ecosystem.config.cjs api shared deploy web/package.json \
-            | $SSH 'rm -rf ~/.bln-release && mkdir -p ~/.bln-release && tar xzf - -C ~/.bln-release'
-
-      - name: Сервер — nginx, сертификат, база, .env
-        run: |
-          printf '%s\n' "$SSHPASS" | $SSH "bash ~/.bln-release/deploy/as-root.sh env \
-            RELEASE_DIR=\$HOME/.bln-release DOMAIN='$API_DOMAIN' APP_DIR='$APP_DIR' APP_USER=\$(id -un) \
-            ADMIN_EMAILS='${{ secrets.ADMIN_EMAILS }}' CERTBOT_EMAIL='${{ secrets.CERTBOT_EMAIL }}' \
-            bash \$HOME/.bln-release/deploy/setup-server.sh"
-
-      - name: Зависимости, миграции, перезапуск
-        run: |
-          $SSH bash -se <<EOF
-          set -euo pipefail
-          cd "$APP_DIR"
-          npm ci --omit=dev --workspace api --include-workspace-root=false --no-audit --no-fund
-          npm run migrate --workspace api
-          pm2 startOrReload ecosystem.config.cjs --update-env
-          pm2 save
-          EOF
-
-      - name: Проверка API
-        run: |
-          for i in 1 2 3 4 5 6; do curl -fsS "$API_URL/api/health" && exit 0; sleep 5; done
-          echo "API не отвечает по $API_URL" && exit 1
+          curl -fsS -o /dev/null "https://$SITE_DOMAIN/" && echo "Сайт открывается: https://$SITE_DOMAIN"

@@ -4,6 +4,7 @@ import { needAdmin, actorOf, rolesOf } from '../lib/auth.js';
 import { getSettings, setSettings, DEFAULTS, SECRET_KEYS, resetSettingsCache, webUrl } from '../lib/settings.js';
 import { sendMail, verifyMail } from '../lib/mail.js';
 import { config } from '../config.js';
+import { VERSION } from '../lib/version.js';
 import { post, sys, reverse, clearSystemCache, recomputeBalance } from '../lib/ledger.js';
 import { notify } from '../lib/notify.js';
 import { audit } from '../lib/audit.js';
@@ -131,6 +132,7 @@ export async function adminRoutes(app) {
     const s = await getSettings();
     const db = await one('SELECT VERSION() AS v');
     return {
+      version: VERSION,
       node: process.version,
       db: db.v,
       env: config.env,

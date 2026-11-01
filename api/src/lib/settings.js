@@ -40,7 +40,7 @@ export const DEFAULTS = {
 };
 
 /** Секреты: в админку не отдаются, в экспорт не попадают. */
-export const SECRET_KEYS = ['smtp_password'];
+export const SECRET_KEYS = ['smtp_password', 'jwt_secret'];
 
 let cache = null;
 let cacheAt = 0;
