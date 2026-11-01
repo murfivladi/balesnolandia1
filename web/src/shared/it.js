@@ -1,6 +1,8 @@
 // Traduzione italiana. Chiave — stringa russa dell'interfaccia o del server.
 // Segnaposto: {name}, {n}, {sum}, {x} e simili restano invariati.
 export const IT = {
+  'Распечатать карту (58 мм)': 'Stampa la carta (58 mm)',
+  'PIN никому не сообщайте. Касса принимает карту по QR, штрихкоду или номеру.': 'Non comunicare il PIN a nessuno. La cassa accetta la carta tramite QR, codice a barre o numero.',
   // ——— Comune ———
   "Игровой сервис. Не является банком, госорганом, платёжным средством или удостоверением личности.": "Servizio di gioco. Non è una banca, un ente statale, un mezzo di pagamento né un documento d'identità.",
   "Игровой документ. Не является удостоверением личности.": "Documento di gioco. Non è un documento d'identità.",

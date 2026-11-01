@@ -5,7 +5,7 @@ import { navigate } from '../shared/router.js';
 import {
   Spinner, useAsync, Money, MoneyInput, Input, Select, Form, Modal, Empty, StatusBadge, ActionButton, Seg, Badge, ErrorBox, useToast, QR, Button, Field,
 } from '../shared/ui.jsx';
-import { BankCard, CardBarcode, BACKGROUNDS, CARD_TYPES } from '../shared/cards.jsx';
+import { BankCard, CardBarcode, BACKGROUNDS, CARD_TYPES, PrintCardButton } from '../shared/cards.jsx';
 import { spendable, RedeemGift, PocketMoney } from './finance.jsx';
 import { renderThermal, receiptBlocks, shareCanvas } from '../shared/thermal.js';
 import { formatCardNumber } from '@bln/shared/format.js';
@@ -272,6 +272,7 @@ function CardModal({ card, onClose, onChange }) {
         <div className="stack">
           <BankCard card={card} showCodes />
           <CardBarcode number={card.number} />
+          {card.number && !String(card.number).includes('•') && <PrintCardButton card={card} />}
           <div className="small muted">{t('Номер')}: <span className="mono">{formatCardNumber(card.number)}</span> · {t('срок')} <span className="mono">{mmYY(card.exp_month)}</span></div>
           {card.locked_until && <div className="form-warn">{t('Карта временно заблокирована после 3 неверных PIN')}</div>}
         </div>
