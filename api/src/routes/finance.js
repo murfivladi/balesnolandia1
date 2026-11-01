@@ -204,7 +204,7 @@ export async function financeRoutes(app) {
       const entries = [{ account: from.id, amount: -(amount + fee) }, { account: acc.id, amount }];
       if (fee) entries.push({ account: await sys('TREASURY', conn), amount: fee });
       await post(conn, { kind: 'gift_purchase', memo: `Подарочная карта на ${formatMoney(amount)}`, entries, actor: actorOf(req.bank) });
-      const c = await issueCard(conn, { user: u, account: acc, pin: b.pin, type: 'gift', background: bg(b.background || 'gold'), chargeFee: false, holderName: str(b.holder, 'кому', { optional: true, max: 60 }) || 'ПОДАРОК' });
+      const c = await issueCard(conn, { user: u, account: acc, pin: b.pin, type: 'gift', background: bg(b.background || 'gold'), chargeFee: false, holderName: str(b.holder, 'кому', { optional: true, max: 60 }) || 'GIFT' });
       await audit(conn, actorOf(req.bank), 'bank.gift_card', 'card', c.id, { amount });
       return one('SELECT c.*, a.balance, a.credit_limit FROM cards c JOIN accounts a ON a.id = c.account_id WHERE c.id = ?', [c.id], conn);
     });

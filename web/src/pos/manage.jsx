@@ -176,6 +176,7 @@ function Staff() {
 
 function ShopSettings({ session, onChange }) {
   const [f, setF] = useState({ ...session.shop });
+  const { data: cats } = useAsync(() => get('/pos/cashback-categories'), []);
   const toast = useToast();
   const set = (k) => (e) => setF({ ...f, [k]: e?.target ? e.target.value : e });
   return (
@@ -183,7 +184,7 @@ function ShopSettings({ session, onChange }) {
       <h1>{t('Магазин')}</h1>
       <div className="card">
         <Form onSubmit={async () => {
-          const r = await patch('/pos/shop', { name: f.name, type: f.type, color: f.color, address: f.address, receipt_footer: f.receipt_footer, logo: f.logo || null });
+          const r = await patch('/pos/shop', { name: f.name, type: f.type, color: f.color, address: f.address, receipt_footer: f.receipt_footer, logo: f.logo || null, cashback_category_id: f.cashback_category_id ? Number(f.cashback_category_id) : undefined });
           applyShopColor(r.shop.color);
           toast(t('Сохранено'), 'ok');
           onChange();
@@ -197,6 +198,7 @@ function ShopSettings({ session, onChange }) {
             <Input label={t('Адрес')} value={f.address || ''} onChange={set('address')} />
           </div>
           <Input label={t('Подпись внизу чека')} value={f.receipt_footer || ''} onChange={set('receipt_footer')} maxLength={200} />
+          {cats && <Select label={t('Категория для кешбэка ВлодБанка')} value={f.cashback_category_id || ''} onChange={set('cashback_category_id')} options={cats.categories.map((c) => ({ value: c.id, label: t(c.name) }))} hint={t('Покупатели, выбравшие эту категорию, получат кешбэк за оплату картой или по QR.')} />}
           <PhotoInput label={t('Логотип')} value={f.logo} onChange={set('logo')} maxSize={256} />
           <div className="small muted">{t('ИНН')}: {f.inn} · {t('ИП')}: {f.ip_number}</div>
         </Form>

@@ -10,6 +10,7 @@ import {
 import { AdminLogo } from '../shared/brand.jsx';
 import { LoginForm, AuthDisclaimer } from '../shared/auth.jsx';
 import { IdCard } from '../shared/passport.jsx';
+import { CreditAdmin, FraudAdmin, CashbackAdmin, InflationCard } from './finance.jsx';
 import { TX_KINDS, ACCOUNT_TYPES } from '../bank/pages.jsx';
 import { gameDateLabel } from '@bln/shared/time.js';
 import { formatMoney } from '@bln/shared/money.js';
@@ -36,7 +37,7 @@ export default function App() {
     return onUnauthorized(() => setMe(null));
   }, []);
   useEffect(() => {
-    if (me && !me.forbidden) get('/admin/overview').then((r) => setQueue(r.counts.pending_bank + r.counts.pending_apps)).catch(() => {});
+    if (me && !me.forbidden) get('/admin/overview').then((r) => setQueue(r.counts.pending_bank + r.counts.pending_apps + r.counts.pending_credit + r.counts.pending_fraud)).catch(() => {});
   }, [me, route.path]);
   useChannel(me && !me.forbidden ? 'admin' : null, (m) => { if (m.type === 'queue') setQueue((n) => n + 1); });
 
@@ -127,7 +128,7 @@ function Overview() {
   return (
     <div className="page">
       <h1>{t('Обзор')}</h1>
-      {(c.pending_bank > 0 || c.pending_apps > 0) && <div className="form-warn" style={{ marginBottom: 16 }}>{t('Ждут решения')}: {c.pending_bank} {t('регистраций')}, {c.pending_apps} {t('заявлений')} — <a href="#/bank">{t('очередь')}</a></div>}
+      {(c.pending_bank > 0 || c.pending_apps > 0 || c.pending_credit > 0 || c.pending_fraud > 0) && <div className="form-warn" style={{ marginBottom: 16 }}>{t('Ждут решения')}: {c.pending_bank} {t('регистраций')}, {c.pending_apps} {t('заявлений')}, {c.pending_credit} {t('кредитных заявок')}, {c.pending_fraud} {t('подозрительных операций')} — <a href="#/bank">{t('очередь')}</a></div>}
       <div className="grid grid-4">
         <Stat label={t('Клиенты банка')} value={c.bank_users} />
         <Stat label={t('Граждане с паспортом')} value={c.citizens} />
@@ -159,9 +160,14 @@ function BankSection() {
     <div className="page">
       <h1>{t('Банк')}</h1>
       <Tabs value={tab} onChange={setTab} tabs={[
-        { value: 'queue', label: t('Очередь заявок') }, { value: 'accounts', label: t('Счета') }, { value: 'cards', label: t('Карты') },
-        { value: 'emission', label: t('Эмиссия') }, { value: 'tx', label: t('Операции') }, { value: 'tariffs', label: t('Тарифы и ставки') },
+        { value: 'queue', label: t('Очередь заявок') }, { value: 'credit', label: t('Кредиты') }, { value: 'fraud', label: t('Антифрод') },
+        { value: 'accounts', label: t('Счета') }, { value: 'cards', label: t('Карты') }, { value: 'emission', label: t('Эмиссия') }, { value: 'tx', label: t('Операции') },
+        { value: 'cashback', label: t('Кешбэк') }, { value: 'tariffs', label: t('Тарифы и ставки') }, { value: 'credit_terms', label: t('Ставки кредитов') },
       ]} />
+      {tab === 'credit' && <CreditAdmin />}
+      {tab === 'fraud' && <FraudAdmin />}
+      {tab === 'cashback' && <CashbackAdmin />}
+      {tab === 'credit_terms' && <SettingsForm keys={CREDIT_KEYS} />}
       {tab === 'queue' && <Queue />}
       {tab === 'accounts' && <Accounts />}
       {tab === 'cards' && <Cards />}
@@ -393,6 +399,24 @@ const SETTING_LABELS = {
   savings_rate_bp: ['Ставка накопительного счёта, % в месяц', 'pct'],
   term_rate_bp: ['Ставка вклада на срок, % в месяц', 'pct'],
   term_early_penalty_bp: ['Штраф за досрочное закрытие вклада, %', 'pct'],
+  card_monthly_fee: ['Обслуживание карты в игровой месяц', 'money'],
+  gift_card_fee: ['Стоимость оформления подарочной карты', 'money'],
+  loan_rate_bp: ['Ставка по кредиту, % в месяц', 'pct'],
+  loan_max_amount: ['Максимальная сумма кредита', 'money'],
+  loan_max_months: ['Максимальный срок кредита, игровых месяцев', 'int'],
+  loan_auto_approve_max: ['Одобрять кредиты автоматически до суммы (0 — всё вручную)', 'money'],
+  loan_late_fee_bp: ['Пени за просроченный платёж, % от платежа в месяц', 'pct'],
+  credit_rate_bp: ['Ставка по кредитной карте, % в месяц', 'pct'],
+  credit_grace_months: ['Льготный период кредитной карты, игровых месяцев', 'int'],
+  credit_min_payment_bp: ['Минимальный платёж по кредитной карте, % от долга', 'pct'],
+  credit_late_fee: ['Штраф за пропуск минимального платежа', 'money'],
+  credit_max_limit: ['Максимальный лимит кредитной карты', 'money'],
+  cashback_max_categories: ['Сколько категорий кешбэка можно выбрать', 'int'],
+  cashback_cap: ['Максимальный кешбэк в игровой месяц', 'money'],
+  fraud_threshold: ['Антифрод: крупная операция от (0 — выключено)', 'money'],
+  fraud_multiplier: ['Антифрод: необычный перевод — во сколько раз больше обычного (0 — выключено)', 'int'],
+  fraud_velocity: ['Антифрод: переводов за 10 минут (0 — выключено)', 'int'],
+  inflation_bp: ['Инфляция, % за игровой месяц', 'pct'],
   fee_passport: ['Госпошлина: паспорт', 'money'],
   fee_inn: ['Госпошлина: ИНН', 'money'],
   fee_ip: ['Госпошлина: регистрация ИП', 'money'],
@@ -400,7 +424,8 @@ const SETTING_LABELS = {
   bank_logo: ['Логотип ВлодБанка', 'image'],
   gov_logo: ['Логотип ВлодУслуг', 'image'],
 };
-const BANK_KEYS = ['start_balance', 'transfer_fee_bp', 'transfer_fee_min', 'acquiring_fee_bp', 'card_valid_months', 'card_issue_fee', 'card_reissue_fee', 'savings_rate_bp', 'term_rate_bp', 'term_early_penalty_bp'];
+const BANK_KEYS = ['start_balance', 'transfer_fee_bp', 'transfer_fee_min', 'acquiring_fee_bp', 'card_valid_months', 'card_issue_fee', 'card_reissue_fee', 'card_monthly_fee', 'gift_card_fee', 'savings_rate_bp', 'term_rate_bp', 'term_early_penalty_bp', 'cashback_max_categories', 'cashback_cap'];
+const CREDIT_KEYS = ['loan_rate_bp', 'loan_max_amount', 'loan_max_months', 'loan_auto_approve_max', 'loan_late_fee_bp', 'credit_rate_bp', 'credit_grace_months', 'credit_min_payment_bp', 'credit_late_fee', 'credit_max_limit', 'fraud_threshold', 'fraud_multiplier', 'fraud_velocity'];
 const LAW_KEYS = ['vat_bp', 'fee_passport', 'fee_inn', 'fee_ip', 'passport_valid_months'];
 const SYSTEM_KEYS = ['bank_registration_approval', 'passport_approval', 'idle_minutes', 'game_month_minutes', 'bank_logo', 'gov_logo'];
 
@@ -444,6 +469,9 @@ function Economy() {
         <Stat label={t('На счетах')} value={data.deposits} money />
         <Stat label={t('Наличные')} value={data.cash} money />
         <Stat label={t('Выпущено эмиссией')} value={data.emitted} money />
+        <Stat label={t('Долги клиентов банку')} value={data.debt} money />
+        <Stat label={t('Казна ВлодБанка')} value={data.treasury} money />
+        <Stat label={t('Госбюджет БФ')} value={data.budget} money />
       </div>
       <div className="grid grid-2" style={{ marginTop: 16 }}>
         <div className="card">
@@ -461,8 +489,10 @@ function Economy() {
         <div className="card">
           <h2>{t('Операции за 7 дней')}</h2>
           <table className="table"><tbody>{data.kinds.map((k) => <tr key={k.kind}><td>{t(TX_KINDS[k.kind] || k.kind)}</td><td className="right">{k.n}</td></tr>)}</tbody></table>
-          <p className="small muted">{t('Инфляция оптовых цен включится вместе с оптовой базой (этап 6–7).')}</p>
         </div>
+      </div>
+      <div className="grid grid-2" style={{ marginTop: 16 }}>
+        <InflationCard />
       </div>
     </div>
   );
