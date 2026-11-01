@@ -4,6 +4,7 @@ import { t } from '../shared/i18n.js';
 import { Spinner, useAsync, Money, MoneyInput, Input, Select, Form, Modal, Empty, StatusBadge, Tabs, useToast, Badge } from '../shared/ui.jsx';
 import { formatMoney } from '@bln/shared/money.js';
 import { ACCOUNT_TYPES } from './pages.jsx';
+import { PrintCardButton } from '../shared/cards.jsx';
 
 /** Рабочее место операциониста: клиенты, карты, наличные, инкассация. */
 export function TellerPage() {
@@ -49,6 +50,7 @@ function ClientCard({ id }) {
   const { data, loading, reload } = useAsync(() => get(`/bank/teller/clients/${id}`), [id]);
   const [cash, setCash] = useState(null);
   const [card, setCard] = useState(null);
+  const [issued, setIssued] = useState(null);
   const toast = useToast();
   if (loading && !data) return <Spinner />;
   const c = data.client;
@@ -76,7 +78,7 @@ function ClientCard({ id }) {
         {data.accounts.length > 0 && <button className="btn sm" onClick={() => setCard({ account_id: data.accounts[0].id, pin: '' })}>{t('Выдать карту')}</button>}
       </div>
       <h3>{t('Карты')}</h3>
-      {!data.cards.length ? <p className="muted">{t('Карт нет')}</p> : data.cards.map((k) => <div key={k.id} className="row small"><span className="mono">{k.number}</span><StatusBadge status={k.status} /></div>)}
+      {!data.cards.length ? <p className="muted">{t('Карт нет')}</p> : data.cards.map((k) => <div key={k.id} className="row small"><span className="mono">{k.number}</span><StatusBadge status={k.status} />{['active', 'frozen'].includes(k.status) && <PrintCardButton card={k} kind="ghost" size="sm" />}</div>)}
 
       {cash && (
         <Modal title={cash.direction === 'in' ? t('Приём наличных') : t('Выдача наличных')} onClose={() => setCash(null)}>
@@ -92,12 +94,21 @@ function ClientCard({ id }) {
           </Form>
         </Modal>
       )}
+      {issued && (
+        <Modal title={t('Карта выпущена')} onClose={() => setIssued(null)}>
+          <div className="stack">
+            <div className="mono" style={{ fontSize: '1.3rem' }}>{issued.number}</div>
+            <PrintCardButton card={issued} kind="" />
+          </div>
+        </Modal>
+      )}
       {card && (
         <Modal title={t('Выдача карты')} onClose={() => setCard(null)}>
           <Form submitLabel={t('Выпустить')} onSubmit={async () => {
             const r = await post(`/bank/teller/clients/${id}/cards`, card);
             toast(`${t('Карта выпущена')}: ${r.card.number}`, 'ok');
             setCard(null);
+            setIssued(r.card);
             reload();
           }}>
             <Select label={t('Счёт')} value={card.account_id} onChange={(e) => setCard({ ...card, account_id: Number(e.target.value) })} options={data.accounts.filter((a) => ['current', 'business'].includes(a.type)).map((a) => ({ value: a.id, label: `${a.name} · ${formatMoney(a.balance)}` }))} />

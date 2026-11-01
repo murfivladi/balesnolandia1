@@ -10,6 +10,7 @@ import {
 import { AdminLogo } from '../shared/brand.jsx';
 import { LoginForm, AuthDisclaimer } from '../shared/auth.jsx';
 import { IdCard } from '../shared/passport.jsx';
+import { CreditAdmin, FraudAdmin, CashbackAdmin, InflationCard } from './finance.jsx';
 import { TX_KINDS, ACCOUNT_TYPES } from '../bank/pages.jsx';
 import { gameDateLabel } from '@bln/shared/time.js';
 import { formatMoney } from '@bln/shared/money.js';
@@ -36,7 +37,7 @@ export default function App() {
     return onUnauthorized(() => setMe(null));
   }, []);
   useEffect(() => {
-    if (me && !me.forbidden) get('/admin/overview').then((r) => setQueue(r.counts.pending_bank + r.counts.pending_apps)).catch(() => {});
+    if (me && !me.forbidden) get('/admin/overview').then((r) => setQueue(r.counts.pending_bank + r.counts.pending_apps + r.counts.pending_credit + r.counts.pending_fraud)).catch(() => {});
   }, [me, route.path]);
   useChannel(me && !me.forbidden ? 'admin' : null, (m) => { if (m.type === 'queue') setQueue((n) => n + 1); });
 
@@ -127,7 +128,7 @@ function Overview() {
   return (
     <div className="page">
       <h1>{t('Обзор')}</h1>
-      {(c.pending_bank > 0 || c.pending_apps > 0) && <div className="form-warn" style={{ marginBottom: 16 }}>{t('Ждут решения')}: {c.pending_bank} {t('регистраций')}, {c.pending_apps} {t('заявлений')} — <a href="#/bank">{t('очередь')}</a></div>}
+      {(c.pending_bank > 0 || c.pending_apps > 0 || c.pending_credit > 0 || c.pending_fraud > 0) && <div className="form-warn" style={{ marginBottom: 16 }}>{t('Ждут решения')}: {c.pending_bank} {t('регистраций')}, {c.pending_apps} {t('заявлений')}, {c.pending_credit} {t('кредитных заявок')}, {c.pending_fraud} {t('подозрительных операций')} — <a href="#/bank">{t('очередь')}</a></div>}
       <div className="grid grid-4">
         <Stat label={t('Клиенты банка')} value={c.bank_users} />
         <Stat label={t('Граждане с паспортом')} value={c.citizens} />
@@ -159,9 +160,14 @@ function BankSection() {
     <div className="page">
       <h1>{t('Банк')}</h1>
       <Tabs value={tab} onChange={setTab} tabs={[
-        { value: 'queue', label: t('Очередь заявок') }, { value: 'accounts', label: t('Счета') }, { value: 'cards', label: t('Карты') },
-        { value: 'emission', label: t('Эмиссия') }, { value: 'tx', label: t('Операции') }, { value: 'tariffs', label: t('Тарифы и ставки') },
+        { value: 'queue', label: t('Очередь заявок') }, { value: 'credit', label: t('Кредиты') }, { value: 'fraud', label: t('Антифрод') },
+        { value: 'accounts', label: t('Счета') }, { value: 'cards', label: t('Карты') }, { value: 'emission', label: t('Эмиссия') }, { value: 'tx', label: t('Операции') },
+        { value: 'cashback', label: t('Кешбэк') }, { value: 'tariffs', label: t('Тарифы и ставки') }, { value: 'credit_terms', label: t('Ставки кредитов') },
       ]} />
+      {tab === 'credit' && <CreditAdmin />}
+      {tab === 'fraud' && <FraudAdmin />}
+      {tab === 'cashback' && <CashbackAdmin />}
+      {tab === 'credit_terms' && <SettingsForm keys={CREDIT_KEYS} />}
       {tab === 'queue' && <Queue />}
       {tab === 'accounts' && <Accounts />}
       {tab === 'cards' && <Cards />}
@@ -393,6 +399,24 @@ const SETTING_LABELS = {
   savings_rate_bp: ['Ставка накопительного счёта, % в месяц', 'pct'],
   term_rate_bp: ['Ставка вклада на срок, % в месяц', 'pct'],
   term_early_penalty_bp: ['Штраф за досрочное закрытие вклада, %', 'pct'],
+  card_monthly_fee: ['Обслуживание карты в игровой месяц', 'money'],
+  gift_card_fee: ['Стоимость оформления подарочной карты', 'money'],
+  loan_rate_bp: ['Ставка по кредиту, % в месяц', 'pct'],
+  loan_max_amount: ['Максимальная сумма кредита', 'money'],
+  loan_max_months: ['Максимальный срок кредита, игровых месяцев', 'int'],
+  loan_auto_approve_max: ['Одобрять кредиты автоматически до суммы (0 — всё вручную)', 'money'],
+  loan_late_fee_bp: ['Пени за просроченный платёж, % от платежа в месяц', 'pct'],
+  credit_rate_bp: ['Ставка по кредитной карте, % в месяц', 'pct'],
+  credit_grace_months: ['Льготный период кредитной карты, игровых месяцев', 'int'],
+  credit_min_payment_bp: ['Минимальный платёж по кредитной карте, % от долга', 'pct'],
+  credit_late_fee: ['Штраф за пропуск минимального платежа', 'money'],
+  credit_max_limit: ['Максимальный лимит кредитной карты', 'money'],
+  cashback_max_categories: ['Сколько категорий кешбэка можно выбрать', 'int'],
+  cashback_cap: ['Максимальный кешбэк в игровой месяц', 'money'],
+  fraud_threshold: ['Антифрод: крупная операция от (0 — выключено)', 'money'],
+  fraud_multiplier: ['Антифрод: необычный перевод — во сколько раз больше обычного (0 — выключено)', 'int'],
+  fraud_velocity: ['Антифрод: переводов за 10 минут (0 — выключено)', 'int'],
+  inflation_bp: ['Инфляция, % за игровой месяц', 'pct'],
   fee_passport: ['Госпошлина: паспорт', 'money'],
   fee_inn: ['Госпошлина: ИНН', 'money'],
   fee_ip: ['Госпошлина: регистрация ИП', 'money'],
@@ -400,7 +424,8 @@ const SETTING_LABELS = {
   bank_logo: ['Логотип ВлодБанка', 'image'],
   gov_logo: ['Логотип ВлодУслуг', 'image'],
 };
-const BANK_KEYS = ['start_balance', 'transfer_fee_bp', 'transfer_fee_min', 'acquiring_fee_bp', 'card_valid_months', 'card_issue_fee', 'card_reissue_fee', 'savings_rate_bp', 'term_rate_bp', 'term_early_penalty_bp'];
+const BANK_KEYS = ['start_balance', 'transfer_fee_bp', 'transfer_fee_min', 'acquiring_fee_bp', 'card_valid_months', 'card_issue_fee', 'card_reissue_fee', 'card_monthly_fee', 'gift_card_fee', 'savings_rate_bp', 'term_rate_bp', 'term_early_penalty_bp', 'cashback_max_categories', 'cashback_cap'];
+const CREDIT_KEYS = ['loan_rate_bp', 'loan_max_amount', 'loan_max_months', 'loan_auto_approve_max', 'loan_late_fee_bp', 'credit_rate_bp', 'credit_grace_months', 'credit_min_payment_bp', 'credit_late_fee', 'credit_max_limit', 'fraud_threshold', 'fraud_multiplier', 'fraud_velocity'];
 const LAW_KEYS = ['vat_bp', 'fee_passport', 'fee_inn', 'fee_ip', 'passport_valid_months'];
 const SYSTEM_KEYS = ['bank_registration_approval', 'passport_approval', 'idle_minutes', 'game_month_minutes', 'bank_logo', 'gov_logo'];
 
@@ -444,6 +469,9 @@ function Economy() {
         <Stat label={t('На счетах')} value={data.deposits} money />
         <Stat label={t('Наличные')} value={data.cash} money />
         <Stat label={t('Выпущено эмиссией')} value={data.emitted} money />
+        <Stat label={t('Долги клиентов банку')} value={data.debt} money />
+        <Stat label={t('Казна ВлодБанка')} value={data.treasury} money />
+        <Stat label={t('Госбюджет БФ')} value={data.budget} money />
       </div>
       <div className="grid grid-2" style={{ marginTop: 16 }}>
         <div className="card">
@@ -461,8 +489,10 @@ function Economy() {
         <div className="card">
           <h2>{t('Операции за 7 дней')}</h2>
           <table className="table"><tbody>{data.kinds.map((k) => <tr key={k.kind}><td>{t(TX_KINDS[k.kind] || k.kind)}</td><td className="right">{k.n}</td></tr>)}</tbody></table>
-          <p className="small muted">{t('Инфляция оптовых цен включится вместе с оптовой базой (этап 6–7).')}</p>
         </div>
+      </div>
+      <div className="grid grid-2" style={{ marginTop: 16 }}>
+        <InflationCard />
       </div>
     </div>
   );
@@ -656,10 +686,76 @@ function SystemSection() {
   return (
     <div className="page">
       <h1>{t('Система')}</h1>
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'settings', label: t('Переключатели и логотипы') }, { value: 'data', label: t('Экспорт / импорт / сброс') }, { value: 'audit', label: t('Журнал действий') }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'settings', label: t('Переключатели и логотипы') }, { value: 'server', label: t('Адреса и почта') }, { value: 'data', label: t('Экспорт / импорт / сброс') }, { value: 'audit', label: t('Журнал действий') }]} />
       {tab === 'settings' && <SettingsForm keys={SYSTEM_KEYS} />}
+      {tab === 'server' && <ServerSettings />}
       {tab === 'data' && <DataTools />}
       {tab === 'audit' && <Audit />}
+    </div>
+  );
+}
+
+/** Адреса сайта и SMTP — то, что раньше было в .env, теперь меняется без перезапуска. */
+function ServerSettings() {
+  const { data, loading } = useAsync(() => get('/admin/settings'), []);
+  const server = useAsync(() => get('/admin/server'), []);
+  const [f, setF] = useState(null);
+  const [to, setTo] = useState('');
+  const toast = useToast();
+  useEffect(() => { if (data) setF({ ...data.settings }); }, [data]);
+  if ((loading && !data) || !f) return <Spinner />;
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+  return (
+    <div className="grid grid-2">
+      <div className="card">
+        <Form onSubmit={async () => {
+          const body = {
+            public_web_url: f.public_web_url, cors_origins: f.cors_origins,
+            smtp_host: f.smtp_host, smtp_port: Number(f.smtp_port) || 465, smtp_secure: !!f.smtp_secure, smtp_user: f.smtp_user, mail_from: f.mail_from,
+          };
+          if (f.smtp_password) body.smtp_password = f.smtp_password;
+          const r = await patch('/admin/settings', body);
+          setF({ ...r.settings });
+          server.reload();
+          toast(t('Сохранено'), 'ok');
+        }}>
+          <h2>{t('Адреса')}</h2>
+          <Input label={t('Адрес сайта')} placeholder="https://balesnolandia.vladislavb.ru" value={f.public_web_url} onChange={set('public_web_url')} hint={t('Для ссылок в QR, чеках и письмах. Пусто — адрес из деплоя')} />
+          <Input label={t('Дополнительные адреса фронтенда (CORS)')} placeholder="https://www.balesnolandia.vladislavb.ru" value={f.cors_origins} onChange={set('cors_origins')} hint={t('Через запятую. Адрес сайта разрешён всегда.')} />
+          <h2 style={{ marginTop: 8 }}>{t('Почта (SMTP)')}</h2>
+          <p className="small muted">{t('Пока SMTP не задан, письма с кодами входа пишутся в лог сервера — входите по паролю.')}</p>
+          <div className="grid grid-2">
+            <Input label={t('SMTP-сервер')} placeholder="smtp.vladislavb.ru" value={f.smtp_host} onChange={set('smtp_host')} />
+            <Input label={t('Порт')} type="number" min={1} max={65535} value={f.smtp_port} onChange={set('smtp_port')} />
+          </div>
+          <label className="check"><input type="checkbox" checked={!!f.smtp_secure} onChange={set('smtp_secure')} /> {t('SSL/TLS (порт 465)')}</label>
+          <div className="grid grid-2">
+            <Input label={t('Логин')} autoComplete="off" value={f.smtp_user} onChange={set('smtp_user')} />
+            <Input label={t('Пароль')} type="password" autoComplete="new-password" placeholder={f.smtp_password_set ? '••••••••' : ''} value={f.smtp_password} onChange={set('smtp_password')} hint={f.smtp_password_set ? t('Задан. Оставьте пустым, чтобы не менять.') : null} />
+          </div>
+          <Input label={t('Отправитель')} placeholder="Балесноландия <no-reply@vladislavb.ru>" value={f.mail_from} onChange={set('mail_from')} />
+        </Form>
+      </div>
+      <div className="stack">
+        <div className="card stack">
+          <h2>{t('Тестовое письмо')}</h2>
+          <Input label="Email" type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder={t('Ваш email')} />
+          <ActionButton kind="secondary" action={async () => { const r = await post('/admin/mail/test', { to }); toast(t('Письмо отправлено на {email}', { email: r.to }), 'ok'); }}>{t('Отправить тестовое письмо')}</ActionButton>
+        </div>
+        {server.data && (
+          <div className="card">
+            <h2>{t('Сервер')}</h2>
+            <table className="table"><tbody>
+              <tr><td>{t('Адрес сайта')}</td><td className="small">{server.data.web_url}</td></tr>
+              <tr><td>{t('Почта')}</td><td>{t(server.data.mail)}</td></tr>
+              <tr><td>{t('Домен cookie')}</td><td className="mono small">{server.data.cookie_domain || '—'}</td></tr>
+              <tr><td>Node.js</td><td className="mono small">{server.data.node}</td></tr>
+              <tr><td>{t('База данных')}</td><td className="mono small">{server.data.db}</td></tr>
+              <tr><td>{t('Игровой таймер')}</td><td>{server.data.game_clock ? t('идёт') : t('выключен')}</td></tr>
+            </tbody></table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

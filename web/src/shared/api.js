@@ -1,5 +1,5 @@
 // Клиент API. В разработке — относительный /api через прокси Vite,
-// в продакшене — VITE_API_URL (например, https://api.vladinc.ru).
+// в продакшене — VITE_API_URL (например, https://api.balesnolandia.vladislavb.ru).
 const BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 export class ApiError extends Error {
@@ -30,28 +30,57 @@ function setOffline(v) {
   offlineListeners.forEach((f) => f(v));
 }
 
+/** Если API не отвечает дольше этого — запрос прерывается и показывается «нет связи с сервером», а не бесконечный спиннер. */
+const REQUEST_TIMEOUT_MS = 20000;
+
 export function newIdemKey() {
   return (crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`).replace(/-/g, '');
 }
 
-export async function api(path, { method = 'GET', body, idem, signal } = {}) {
+/** Объединить несколько AbortSignal в одну. */
+function combineSignals(signals) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  for (const s of signals) {
+    if (!s) continue;
+    if (s.aborted) { abort(); break; }
+    s.addEventListener('abort', abort, { once: true });
+  }
+  return controller.signal;
+}
+
+export async function api(path, { method = 'GET', body, idem, signal, timeout = REQUEST_TIMEOUT_MS } = {}) {
   const headers = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (idem) headers['Idempotency-Key'] = idem === true ? newIdemKey() : idem;
   let res;
+  let timeoutId;
   try {
+    const fetchSignal = combineSignals([
+      signal,
+      timeout && timeout > 0 ? (() => {
+        const c = new AbortController();
+        timeoutId = setTimeout(() => c.abort(), timeout);
+        return c.signal;
+      })() : null,
+    ]);
     res = await fetch(`${BASE}/api${path}`, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
       credentials: 'include',
-      signal,
+      signal: fetchSignal,
     });
   } catch (err) {
-    if (err.name === 'AbortError') throw err;
+    if (timeoutId) clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      setOffline(true);
+      throw err;
+    }
     setOffline(true);
     throw new ApiError(0, 'network', 'Нет связи с сервером');
   }
+  if (timeoutId) clearTimeout(timeoutId);
   setOffline(false);
   const text = await res.text();
   let data = null;

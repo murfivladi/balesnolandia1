@@ -4,6 +4,10 @@ import { config } from './config.js';
 export const pool = mysql.createPool({
   ...config.db,
   connectionLimit: 10,
+  // Не ждём ответа от базы бесконечно: если БД недоступна, запросы к API висели бы до тайм-аута ОС (минуты),
+  // а фронтенд крутил бы спиннер вечно. Падаем с ошибкой быстро.
+  connectTimeout: 10000,
+  acquireTimeout: 10000,
   charset: 'utf8mb4',
   timezone: 'Z',
   dateStrings: ['DATE'],

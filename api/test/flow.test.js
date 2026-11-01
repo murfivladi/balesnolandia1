@@ -237,3 +237,24 @@ test('game clock pays interest and salaries', async () => {
   assert.equal(Number(after1.balance), 50250, '0,5% в месяц капитализация');
   assert.equal(await totalBalance(), 0);
 });
+
+test('admin: addresses and SMTP live in settings, secrets are hidden', async () => {
+  const admin = client(app);
+  await admin.post('/api/auth/gov/login', { email: 'admin@test.bf', password: 'password123' });
+  const r = await admin.patch('/api/admin/settings', { public_web_url: 'https://example.bf/game/', smtp_host: '', smtp_password: 'top-secret', mail_from: 'Игра <no-reply@example.bf>' });
+  assert.equal(r.settings.smtp_password, '');
+  assert.equal(r.settings.smtp_password_set, true);
+  // Пустой пароль из формы не стирает сохранённый
+  await admin.patch('/api/admin/settings', { smtp_password: '' });
+  const row = await one("SELECT v FROM settings WHERE k = 'smtp_password'");
+  assert.match(String(row.v), /top-secret/);
+  const dump = await admin.get('/api/admin/export');
+  assert.ok(!JSON.stringify(dump.tables.settings).includes('top-secret'), 'секрет не уходит в экспорт');
+  const audit = await admin.get('/api/admin/audit');
+  assert.ok(!JSON.stringify(audit).includes('top-secret'), 'секрет не пишется в журнал');
+  const { webUrl } = await import('../src/lib/settings.js');
+  assert.equal(await webUrl(), 'https://example.bf/game');
+  await assert.rejects(admin.patch('/api/admin/settings', { public_web_url: 'not a url' }), /invalid/);
+  const srv = await admin.get('/api/admin/server');
+  assert.equal(srv.web_url, 'https://example.bf/game');
+});

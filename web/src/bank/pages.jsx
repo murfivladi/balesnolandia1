@@ -5,19 +5,23 @@ import { navigate } from '../shared/router.js';
 import {
   Spinner, useAsync, Money, MoneyInput, Input, Select, Form, Modal, Empty, StatusBadge, ActionButton, Seg, Badge, ErrorBox, useToast, QR, Button, Field,
 } from '../shared/ui.jsx';
-import { BankCard, CardBarcode, BACKGROUNDS, CARD_TYPES } from '../shared/cards.jsx';
+import { BankCard, CardBarcode, BACKGROUNDS, CARD_TYPES, PrintCardButton } from '../shared/cards.jsx';
+import { spendable, RedeemGift, PocketMoney } from './finance.jsx';
 import { renderThermal, receiptBlocks, shareCanvas } from '../shared/thermal.js';
 import { formatCardNumber } from '@bln/shared/format.js';
 import { mmYY } from '@bln/shared/time.js';
 import { formatMoney } from '@bln/shared/money.js';
 
-export const ACCOUNT_TYPES = { current: 'Расчётный', savings: 'Накопительный', term: 'Вклад на срок', business: 'Бизнес-счёт' };
+export const ACCOUNT_TYPES = { current: 'Расчётный', savings: 'Накопительный', term: 'Вклад на срок', business: 'Бизнес-счёт', credit: 'Кредитная карта', loan: 'Кредит', child: 'Детская карта', gift: 'Подарочная карта' };
 export const TX_KINDS = {
   transfer: 'Перевод', transfer_own: 'Между своими счетами', card_payment: 'Оплата картой', qr_payment: 'Оплата по QR', refund: 'Возврат покупки',
   atm_withdraw: 'Снятие в банкомате', atm_deposit: 'Внесение в банкомате', teller_withdraw: 'Выдача наличных', teller_deposit: 'Внесение наличных',
   emission: 'Зачисление от банка', start_balance: 'Стартовый баланс', interest: 'Проценты', invoice: 'Оплата квитанции', invoice_cash: 'Квитанция наличными',
   salary: 'Зарплата', collection: 'Инкассация', card_fee: 'Обслуживание карты', account_close: 'Закрытие счёта', deposit_maturity: 'Возврат вклада',
   reversal: 'Отмена операции', vat_cash: 'НДС с наличной выручки',
+  loan_issue: 'Выдача кредита', loan_payment: 'Платёж по кредиту', loan_repay: 'Досрочное погашение', credit_repay: 'Погашение кредитной карты',
+  credit_interest: 'Проценты по кредитной карте', credit_penalty: 'Штраф за просрочку', autopayment: 'Автоплатёж', pocket_money: 'Карманные',
+  cashback: 'Кешбэк', gift_purchase: 'Покупка подарочной карты', gift_redeem: 'Зачисление подарочной карты',
 };
 
 const pct = (bp) => `${(bp / 100).toLocaleString('ru-RU')}%`;
@@ -49,6 +53,7 @@ export function Dashboard({ tick }) {
         <a className="btn secondary" href="#/pay">{t('Оплатить квитанцию')}</a>
         <a className="btn secondary" href="#/open">{t('Открыть счёт')}</a>
         <a className="btn secondary" href="#/cards/new">{t('Выпустить карту')}</a>
+        <a className="btn secondary" href="#/autopay">{t('Автоплатежи')}</a>
         <a className="btn ghost" href="#/atm">{t('Банкомат')}</a>
       </div>
       <div className="grid grid-2">
@@ -59,7 +64,7 @@ export function Dashboard({ tick }) {
               <a key={a.id} className="list-item clickable" href={`#/accounts/${a.id}`} style={{ color: 'inherit', textDecoration: 'none' }}>
                 <div className="li-main">
                   <div className="li-title">{t(a.name)} {a.is_primary && <Badge kind="brand">{t('основной')}</Badge>} {a.status !== 'active' && <StatusBadge status={a.status} />}</div>
-                  <div className="li-sub mono">{a.number}{a.rate_bp ? ` · ${pct(a.rate_bp)} ${t('в месяц')}` : ''}</div>
+                  <div className="li-sub mono">{a.number}{a.rate_bp ? ` · ${pct(a.rate_bp)} ${t('в месяц')}` : ''}{a.credit_limit && a.type === 'credit' ? ` · ${t('лимит')} ${formatMoney(a.credit_limit)}` : ''}</div>
                 </div>
                 <b><Money value={a.balance} /></b>
               </a>
@@ -131,14 +136,16 @@ export function AccountPage({ id, tick }) {
             <span className="mono">{a.number}</span>
             {a.rate_bp > 0 && <span className="small">{pct(a.rate_bp)} {t('в месяц')}, {a.compound ? t('сложный процент') : t('простой процент')}</span>}
             {a.matures_month !== null && <span className="small">{t('до')} {mmYY(a.matures_month)}</span>}
+            {a.credit_limit > 0 && <span className="small">{t(a.type === 'loan' ? 'Сумма кредита' : 'Кредитный лимит')}: {formatMoney(a.credit_limit)}</span>}
           </div>
         </div>
         <div className="row" style={{ marginTop: 14 }}>
-          <a className="btn" href={`#/transfer?from=${a.id}`}>{t('Перевести')}</a>
+          {!['loan', 'gift', 'term'].includes(a.type) && <a className="btn" href={`#/transfer?from=${a.id}`}>{t('Перевести')}</a>}
+          {a.type === 'loan' && <a className="btn" href="#/credit">{t('График платежей')}</a>}
           <button className="btn secondary" onClick={() => setShowReq(true)}>{t('Реквизиты')}</button>
           <button className="btn ghost" onClick={() => setRename(a.name)}>{t('Переименовать')}</button>
           {a.type === 'current' && !a.is_primary && <ActionButton kind="ghost" action={async () => { await post(`/bank/accounts/${a.id}/primary`); reload(); }}>{t('Сделать основным')}</ActionButton>}
-          {!a.is_primary && (
+          {!a.is_primary && a.type !== 'loan' && (
             <ActionButton kind="ghost" confirm={a.type === 'term' ? t('Досрочное закрытие вклада — со штрафом. Закрыть?') : t('Закрыть счёт? Остаток уйдёт на основной счёт.')} action={async () => { await post(`/bank/accounts/${a.id}/close`); navigate('/'); }}>
               {t('Закрыть счёт')}
             </ActionButton>
@@ -215,23 +222,36 @@ export function OpenAccount() {
 
 export function CardsPage({ tick }) {
   const { data, loading, reload } = useAsync(() => get('/bank/cards'), [tick]);
+  const { data: ov } = useAsync(() => get('/bank/overview'), [tick]);
   const [open, setOpen] = useState(null);
-  if (loading && !data) return <Spinner />;
+  const [redeem, setRedeem] = useState(false);
+  if ((loading && !data) || !ov) return <Spinner />;
   const card = open && data.cards.find((c) => c.id === open);
   return (
     <div className="page">
-      <div className="page-head"><h1>{t('Карты')}</h1><a className="btn" href="#/cards/new">{t('Выпустить карту')}</a></div>
+      <div className="page-head">
+        <h1>{t('Карты')}</h1>
+        <div className="row">
+          <button className="btn secondary" onClick={() => setRedeem(true)}>🎁 {t('Зачислить подарочную')}</button>
+          <a className="btn" href="#/cards/new">{t('Выпустить карту')}</a>
+        </div>
+      </div>
       {!data.cards.length ? <Empty>{t('Карт пока нет')}</Empty> : (
         <div className="grid grid-auto">
           {data.cards.map((c) => (
             <div key={c.id} className="stack-sm" style={{ cursor: 'pointer' }} onClick={() => setOpen(c.id)}>
               <BankCard card={c} />
-              <div className="row small"><StatusBadge status={c.status} /> <span className="muted">{t(CARD_TYPES[c.type])}</span></div>
+              <div className="row small">
+                <StatusBadge status={c.status} /> <span className="muted">{t(CARD_TYPES[c.type])}</span>
+                {c.balance !== undefined && <span className="right nowrap" style={{ marginLeft: 'auto' }} title={c.type === 'credit' ? t('Доступно') : t('Баланс')}><b><Money value={c.type === 'credit' ? c.available : c.balance} /></b></span>}
+              </div>
+              {c.managed_by_parent && <div className="tiny muted">{t('Картой управляет родитель')}</div>}
             </div>
           ))}
         </div>
       )}
       {card && <CardModal card={card} onClose={() => setOpen(null)} onChange={reload} />}
+      {redeem && <RedeemGift accounts={ov.accounts} onClose={() => setRedeem(false)} onDone={() => { setRedeem(false); reload(); }} />}
     </div>
   );
 }
@@ -243,24 +263,37 @@ function CardModal({ card, onClose, onChange }) {
   const toast = useToast();
   const act = (fn, msg) => async () => { await fn(); toast(msg, 'ok'); onChange(); };
   const usable = ['active', 'frozen'].includes(card.status);
+  const tabs = [{ value: 'main', label: t('Управление') }, { value: 'pin', label: 'PIN' }, { value: 'limits', label: t('Лимиты') }, { value: 'design', label: t('Дизайн') }];
+  if (card.type === 'child') tabs.splice(3, 0, { value: 'pocket', label: t('Карманные') });
+  if (card.type === 'gift') tabs.splice(2, 1);
   return (
     <Modal title={`${t('Карта')} •••• ${card.last4}`} onClose={onClose} wide>
       <div className="grid grid-2">
         <div className="stack">
           <BankCard card={card} showCodes />
           <CardBarcode number={card.number} />
+          {card.number && !String(card.number).includes('•') && <PrintCardButton card={card} />}
           <div className="small muted">{t('Номер')}: <span className="mono">{formatCardNumber(card.number)}</span> · {t('срок')} <span className="mono">{mmYY(card.exp_month)}</span></div>
           {card.locked_until && <div className="form-warn">{t('Карта временно заблокирована после 3 неверных PIN')}</div>}
         </div>
         <div className="stack">
-          <Seg value={tab} onChange={setTab} options={[{ value: 'main', label: t('Управление') }, { value: 'pin', label: 'PIN' }, { value: 'limits', label: t('Лимиты') }, { value: 'design', label: t('Дизайн') }]} />
+          {card.balance !== undefined && (
+            <div className="row" style={{ justifyContent: 'space-between' }}>
+              <span className="muted">{card.type === 'credit' ? t('Доступно') : t('Баланс')}</span>
+              <b><Money value={card.type === 'credit' ? card.available : card.balance} /></b>
+              <a className="small" href={`#/accounts/${card.account_id}`}>{t('История')}</a>
+            </div>
+          )}
+          {card.managed_by_parent ? <div className="form-warn">{t('Это ваша детская карта. Лимиты, PIN и карманные настраивает родитель.')}</div> : <>
+          <Seg value={tab} onChange={setTab} options={tabs} />
+          {tab === 'pocket' && <PocketMoney card={card} onChange={onChange} />}
           {tab === 'main' && (
             <div className="stack">
               <StatusBadge status={card.status} />
               {usable && (card.status === 'frozen'
                 ? <ActionButton kind="ok-btn" action={act(() => post(`/bank/cards/${card.id}/freeze`, { frozen: false }), t('Карта разморожена'))}>{t('Разморозить')}</ActionButton>
                 : <ActionButton kind="secondary" action={act(() => post(`/bank/cards/${card.id}/freeze`, { frozen: true }), t('Карта заморожена'))}>❄ {t('Заморозить')}</ActionButton>)}
-              <ActionButton kind="secondary" confirm={t('Выпустить новую карту взамен этой? Номер изменится, PIN сохранится.')} action={act(() => post(`/bank/cards/${card.id}/reissue`), t('Карта перевыпущена'))}>{t('Перевыпустить')}</ActionButton>
+              {card.type !== 'gift' && <ActionButton kind="secondary" confirm={t('Выпустить новую карту взамен этой? Номер изменится, PIN сохранится.')} action={act(() => post(`/bank/cards/${card.id}/reissue`), t('Карта перевыпущена'))}>{t('Перевыпустить')}</ActionButton>}
               {usable && <ActionButton kind="danger" confirm={t('Закрыть карту навсегда?')} action={act(() => post(`/bank/cards/${card.id}/close`), t('Карта закрыта'))}>{t('Закрыть карту')}</ActionButton>}
             </div>
           )}
@@ -282,67 +315,21 @@ function CardModal({ card, onClose, onChange }) {
               ))}
             </div>
           )}
+          </>}
         </div>
       </div>
     </Modal>
   );
 }
 
-export function NewCard() {
-  const { data } = useAsync(() => get('/bank/overview'), []);
-  const [f, setF] = useState({ account_id: '', pin: '', pin2: '', background: 'classic' });
-  const [done, setDone] = useState(null);
-  if (!data) return <Spinner />;
-  const accounts = data.accounts.filter((a) => ['current', 'business'].includes(a.type));
-  if (!accounts.length) return <div className="page narrow"><Empty>{t('Сначала откройте расчётный счёт')} — <a href="#/open">{t('открыть')}</a></Empty></div>;
-  const accountId = f.account_id || accounts[0].id;
-  if (done) {
-    return (
-      <div className="page narrow">
-        <div className="card stack">
-          <h2>{t('Карта выпущена')}</h2>
-          <BankCard card={done} showCodes />
-          <a className="btn" href="#/cards">{t('Готово')}</a>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="page medium">
-      <h1>{t('Выпустить дебетовую карту')}</h1>
-      <div className="grid grid-2">
-        <div className="card">
-          <Form submitLabel={t('Выпустить')} onSubmit={async () => {
-            if (f.pin !== f.pin2) throw new Error(t('PIN не совпадает'));
-            setDone((await post('/bank/cards', { account_id: accountId, pin: f.pin, background: f.background })).card);
-          }}>
-            <Select label={t('Счёт')} value={accountId} onChange={(e) => setF({ ...f, account_id: Number(e.target.value) })} options={accounts.map((a) => ({ value: a.id, label: `${t(a.name)} · ${formatMoney(a.balance)}` }))} />
-            <div className="grid grid-2">
-              <Input label={t('PIN — 3 цифры')} type="password" inputMode="numeric" maxLength={3} required value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '') })} />
-              <Input label={t('PIN ещё раз')} type="password" inputMode="numeric" maxLength={3} required value={f.pin2} onChange={(e) => setF({ ...f, pin2: e.target.value.replace(/\D/g, '') })} />
-            </div>
-            <Field label={t('Фон')}>
-              <div className="row">
-                {BACKGROUNDS.map((b) => <button key={b} type="button" className={`bg-${b}`} aria-label={b} onClick={() => setF({ ...f, background: b })} style={{ width: 44, height: 28, borderRadius: 6, border: f.background === b ? '3px solid var(--accent)' : '1px solid var(--line)', cursor: 'pointer' }} />)}
-              </div>
-            </Field>
-          </Form>
-        </div>
-        <div className="stack">
-          <BankCard card={{ number: '770000000000', exp_month: 36, type: 'debit', holder_name: data.user.full_name.toUpperCase(), background: f.background, last4: '0000' }} hideNumber />
-          <p className="small muted">{t('Номер — 12 цифр, PIN — 3 цифры. 3 неверных PIN подряд замораживают карту на 1 минуту.')}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function TransferPage() {
   const { data } = useAsync(() => get('/bank/overview'), []);
-  const fromQuery = Number(new URLSearchParams(location.hash.split('?')[1] || '').get('from')) || null;
-  const [mode, setMode] = useState('card');
+  const query = new URLSearchParams(location.hash.split('?')[1] || '');
+  const fromQuery = Number(query.get('from')) || null;
+  const toQuery = query.get('to') || '';
+  const [mode, setMode] = useState(toQuery ? 'own' : 'card');
   const [from, setFrom] = useState(fromQuery);
-  const [value, setValue] = useState('');
+  const [value, setValue] = useState(toQuery);
   const [amount, setAmount] = useState(null);
   const [memo, setMemo] = useState('');
   const [preview, setPreview] = useState(null);
@@ -358,7 +345,8 @@ export function TransferPage() {
     return () => clearTimeout(h);
   }, [search, mode]);
   if (!data) return <Spinner />;
-  const accounts = data.accounts.filter((a) => a.status === 'active' && a.type !== 'term');
+  const accounts = spendable(data.accounts);
+  const ownTargets = data.accounts.filter((a) => a.status === 'active' && !['loan', 'gift'].includes(a.type));
   const fromId = from || accounts[0]?.id;
   const to = mode === 'user' ? { type: 'user', value: picked?.id } : mode === 'own' ? { type: 'own', value } : { type: mode, value };
 
@@ -366,8 +354,9 @@ export function TransferPage() {
     return (
       <div className="page narrow">
         <div className="card stack center" style={{ alignItems: 'center' }}>
-          <div style={{ fontSize: '3rem' }}>✓</div>
-          <h2>{t('Перевод выполнен')}</h2>
+          <div style={{ fontSize: '3rem' }}>{done.held ? '⏳' : '✓'}</div>
+          <h2>{done.held ? t('Перевод на проверке') : t('Перевод выполнен')}</h2>
+          {done.held && <p className="small muted center">{t('Служба безопасности банка проверит операцию. Деньги спишутся после одобрения — мы пришлём уведомление.')}</p>}
           <div style={{ fontSize: '1.6rem', fontWeight: 700 }}><Money value={done.amount} /></div>
           <div className="muted">{done.recipient.name}</div>
           <div className="row"><a className="btn" href="#/">{t('На главную')}</a><button className="btn secondary" onClick={() => { setDone(null); setPreview(null); setAmount(null); setIdem(newIdemKey()); }}>{t('Ещё перевод')}</button></div>
@@ -386,7 +375,7 @@ export function TransferPage() {
         <Select label={t('Откуда')} value={fromId || ''} onChange={(e) => { setFrom(Number(e.target.value)); setPreview(null); }} options={accounts.map((a) => ({ value: a.id, label: `${t(a.name)} · ${formatMoney(a.balance)}` }))} />
         {mode === 'card' && <Input label={t('Номер карты получателя')} inputMode="numeric" placeholder="7700 0000 0000" value={value} onChange={(e) => { setValue(e.target.value); setPreview(null); }} />}
         {mode === 'account' && <Input label={t('Номер счёта получателя')} placeholder="BF40…" value={value} onChange={(e) => { setValue(e.target.value.toUpperCase()); setPreview(null); }} />}
-        {mode === 'own' && <Select label={t('Куда')} value={value} onChange={(e) => { setValue(e.target.value); setPreview(null); }} options={[{ value: '', label: '—' }, ...accounts.filter((a) => a.id !== fromId).map((a) => ({ value: String(a.id), label: `${t(a.name)} · ${formatMoney(a.balance)}` }))]} />}
+        {mode === 'own' && <Select label={t('Куда')} value={value} onChange={(e) => { setValue(e.target.value); setPreview(null); }} options={[{ value: '', label: '—' }, ...ownTargets.filter((a) => a.id !== fromId).map((a) => ({ value: String(a.id), label: `${t(a.name)} · ${formatMoney(a.balance)}` }))]} />}
         {mode === 'user' && (
           <div className="stack-sm">
             <Input label={t('Имя получателя')} value={search} onChange={(e) => { setSearch(e.target.value); setPicked(null); setPreview(null); }} />
@@ -413,8 +402,8 @@ export function TransferPage() {
             <ActionButton action={async () => {
               setError(null);
               try {
-                await post('/bank/transfers', { from_account: fromId, amount, to, memo }, { idem });
-                setDone(preview);
+                const r = await post('/bank/transfers', { from_account: fromId, amount, to, memo }, { idem });
+                setDone({ ...preview, held: !!r.held });
               } catch (e) { setError(e); }
             }}>{t('Перевести')} {formatMoney(preview.total)}</ActionButton>
           </div>
@@ -439,11 +428,11 @@ export function PayInvoice({ number }) {
     try { setInv((await get(`/gov/invoices/${encodeURIComponent(n.trim())}`)).invoice); } catch (e) { setError(e); }
   }
   if (!data) return <Spinner />;
-  const accounts = data.accounts.filter((a) => a.status === 'active' && a.type !== 'term');
+  const accounts = spendable(data.accounts);
   const acc = account || accounts[0]?.id;
   return (
     <div className="page narrow">
-      <h1>{t('Оплата квитанции ВлодУслуг')}</h1>
+      <div className="page-head"><h1>{t('Оплата квитанции ВлодУслуг')}</h1><a className="btn secondary" href="#/autopay">{t('Автоплатежи')}</a></div>
       <div className="card stack">
         <form className="row nowrap" onSubmit={(e) => { e.preventDefault(); lookup(no); }}>
           <input className="input" placeholder={t('Номер квитанции')} value={no} onChange={(e) => setNo(e.target.value.toUpperCase())} />
@@ -479,7 +468,7 @@ export function QrPay({ token }) {
   if ((loading && !data) || !ov) return <Spinner />;
   if (error) return <div className="page narrow"><ErrorBox error={error} /></div>;
   const p = data.payment;
-  const accounts = ov.accounts.filter((a) => a.status === 'active' && ['current', 'savings', 'business'].includes(a.type));
+  const accounts = spendable(ov.accounts);
   const acc = account || accounts[0]?.id;
   return (
     <div className="page narrow">

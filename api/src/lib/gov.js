@@ -12,9 +12,25 @@ export const APP_TITLES = {
   passport: 'Паспорт БФ',
   inn: 'ИНН',
   ip: 'Регистрация ИП',
+  driver: 'Водительские права',
+  foreign_passport: 'Загранпаспорт',
+  visa: 'Виза',
+  marriage: 'Свидетельство о браке',
+  birth: 'Свидетельство о рождении',
 };
 
-const FEE_KEY = { passport: 'fee_passport', inn: 'fee_inn', ip: 'fee_ip' };
+const FEE_KEY = { passport: 'fee_passport', inn: 'fee_inn', ip: 'fee_ip', driver: 'fee_driver', foreign_passport: 'fee_foreign_passport', marriage: 'fee_marriage', birth: 'fee_birth' };
+
+// Что делать, когда оплачена квитанция определённого вида (штраф, налог, страховка…).
+const invoiceHooks = new Map();
+export function onInvoicePaid(refType, fn) {
+  invoiceHooks.set(refType, [...(invoiceHooks.get(refType) || []), fn]);
+}
+
+/** Действующий запрет выезда гражданина. */
+export async function hasTravelBan(conn, citizenId) {
+  return !!(await one("SELECT id FROM citizen_sanctions WHERE citizen_id = ? AND kind = 'travel_ban' AND active = 1", [citizenId], conn));
+}
 
 export async function citizenOf(govUserId, conn) {
   return one('SELECT * FROM citizens WHERE gov_user_id = ?', [govUserId], conn);
@@ -24,12 +40,12 @@ export async function activePassport(citizenId, conn) {
   return one("SELECT * FROM passports WHERE citizen_id = ? AND status = 'active'", [citizenId], conn);
 }
 
-export async function createInvoice(conn, { citizenId = null, govUserId = null, kind, purpose, amount, ref }) {
+export async function createInvoice(conn, { citizenId = null, govUserId = null, kind, purpose, amount, ref, dueMonth = null }) {
   return withUnique(async () => {
     const number = newInvoiceNumber();
     const res = await q(
-      'INSERT INTO invoices (number, citizen_id, gov_user_id, kind, purpose, amount, ref_type, ref_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [number, citizenId, govUserId, kind, purpose, amount, ref?.type || null, ref?.id || null],
+      'INSERT INTO invoices (number, citizen_id, gov_user_id, kind, purpose, amount, ref_type, ref_id, due_month) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [number, citizenId, govUserId, kind, purpose, amount, ref?.type || null, ref?.id || null, dueMonth],
       conn,
     );
     return { id: res.insertId, number };
@@ -37,9 +53,9 @@ export async function createInvoice(conn, { citizenId = null, govUserId = null, 
 }
 
 /** Подать заявление. Если есть пошлина — сначала квитанция, потом рассмотрение. */
-export async function submitApplication(conn, { govUserId, citizenId, type, data }) {
+export async function submitApplication(conn, { govUserId, citizenId, type, data, fee: feeOverride = null }) {
   const s = await getSettings();
-  const fee = Number(s[FEE_KEY[type]] || 0);
+  const fee = feeOverride !== null ? Number(feeOverride) : Number(s[FEE_KEY[type]] || 0);
   const res = await q('INSERT INTO applications (citizen_id, gov_user_id, type, status, data) VALUES (?, ?, ?, ?, ?)', [citizenId, govUserId, type, fee > 0 ? 'awaiting_payment' : 'pending', JSON.stringify(data || {})], conn);
   const appId = res.insertId;
   if (fee > 0) {
@@ -52,6 +68,7 @@ export async function submitApplication(conn, { govUserId, citizenId, type, data
 }
 
 function needsApproval(type, s) {
+  if (type === 'marriage' || type === 'birth') return true;
   return type === 'passport' && !!s.passport_approval;
 }
 
@@ -132,6 +149,54 @@ async function issueFor(conn, app) {
       return n;
     });
   }
+  return issueDocument(conn, { app, data, citizen, month, s });
+}
+
+/** Новый документ гражданина со сроком в игровых месяцах. */
+async function addDocument(conn, { citizenId, type, prefix, digits = 8, month, expires = null, data }) {
+  return withUnique(async () => {
+    const n = `${prefix}${randomDigits(digits)}`;
+    await q('INSERT INTO documents (citizen_id, type, number, verify_code, issued_month, expires_month, data) VALUES (?, ?, ?, ?, ?, ?, ?)', [citizenId, type, n, newVerifyCode(), month, expires, JSON.stringify(data)], conn);
+    return n;
+  });
+}
+
+async function issueDocument(conn, { app, data, citizen, month, s }) {
+  const base = { full_name: citizen.full_name, birth_date: citizen.birth_date, passport: citizen.passport_no };
+  if (app.type === 'driver') {
+    await q("UPDATE documents SET status = 'closed' WHERE citizen_id = ? AND type = 'driver' AND status = 'active'", [citizen.id], conn);
+    return addDocument(conn, { citizenId: citizen.id, type: 'driver', prefix: 'DL', month, expires: month + Number(s.driver_valid_months || 120), data: { ...base, categories: data.categories || 'B' } });
+  }
+  if (app.type === 'foreign_passport') {
+    if (await hasTravelBan(conn, citizen.id)) throw bad('travel_ban', 'Запрет выезда: загранпаспорт не выдаётся');
+    await q("UPDATE documents SET status = 'closed' WHERE citizen_id = ? AND type = 'foreign_passport' AND status = 'active'", [citizen.id], conn);
+    return addDocument(conn, { citizenId: citizen.id, type: 'foreign_passport', prefix: 'FP', month, expires: month + Number(s.foreign_passport_months || 60), data: { ...base, photo: !!citizen.photo } });
+  }
+  if (app.type === 'visa') {
+    if (await hasTravelBan(conn, citizen.id)) throw bad('travel_ban', 'Запрет выезда: виза не выдаётся');
+    const fp = await one("SELECT number FROM documents WHERE citizen_id = ? AND type = 'foreign_passport' AND status = 'active'", [citizen.id], conn);
+    if (!fp) throw bad('no_foreign_passport', 'Нужен загранпаспорт');
+    const c = await one('SELECT * FROM countries WHERE id = ?', [data.country_id], conn);
+    if (!c) throw bad('no_country', 'Страна не найдена');
+    return addDocument(conn, { citizenId: citizen.id, type: 'visa', prefix: `V${c.code}`, digits: 6, month, expires: month + Number(c.visa_months || 6), data: { ...base, country: c.name, country_code: c.code, foreign_passport: fp.number } });
+  }
+  if (app.type === 'marriage') {
+    const spouse = await one('SELECT * FROM citizens WHERE passport_no = ?', [data.spouse_passport], conn);
+    if (!spouse) throw bad('no_spouse', 'Паспорт супруга(и) не найден');
+    if (spouse.id === citizen.id) throw bad('invalid', 'Нельзя вступить в брак с собой');
+    const number = await addDocument(conn, { citizenId: citizen.id, type: 'marriage', prefix: 'MR', month, data: { ...base, spouse: spouse.full_name, spouse_passport: spouse.passport_no } });
+    await q("INSERT INTO documents (citizen_id, type, number, verify_code, issued_month, data) VALUES (?, 'marriage', ?, ?, ?, ?)", [spouse.id, `${number}-2`, newVerifyCode(), month, JSON.stringify({ full_name: spouse.full_name, passport: spouse.passport_no, spouse: citizen.full_name, spouse_passport: citizen.passport_no })], conn);
+    await q("UPDATE citizens SET marital_status = 'married', spouse_name = ? WHERE id = ?", [spouse.full_name, citizen.id], conn);
+    await q("UPDATE citizens SET marital_status = 'married', spouse_name = ? WHERE id = ?", [citizen.full_name, spouse.id], conn);
+    await notify(conn, 'gov', spouse.gov_user_id, { title: 'Брак зарегистрирован', body: `Супруг(а): ${citizen.full_name}. Свидетельство ${number}-2`, link: '#/documents' });
+    return number;
+  }
+  if (app.type === 'birth') {
+    const children = json(citizen.children, []);
+    children.push({ name: data.child_name, birth_date: data.child_birth_date });
+    await q('UPDATE citizens SET children = ? WHERE id = ?', [JSON.stringify(children), citizen.id], conn);
+    return addDocument(conn, { citizenId: citizen.id, type: 'birth', prefix: 'BR', month, data: { child_name: data.child_name, child_birth_date: data.child_birth_date, parent: citizen.full_name, parent_passport: citizen.passport_no } });
+  }
   throw bad('unknown_type', 'Неизвестный тип заявления');
 }
 
@@ -139,25 +204,35 @@ async function issueFor(conn, app) {
  * Оплатить квитанцию. via: 'bank' — со счёта клиента; 'cash' — на кассе магазина
  * (магазин принимает наличные как агент и перечисляет сумму со своего бизнес-счёта).
  */
-export async function payInvoice(conn, number, { fromAccount, via, actor, idem }) {
+export async function payInvoice(conn, number, { fromAccount, via, actor, idem, force = false, allowArrested = false }) {
   const inv = await one('SELECT * FROM invoices WHERE number = ? FOR UPDATE', [number], conn);
   if (!inv) throw notFound('Квитанция не найдена');
   if (inv.status === 'paid') throw bad('already_paid', 'Квитанция уже оплачена');
   if (inv.status === 'cancelled') throw bad('cancelled', 'Квитанция аннулирована');
+  // Налоги и штрафы можно погасить и с арестованного счёта — арест для этого и наложен.
+  if (allowArrested && ['tax', 'fine'].includes(inv.kind)) {
+    const acc = await one('SELECT status FROM accounts WHERE id = ?', [fromAccount], conn);
+    if (acc?.status === 'arrested') force = true;
+  }
   const r = await post(conn, {
     kind: via === 'cash' ? 'invoice_cash' : 'invoice',
     memo: `${inv.purpose} (${inv.number})`,
     entries: [{ account: fromAccount, amount: -Number(inv.amount) }, { account: await sys('BUDGET', conn), amount: Number(inv.amount) }],
     idem,
     actor,
+    force,
     ref: { type: 'invoice', id: inv.id },
   });
   await q("UPDATE invoices SET status = 'paid', paid_tx_id = ?, paid_via = ?, paid_at = NOW(3) WHERE id = ?", [r.id, via, inv.id], conn);
   if (inv.gov_user_id) await notify(conn, 'gov', inv.gov_user_id, { title: 'Квитанция оплачена', body: `${inv.purpose}: ${formatMoney(inv.amount)}`, link: '#/invoices' });
   if (inv.ref_type === 'application') await processApplication(conn, inv.ref_id);
+  for (const fn of [...(invoiceHooks.get(inv.ref_type) || []), ...(invoiceHooks.get('*') || [])]) await fn(conn, inv);
   return { invoice: { ...inv, status: 'paid' }, tx: r.id };
 }
 
 export function publicInvoice(inv) {
-  return { number: inv.number, kind: inv.kind, purpose: inv.purpose, amount: Number(inv.amount), status: inv.status, created_at: inv.created_at, paid_at: inv.paid_at, paid_via: inv.paid_via };
+  return {
+    number: inv.number, kind: inv.kind, purpose: inv.purpose, amount: Number(inv.amount), penalty: Number(inv.penalty || 0), due_month: inv.due_month ?? null, frozen: !!inv.frozen,
+    status: inv.status, created_at: inv.created_at, paid_at: inv.paid_at, paid_via: inv.paid_via,
+  };
 }

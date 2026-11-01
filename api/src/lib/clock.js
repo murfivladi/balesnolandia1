@@ -121,22 +121,24 @@ onMonth('card_expiry', async (month) => {
   await q("UPDATE cards SET status = 'expired' WHERE status IN ('active','frozen') AND exp_month < ?", [month]);
 });
 
-// Зарплата кассиров с бизнес-счёта магазина.
-onMonth('payroll', async (month) => {
+// Зарплата кассиров с бизнес-счёта магазина; НДФЛ удерживается и уходит в госбюджет.
+onMonth('payroll', async (month, s) => {
   const staff = await q("SELECT st.*, sh.account_id AS shop_account, sh.name AS shop_name, sh.owner_id FROM shop_staff st JOIN shops sh ON sh.id = st.shop_id WHERE st.active = 1 AND st.salary > 0 AND sh.status = 'active' AND st.role = 'cashier'");
   for (const st of staff) {
     await tx(async (conn) => {
       const target = await one("SELECT id FROM accounts WHERE owner_kind = 'bank_user' AND owner_id = ? AND type = 'current' AND status <> 'closed' ORDER BY is_primary DESC, id LIMIT 1", [st.bank_user_id], conn);
       if (!target) return;
+      const ndfl = percentOf(Number(st.salary), Number(s.ndfl_bp || 0));
       try {
         const r = await post(conn, {
           kind: 'salary',
           memo: `Зарплата: ${st.shop_name}`,
           idem: `tick:${month}:salary:${st.id}`,
-          entries: [{ account: st.shop_account, amount: -Number(st.salary) }, { account: target.id, amount: Number(st.salary) }],
+          entries: [{ account: st.shop_account, amount: -Number(st.salary) }, { account: target.id, amount: Number(st.salary) - ndfl }, ...(ndfl ? [{ account: await sys('BUDGET', conn), amount: ndfl }] : [])],
           ref: { type: 'shop', id: st.shop_id },
+          meta: { gross: Number(st.salary), ndfl },
         });
-        if (!r.duplicate) await notify(conn, 'bank', st.bank_user_id, { title: `Зарплата ${formatMoney(st.salary)}`, body: st.shop_name });
+        if (!r.duplicate) await notify(conn, 'bank', st.bank_user_id, { title: `Зарплата ${formatMoney(Number(st.salary) - ndfl)}`, body: `${st.shop_name}${ndfl ? ` · НДФЛ ${formatMoney(ndfl)}` : ''}` });
       } catch (err) {
         if (err.code !== 'insufficient_funds') throw err;
         await notify(conn, 'bank', st.owner_id, { title: 'Не хватило денег на зарплату', body: `${st.shop_name}: пополните бизнес-счёт` });

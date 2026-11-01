@@ -1,7 +1,10 @@
 import { tx, q, one, pool, json } from '../db.js';
 import { bad, notFound, int, str, need } from '../lib/errors.js';
 import { needAdmin, actorOf, rolesOf } from '../lib/auth.js';
-import { getSettings, setSettings, DEFAULTS, resetSettingsCache } from '../lib/settings.js';
+import { getSettings, setSettings, DEFAULTS, SECRET_KEYS, resetSettingsCache, webUrl } from '../lib/settings.js';
+import { sendMail, verifyMail } from '../lib/mail.js';
+import { config } from '../config.js';
+import { VERSION } from '../lib/version.js';
 import { post, sys, reverse, clearSystemCache, recomputeBalance } from '../lib/ledger.js';
 import { notify } from '../lib/notify.js';
 import { audit } from '../lib/audit.js';
@@ -37,15 +40,24 @@ function cleanSettings(body) {
     } else if (t === 'image') {
       need(v === null || v === '' || (typeof v === 'string' && /^data:image\//.test(v) && v.length < 500_000), `Изображение до 350 КБ: ${k}`);
       out[k] = v || null;
+    } else if (t === 'string') {
+      // Пустой секрет из формы означает «не менять»; очистка — явным null.
+      if (SECRET_KEYS.includes(k) && (v === '' || v === undefined)) continue;
+      need(v === null || typeof v === 'string', `Неверное значение: ${k}`);
+      const sv = String(v ?? '').trim();
+      need(sv.length <= 500, `Слишком длинное значение: ${k}`);
+      out[k] = sv;
     }
   }
+  if (out.public_web_url) need(/^https?:\/\/[^\s]+$/.test(out.public_web_url), 'Адрес сайта: https://…');
+  if (out.smtp_port !== undefined) need(out.smtp_port >= 1 && out.smtp_port <= 65535, 'Порт SMTP: от 1 до 65535');
   if ('idle_minutes' in out) need(out.idle_minutes >= 1 && out.idle_minutes <= 240, 'Автовыход: от 1 до 240 минут');
   if ('game_month_minutes' in out) need(out.game_month_minutes >= 1 && out.game_month_minutes <= 1440, 'Игровой месяц: от 1 до 1440 минут');
   return out;
 }
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const KEEP_ON_RESET = new Set(['schema_migrations', 'settings']);
+const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories', 'wholesale_items', 'fine_articles', 'countries']);
 
 async function tableNames(conn) {
   const rows = await q('SHOW TABLES', [], conn);
@@ -67,7 +79,14 @@ export async function adminRoutes(app) {
       (SELECT COUNT(*) FROM shops WHERE status = 'active') AS shops,
       (SELECT COUNT(*) FROM bank_users WHERE status = 'pending') AS pending_bank,
       (SELECT COUNT(*) FROM applications WHERE status = 'pending') AS pending_apps,
-      (SELECT COUNT(*) FROM cards WHERE status = 'active') AS cards`);
+      (SELECT COUNT(*) FROM cards WHERE status = 'active') AS cards,
+      (SELECT COUNT(*) FROM loans WHERE status = 'pending') + (SELECT COUNT(*) FROM credit_lines WHERE status = 'pending') AS pending_credit,
+      (SELECT COUNT(*) FROM fraud_queue WHERE status = 'pending') AS pending_fraud,
+      (SELECT COUNT(*) FROM fines WHERE appeal_status = 'pending') AS pending_fine_appeals,
+      (SELECT COUNT(*) FROM benefits WHERE status = 'pending') AS pending_benefits,
+      (SELECT COUNT(*) FROM appeals WHERE status = 'open') AS open_appeals,
+      (SELECT COUNT(*) FROM citizen_sanctions WHERE active = 1) AS sanctions`);
+    for (const k of Object.keys(counts)) counts[k] = Number(counts[k]);
     return { counts, economy: await economy(), clock: await clockState() };
   });
 
@@ -75,14 +94,21 @@ export async function adminRoutes(app) {
     const sysRows = await q("SELECT system_code, balance FROM accounts WHERE owner_kind = 'system'");
     const sysBal = Object.fromEntries(sysRows.map((r) => [r.system_code, Number(r.balance)]));
     const byType = await q("SELECT type, COUNT(*) AS n, COALESCE(SUM(balance),0) AS total FROM accounts WHERE owner_kind = 'bank_user' AND status <> 'closed' GROUP BY type");
-    const deposits = byType.reduce((s, r) => s + Number(r.total), 0);
+    // Деньги клиентов — положительные остатки; долги по кредитам и кредитным картам — отдельно.
+    const pos = await one("SELECT COALESCE(SUM(GREATEST(balance,0)),0) AS p, COALESCE(-SUM(LEAST(balance,0)),0) AS d FROM accounts WHERE owner_kind = 'bank_user' AND status <> 'closed'");
+    const deposits = Number(pos.p);
+    const idx = await one('SELECT index_ppm, rate_bp FROM price_index ORDER BY month DESC LIMIT 1');
     return {
       emitted: -(sysBal.EMISSION || 0),
       treasury: sysBal.TREASURY || 0,
       budget: sysBal.BUDGET || 0,
       cash: sysBal.CASH || 0,
+      wholesale: sysBal.WHOLESALE || 0,
       deposits,
       money_supply: deposits + (sysBal.CASH || 0),
+      debt: Number(pos.d),
+      price_index: idx ? Number(idx.index_ppm) / 1e6 : 1,
+      inflation_bp: idx ? idx.rate_bp : 0,
       by_type: byType.map((r) => ({ type: r.type, count: Number(r.n), total: Number(r.total) })),
     };
   }
@@ -103,12 +129,51 @@ export async function adminRoutes(app) {
   });
 
   // ——— Настройки ———
-  app.get('/settings', async () => ({ settings: await getSettings({ fresh: true }), defaults: DEFAULTS }));
+  /** Настройки без секретов: вместо пароля — признак «задан». */
+  function masked(s) {
+    const out = { ...s };
+    for (const k of SECRET_KEYS) {
+      out[`${k}_set`] = !!s[k];
+      out[k] = '';
+    }
+    return out;
+  }
+
+  app.get('/settings', async () => ({ settings: masked(await getSettings({ fresh: true })), defaults: DEFAULTS }));
+
+  // Сведения о сервере и о том, откуда берутся адреса и почта.
+  app.get('/server', async () => {
+    const s = await getSettings();
+    const db = await one('SELECT VERSION() AS v');
+    return {
+      version: VERSION,
+      node: process.version,
+      db: db.v,
+      env: config.env,
+      web_url: await webUrl(),
+      cookie_domain: config.cookieDomain || null,
+      mail: s.smtp_host ? 'smtp (админка)' : config.mail.transport === 'smtp' && config.mail.host ? 'smtp (.env)' : 'лог сервера',
+      game_clock: config.gameClock,
+    };
+  });
+
+  // Тестовое письмо: проверка SMTP из админки.
+  app.post('/mail/test', async (req) => {
+    const to = String(req.body?.to || req.actor.user.email || '').trim();
+    need(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to), 'Неверный email');
+    try {
+      await verifyMail();
+      await sendMail({ to, subject: 'Тестовое письмо Балесноландии', text: 'Почта настроена: письма с кодами входа и уведомлениями будут приходить.' });
+    } catch (err) {
+      throw bad('mail_failed', `Почта не отправлена: ${err.message}`);
+    }
+    return { ok: true, to };
+  });
 
   app.patch('/settings', async (req) => {
     const patch = cleanSettings(req.body);
-    const s = await setSettings(patch);
-    await audit(null, actor(req), 'admin.settings', null, null, Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, typeof v === 'string' && v.length > 100 ? '[image]' : v])));
+    const s = masked(await setSettings(patch));
+    await audit(null, actor(req), 'admin.settings', null, null, Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, SECRET_KEYS.includes(k) ? '[скрыто]' : typeof v === 'string' && v.length > 100 ? '[image]' : v])));
     return { settings: s };
   });
 
@@ -150,7 +215,13 @@ export async function adminRoutes(app) {
       const accounts = await q("SELECT * FROM accounts WHERE owner_kind = 'bank_user' AND owner_id = ? ORDER BY id", [id]);
       const cards = await q('SELECT * FROM cards WHERE bank_user_id = ? ORDER BY id DESC', [id]);
       const shops = await q('SELECT id, name, status FROM shops WHERE owner_id = ?', [id]);
-      return { user: publicBankUser(u, await rolesOf('bank', id)), accounts: accounts.map(accountView), cards: cards.map((c) => cardView(c)), shops };
+      const loans = await q('SELECT id, amount, amount_requested, months, status, created_at FROM loans WHERE bank_user_id = ? ORDER BY id DESC', [id]);
+      const fraud = await q('SELECT id, kind, mode, amount, reason, status, created_at FROM fraud_queue WHERE bank_user_id = ? ORDER BY id DESC LIMIT 20', [id]);
+      return {
+        user: publicBankUser(u, await rolesOf('bank', id)), accounts: accounts.map(accountView), cards: cards.map((c) => cardView(c)), shops,
+        loans: loans.map((l) => ({ ...l, amount: l.amount === null ? null : Number(l.amount), amount_requested: Number(l.amount_requested) })),
+        fraud: fraud.map((f) => ({ ...f, amount: Number(f.amount) })),
+      };
     }
     const u = await one('SELECT * FROM gov_users WHERE id = ?', [id]);
     if (!u) throw notFound();
@@ -370,7 +441,8 @@ export async function adminRoutes(app) {
       const out = { format: 'balesnolandia-export', version: 1, exported_at: new Date().toISOString(), tables: {} };
       for (const t of await tableNames(conn)) {
         const [rows] = await conn.query(`SELECT * FROM \`${t}\``);
-        out.tables[t] = rows;
+        // Пароли почты и прочие секреты в файл экспорта не попадают.
+        out.tables[t] = t === 'settings' ? rows.filter((r) => !SECRET_KEYS.includes(r.k)) : rows;
       }
       await audit(null, actor(req), 'admin.export');
       reply.header('Content-Disposition', `attachment; filename="balesnolandia-${new Date().toISOString().slice(0, 10)}.json"`);
@@ -441,8 +513,9 @@ export async function adminRoutes(app) {
           await conn.query(`DELETE FROM \`${t}\``);
         }
       }
-      await conn.query("INSERT INTO accounts (number, owner_kind, type, name, allow_negative, system_code) VALUES ('BF00000000000001','system','system','Эмиссия',1,'EMISSION'),('BF00000000000002','system','system','Казна ВлодБанка',1,'TREASURY'),('BF00000000000003','system','system','Госбюджет БФ',1,'BUDGET'),('BF00000000000004','system','system','Наличные в обороте',1,'CASH')");
+      await conn.query("INSERT INTO accounts (number, owner_kind, type, name, allow_negative, system_code) VALUES ('BF00000000000001','system','system','Эмиссия',1,'EMISSION'),('BF00000000000002','system','system','Казна ВлодБанка',1,'TREASURY'),('BF00000000000003','system','system','Госбюджет БФ',1,'BUDGET'),('BF00000000000004','system','system','Наличные в обороте',1,'CASH'),('BF00000000000005','system','system','Оптовая база БФ',1,'WHOLESALE')");
       await conn.query('INSERT INTO game_clock (id, month_index, last_tick_at, paused) VALUES (1, 0, NOW(3), 0)');
+      await conn.query('INSERT INTO price_index (month, rate_bp, index_ppm) VALUES (0, 0, 1000000)');
       await conn.commit();
     } catch (err) {
       await conn.rollback().catch(() => {});

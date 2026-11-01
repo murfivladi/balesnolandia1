@@ -2,10 +2,11 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 
-// Четыре приложения — multi-page сборка под /balesnolandia/*.
+// Четыре приложения — multi-page сборка: / (выбор), /bank/, /pos/, /services/, /admin/.
+// Сайт живёт в корне домена balesnolandia.vladislavb.ru; другой путь — через BASE_PATH.
 // Маршрутизация внутри приложений по hash (#/...), поэтому shared hosting не нужен .htaccess.
 export default defineConfig({
-  base: '/balesnolandia/',
+  base: process.env.BASE_PATH || '/',
   plugins: [react()],
   build: {
     outDir: 'dist',
