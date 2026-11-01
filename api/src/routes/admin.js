@@ -1,7 +1,9 @@
 import { tx, q, one, pool, json } from '../db.js';
 import { bad, notFound, int, str, need } from '../lib/errors.js';
 import { needAdmin, actorOf, rolesOf } from '../lib/auth.js';
-import { getSettings, setSettings, DEFAULTS, resetSettingsCache } from '../lib/settings.js';
+import { getSettings, setSettings, DEFAULTS, SECRET_KEYS, resetSettingsCache, webUrl } from '../lib/settings.js';
+import { sendMail, verifyMail } from '../lib/mail.js';
+import { config } from '../config.js';
 import { post, sys, reverse, clearSystemCache, recomputeBalance } from '../lib/ledger.js';
 import { notify } from '../lib/notify.js';
 import { audit } from '../lib/audit.js';
@@ -37,8 +39,17 @@ function cleanSettings(body) {
     } else if (t === 'image') {
       need(v === null || v === '' || (typeof v === 'string' && /^data:image\//.test(v) && v.length < 500_000), `Изображение до 350 КБ: ${k}`);
       out[k] = v || null;
+    } else if (t === 'string') {
+      // Пустой секрет из формы означает «не менять»; очистка — явным null.
+      if (SECRET_KEYS.includes(k) && (v === '' || v === undefined)) continue;
+      need(v === null || typeof v === 'string', `Неверное значение: ${k}`);
+      const sv = String(v ?? '').trim();
+      need(sv.length <= 500, `Слишком длинное значение: ${k}`);
+      out[k] = sv;
     }
   }
+  if (out.public_web_url) need(/^https?:\/\/[^\s]+$/.test(out.public_web_url), 'Адрес сайта: https://…');
+  if (out.smtp_port !== undefined) need(out.smtp_port >= 1 && out.smtp_port <= 65535, 'Порт SMTP: от 1 до 65535');
   if ('idle_minutes' in out) need(out.idle_minutes >= 1 && out.idle_minutes <= 240, 'Автовыход: от 1 до 240 минут');
   if ('game_month_minutes' in out) need(out.game_month_minutes >= 1 && out.game_month_minutes <= 1440, 'Игровой месяц: от 1 до 1440 минут');
   return out;
@@ -103,12 +114,50 @@ export async function adminRoutes(app) {
   });
 
   // ——— Настройки ———
-  app.get('/settings', async () => ({ settings: await getSettings({ fresh: true }), defaults: DEFAULTS }));
+  /** Настройки без секретов: вместо пароля — признак «задан». */
+  function masked(s) {
+    const out = { ...s };
+    for (const k of SECRET_KEYS) {
+      out[`${k}_set`] = !!s[k];
+      out[k] = '';
+    }
+    return out;
+  }
+
+  app.get('/settings', async () => ({ settings: masked(await getSettings({ fresh: true })), defaults: DEFAULTS }));
+
+  // Сведения о сервере и о том, откуда берутся адреса и почта.
+  app.get('/server', async () => {
+    const s = await getSettings();
+    const db = await one('SELECT VERSION() AS v');
+    return {
+      node: process.version,
+      db: db.v,
+      env: config.env,
+      web_url: await webUrl(),
+      cookie_domain: config.cookieDomain || null,
+      mail: s.smtp_host ? 'smtp (админка)' : config.mail.transport === 'smtp' && config.mail.host ? 'smtp (.env)' : 'лог сервера',
+      game_clock: config.gameClock,
+    };
+  });
+
+  // Тестовое письмо: проверка SMTP из админки.
+  app.post('/mail/test', async (req) => {
+    const to = String(req.body?.to || req.actor.user.email || '').trim();
+    need(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to), 'Неверный email');
+    try {
+      await verifyMail();
+      await sendMail({ to, subject: 'Тестовое письмо Балесноландии', text: 'Почта настроена: письма с кодами входа и уведомлениями будут приходить.' });
+    } catch (err) {
+      throw bad('mail_failed', `Почта не отправлена: ${err.message}`);
+    }
+    return { ok: true, to };
+  });
 
   app.patch('/settings', async (req) => {
     const patch = cleanSettings(req.body);
-    const s = await setSettings(patch);
-    await audit(null, actor(req), 'admin.settings', null, null, Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, typeof v === 'string' && v.length > 100 ? '[image]' : v])));
+    const s = masked(await setSettings(patch));
+    await audit(null, actor(req), 'admin.settings', null, null, Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, SECRET_KEYS.includes(k) ? '[скрыто]' : typeof v === 'string' && v.length > 100 ? '[image]' : v])));
     return { settings: s };
   });
 
@@ -370,7 +419,8 @@ export async function adminRoutes(app) {
       const out = { format: 'balesnolandia-export', version: 1, exported_at: new Date().toISOString(), tables: {} };
       for (const t of await tableNames(conn)) {
         const [rows] = await conn.query(`SELECT * FROM \`${t}\``);
-        out.tables[t] = rows;
+        // Пароли почты и прочие секреты в файл экспорта не попадают.
+        out.tables[t] = t === 'settings' ? rows.filter((r) => !SECRET_KEYS.includes(r.k)) : rows;
       }
       await audit(null, actor(req), 'admin.export');
       reply.header('Content-Disposition', `attachment; filename="balesnolandia-${new Date().toISOString().slice(0, 10)}.json"`);

@@ -5,6 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import { config } from './config.js';
 import { HttpError } from './lib/errors.js';
+import { allowedOrigins } from './lib/settings.js';
 import { wsRoutes } from './routes/ws.js';
 import { authRoutes } from './routes/auth.js';
 import { commonRoutes } from './routes/common.js';
@@ -22,7 +23,10 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
 
   await app.register(cookie);
   await app.register(cors, {
-    origin: (origin, cb) => cb(null, !origin || config.corsOrigins.includes(origin) || config.env !== 'production'),
+    origin: (origin, cb) => {
+      if (!origin || config.env !== 'production') return cb(null, true);
+      allowedOrigins().then((set) => cb(null, set.has(origin)), () => cb(null, false));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Idempotency-Key'],

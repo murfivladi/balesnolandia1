@@ -1,13 +1,12 @@
 import { tx, q, one, afterCommit } from '../db.js';
 import { bad, notFound, forbidden, int, str, amount as amountOf, need, idemKey } from '../lib/errors.js';
 import { needBank, needPos, issue, clear, hash, verifyHash, actorOf } from '../lib/auth.js';
-import { getSettings } from '../lib/settings.js';
+import { getSettings, webUrl } from '../lib/settings.js';
 import { publish } from '../lib/hub.js';
 import { audit } from '../lib/audit.js';
 import { sendMail } from '../lib/mail.js';
 import { ipOf, innOf, authorizeCard, requireVerified, ownAccount } from '../lib/bank.js';
 import { payInvoice, publicInvoice } from '../lib/gov.js';
-import { config } from '../config.js';
 import {
   openShift, posLog, createSale, loadSale, saleView, payByCard, payByCash, createQr, refundSale, shiftReport, settleCashVat, terminalBySale, receiptData, receiptText,
 } from '../lib/pos.js';
@@ -106,7 +105,7 @@ export async function posRoutes(app) {
       shift: shift ? { id: shift.id, number: shift.number, opened_at: shift.opened_at, opening_float: Number(shift.opening_float) } : null,
       held: held.n,
       vat_bp: s.vat_bp,
-      verify_base: `${config.publicWebUrl}/services/#/verify/receipt/`,
+      verify_base: `${await webUrl()}/services/#/verify/receipt/`,
     };
   });
 

@@ -2,6 +2,7 @@ import 'dotenv/config';
 
 const env = process.env;
 const list = (v) => (v || '').split(',').map((s) => s.trim()).filter(Boolean);
+const prod = (env.NODE_ENV || 'development') === 'production';
 
 export const config = {
   env: env.NODE_ENV || 'development',
@@ -15,10 +16,11 @@ export const config = {
     database: env.DB_NAME || 'bln',
   },
   jwtSecret: env.JWT_SECRET || 'dev-secret-change-me',
-  cookieDomain: env.COOKIE_DOMAIN || undefined,
-  cookieSecure: env.COOKIE_SECURE === 'true',
-  corsOrigins: list(env.CORS_ORIGINS || 'http://localhost:5173'),
-  publicWebUrl: (env.PUBLIC_WEB_URL || 'http://localhost:5173/balesnolandia').replace(/\/$/, ''),
+  // Для продакшена всё по умолчанию настроено на vladinc.ru; адреса и почта уточняются в админке.
+  cookieDomain: env.COOKIE_DOMAIN || (prod ? '.vladinc.ru' : undefined),
+  cookieSecure: env.COOKIE_SECURE ? env.COOKIE_SECURE === 'true' : prod,
+  corsOrigins: list(env.CORS_ORIGINS || (prod ? 'https://vladinc.ru,https://www.vladinc.ru' : 'http://localhost:5173')),
+  publicWebUrl: (env.PUBLIC_WEB_URL || (prod ? 'https://vladinc.ru/balesnolandia' : 'http://localhost:5173/balesnolandia')).replace(/\/$/, ''),
   adminEmails: list(env.ADMIN_EMAILS).map((e) => e.toLowerCase()),
   mail: {
     transport: env.MAIL_TRANSPORT || 'console',

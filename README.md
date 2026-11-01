@@ -46,7 +46,7 @@ npm install
 ```
 
 ```bash
-cp api/.env.example api/.env   # пропишите DB_*, MAIL_TRANSPORT=console, ADMIN_EMAILS=ваш@email
+cp api/.env.example api/.env   # для разработки: NODE_ENV=development, DB_*, MAIL_TRANSPORT=console, ADMIN_EMAILS=ваш@email
 ```
 
 ```bash
@@ -83,32 +83,54 @@ API-тесты используют отдельную базу `bln_test` (им
 
 ## Деплой
 
-`push` в `main` запускает `.github/workflows/deploy.yml`: тесты → сборка фронтенда → FTP на shared hosting → rsync API на VPS → `npm ci` → миграции → `pm2 startOrReload`.
+`push` в `main` запускает `.github/workflows/deploy.yml`:
 
-Секреты репозитория (Settings → Secrets → Actions, окружение `production`):
+1. Тесты, затем сборка фронтенда с адресом API `https://bln-api.vladinc.ru`.
+2. Фронтенд по FTP на shared hosting.
+3. Код API на VPS по SSH.
+4. `deploy/setup-server.sh` от root (идемпотентный, повтор ничего не ломает):
+   - ставит nginx, certbot, MariaDB, Node.js 20 и pm2, если их нет;
+   - создаёт базу и пользователя со случайным паролем;
+   - пишет `api/.env` (пароль базы, `JWT_SECRET`, домен cookie);
+   - кладёт конфиг nginx для `bln-api.vladinc.ru`;
+   - выпускает сертификат Let's Encrypt (продление — таймером certbot);
+   - включает автозапуск pm2.
+5. `npm ci` → миграции → `pm2 startOrReload` → проверка `https://bln-api.vladinc.ru/api/health`.
 
-| Секрет | Пример |
-| --- | --- |
-| `FTP_HOST`, `FTP_USER`, `FTP_PASSWORD` | доступ к shared hosting |
-| `FTP_DIR` | `/public_html/balesnolandia/` (со слешем в конце) |
-| `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` | SSH-доступ к VPS (приватный ключ целиком) |
-| `VPS_APP_DIR` | `/srv/balesnolandia` |
-| `API_URL` | `https://api.vladinc.ru` |
-| `WS_URL` | `wss://api.vladinc.ru/ws` |
+Перед первым деплоем:
 
-Подготовка VPS (один раз):
+- DNS: запись `A` для `bln-api.vladinc.ru` указывает на VPS, порты 80 и 443 открыты.
+- Пользователь `VPS_USER` — root или с `sudo` без пароля. ОС — Debian или Ubuntu.
 
-1. Установите Node.js 20, MariaDB или MySQL, nginx, `npm i -g pm2`, затем `pm2 startup`.
-2. Создайте базу и пользователя: `CREATE DATABASE balesnolandia CHARACTER SET utf8mb4;`
-3. Создайте `$VPS_APP_DIR/api/.env` по образцу `api/.env.example`: пароли базы и SMTP, `JWT_SECRET` (`openssl rand -hex 32`), `COOKIE_DOMAIN=.vladinc.ru`, `CORS_ORIGINS=https://vladinc.ru`, `MAIL_FROM`.
-4. Настройте nginx по `docs/nginx-api.conf` и выпустите сертификат: `certbot --nginx -d api.vladinc.ru`.
-5. API работает **одним процессом**: WebSocket-шина и игровой таймер живут в памяти.
+Секреты репозитория (Settings → Secrets and variables → Actions, окружение `production`):
+
+| Секрет | Обязателен | Пример / по умолчанию |
+| --- | --- | --- |
+| `FTP_HOST`, `FTP_USER`, `FTP_PASSWORD` | да | доступ к shared hosting |
+| `FTP_DIR` | да | `/public_html/balesnolandia/` (со слешем в конце) |
+| `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` | да | SSH-доступ к VPS (приватный ключ целиком) |
+| `ADMIN_EMAILS` | желательно | ваш email — при регистрации с ним выдаётся роль admin |
+| `CERTBOT_EMAIL` | нет | email для уведомлений Let's Encrypt |
+| `VPS_APP_DIR` | нет | `/srv/balesnolandia` |
+| `API_URL`, `WS_URL` | нет | `https://bln-api.vladinc.ru`, `wss://bln-api.vladinc.ru/ws` |
+
+Другой домен API задаётся переменной репозитория `API_DOMAIN` (Variables, не Secrets).
+
+**Что настраивается в админке, а не в `.env`** (Система → Адреса и почта, применяется без перезапуска):
+
+- адрес сайта для ссылок в QR, чеках и письмах — по умолчанию `https://vladinc.ru/balesnolandia`;
+- дополнительные адреса фронтенда для CORS;
+- почта SMTP: сервер, порт, логин, пароль, отправитель, кнопка «тестовое письмо». Пока SMTP не задан, письма с кодами пишутся в лог сервера, а входить можно по паролю.
+
+Пароль SMTP хранится в базе, в админку возвращается только признак «задан» и не попадает в экспорт JSON.
+
+API работает **одним процессом**: WebSocket-шина и игровой таймер живут в памяти.
 
 ## Открытые вопросы из ТЗ — что выбрано
 
 | Вопрос | Решение |
 | --- | --- |
-| Поддомен API | По умолчанию `api.vladinc.ru`; cookie ставятся на `.vladinc.ru`, CORS с credentials. Вариант через прокси `vladinc.ru/balesnolandia/api` тоже работает: задайте `API_URL` и `WS_URL` |
+| Поддомен API | `bln-api.vladinc.ru` за nginx, конфиг и сертификат ставит деплой; cookie на `.vladinc.ru`, CORS с credentials |
 | `.htaccess` на shared hosting | Не обязателен: маршруты на `#/…`. Если поддерживается — включится кеширование статики |
 | Версия MySQL / MariaDB | Схема проверена на MariaDB 10.11 и совместима с MySQL 8; JSON-столбцы читаются в обоих вариантах |
-| Адрес писем | `MAIL_FROM` в `.env` (по умолчанию `no-reply@vladinc.ru`) |
+| Адрес писем | В админке: Система → Адреса и почта (по умолчанию `no-reply@vladinc.ru`) |

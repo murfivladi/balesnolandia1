@@ -656,10 +656,76 @@ function SystemSection() {
   return (
     <div className="page">
       <h1>{t('Система')}</h1>
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'settings', label: t('Переключатели и логотипы') }, { value: 'data', label: t('Экспорт / импорт / сброс') }, { value: 'audit', label: t('Журнал действий') }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'settings', label: t('Переключатели и логотипы') }, { value: 'server', label: t('Адреса и почта') }, { value: 'data', label: t('Экспорт / импорт / сброс') }, { value: 'audit', label: t('Журнал действий') }]} />
       {tab === 'settings' && <SettingsForm keys={SYSTEM_KEYS} />}
+      {tab === 'server' && <ServerSettings />}
       {tab === 'data' && <DataTools />}
       {tab === 'audit' && <Audit />}
+    </div>
+  );
+}
+
+/** Адреса сайта и SMTP — то, что раньше было в .env, теперь меняется без перезапуска. */
+function ServerSettings() {
+  const { data, loading } = useAsync(() => get('/admin/settings'), []);
+  const server = useAsync(() => get('/admin/server'), []);
+  const [f, setF] = useState(null);
+  const [to, setTo] = useState('');
+  const toast = useToast();
+  useEffect(() => { if (data) setF({ ...data.settings }); }, [data]);
+  if ((loading && !data) || !f) return <Spinner />;
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+  return (
+    <div className="grid grid-2">
+      <div className="card">
+        <Form onSubmit={async () => {
+          const body = {
+            public_web_url: f.public_web_url, cors_origins: f.cors_origins,
+            smtp_host: f.smtp_host, smtp_port: Number(f.smtp_port) || 465, smtp_secure: !!f.smtp_secure, smtp_user: f.smtp_user, mail_from: f.mail_from,
+          };
+          if (f.smtp_password) body.smtp_password = f.smtp_password;
+          const r = await patch('/admin/settings', body);
+          setF({ ...r.settings });
+          server.reload();
+          toast(t('Сохранено'), 'ok');
+        }}>
+          <h2>{t('Адреса')}</h2>
+          <Input label={t('Адрес сайта')} placeholder="https://vladinc.ru/balesnolandia" value={f.public_web_url} onChange={set('public_web_url')} hint={t('Для ссылок в QR, чеках и письмах. Пусто — https://vladinc.ru/balesnolandia')} />
+          <Input label={t('Дополнительные адреса фронтенда (CORS)')} placeholder="https://www.vladinc.ru" value={f.cors_origins} onChange={set('cors_origins')} hint={t('Через запятую. Адрес сайта разрешён всегда.')} />
+          <h2 style={{ marginTop: 8 }}>{t('Почта (SMTP)')}</h2>
+          <p className="small muted">{t('Пока SMTP не задан, письма с кодами входа пишутся в лог сервера — входите по паролю.')}</p>
+          <div className="grid grid-2">
+            <Input label={t('SMTP-сервер')} placeholder="smtp.vladinc.ru" value={f.smtp_host} onChange={set('smtp_host')} />
+            <Input label={t('Порт')} type="number" min={1} max={65535} value={f.smtp_port} onChange={set('smtp_port')} />
+          </div>
+          <label className="check"><input type="checkbox" checked={!!f.smtp_secure} onChange={set('smtp_secure')} /> {t('SSL/TLS (порт 465)')}</label>
+          <div className="grid grid-2">
+            <Input label={t('Логин')} autoComplete="off" value={f.smtp_user} onChange={set('smtp_user')} />
+            <Input label={t('Пароль')} type="password" autoComplete="new-password" placeholder={f.smtp_password_set ? '••••••••' : ''} value={f.smtp_password} onChange={set('smtp_password')} hint={f.smtp_password_set ? t('Задан. Оставьте пустым, чтобы не менять.') : null} />
+          </div>
+          <Input label={t('Отправитель')} placeholder="Балесноландия <no-reply@vladinc.ru>" value={f.mail_from} onChange={set('mail_from')} />
+        </Form>
+      </div>
+      <div className="stack">
+        <div className="card stack">
+          <h2>{t('Тестовое письмо')}</h2>
+          <Input label="Email" type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder={t('Ваш email')} />
+          <ActionButton kind="secondary" action={async () => { const r = await post('/admin/mail/test', { to }); toast(t('Письмо отправлено на {email}', { email: r.to }), 'ok'); }}>{t('Отправить тестовое письмо')}</ActionButton>
+        </div>
+        {server.data && (
+          <div className="card">
+            <h2>{t('Сервер')}</h2>
+            <table className="table"><tbody>
+              <tr><td>{t('Адрес сайта')}</td><td className="small">{server.data.web_url}</td></tr>
+              <tr><td>{t('Почта')}</td><td>{t(server.data.mail)}</td></tr>
+              <tr><td>{t('Домен cookie')}</td><td className="mono small">{server.data.cookie_domain || '—'}</td></tr>
+              <tr><td>Node.js</td><td className="mono small">{server.data.node}</td></tr>
+              <tr><td>{t('База данных')}</td><td className="mono small">{server.data.db}</td></tr>
+              <tr><td>{t('Игровой таймер')}</td><td>{server.data.game_clock ? t('идёт') : t('выключен')}</td></tr>
+            </tbody></table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

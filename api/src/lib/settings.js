@@ -1,4 +1,5 @@
 import { q, json } from '../db.js';
+import { config } from '../config.js';
 
 /** Все ставки и переключатели админа. Деньги — во влодинках, проценты — в базисных пунктах (100 = 1%). */
 export const DEFAULTS = {
@@ -27,7 +28,19 @@ export const DEFAULTS = {
   fee_inn: 0,
   fee_ip: 5000,
   passport_valid_months: 120,
+  // Адреса и почта — задаются в админке (раздел «Система»), .env для них не нужен
+  public_web_url: '',
+  cors_origins: '',
+  smtp_host: '',
+  smtp_port: 465,
+  smtp_secure: true,
+  smtp_user: '',
+  smtp_password: '',
+  mail_from: '',
 };
+
+/** Секреты: в админку не отдаются, в экспорт не попадают. */
+export const SECRET_KEYS = ['smtp_password'];
 
 let cache = null;
 let cacheAt = 0;
@@ -80,4 +93,19 @@ export function publicSettings(s) {
 
 export function resetSettingsCache() {
   cache = null;
+}
+
+/** Публичный адрес фронтенда (для ссылок в QR, чеках, письмах). */
+export async function webUrl() {
+  const v = String((await getSettings()).public_web_url || '').trim();
+  return (v || config.publicWebUrl).replace(/\/$/, '');
+}
+
+/** Разрешённые источники CORS: из .env, из админки и origin публичного адреса. */
+export async function allowedOrigins() {
+  const s = await getSettings();
+  const out = new Set(config.corsOrigins);
+  for (const o of String(s.cors_origins || '').split(/[\s,]+/)) if (o) out.add(o.replace(/\/$/, ''));
+  try { out.add(new URL(await webUrl()).origin); } catch { /* неверный адрес */ }
+  return out;
 }

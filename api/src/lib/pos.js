@@ -1,8 +1,7 @@
 // Логика кассы: продажа, оплаты (наличные/карта/QR, раздельно), возвраты, смены, отчёты.
 import { q, one, afterCommit, json } from '../db.js';
-import { config } from '../config.js';
 import { bad, notFound } from './errors.js';
-import { getSettings } from './settings.js';
+import { getSettings, webUrl } from './settings.js';
 import { post, sys } from './ledger.js';
 import { publish } from './hub.js';
 import { notify } from './notify.js';
@@ -226,7 +225,7 @@ export async function createQr(conn, { sale, shop, amount }) {
   const token = randomToken(18);
   await q("UPDATE qr_payments SET status = 'cancelled' WHERE kind = 'sale' AND ref_id = ? AND status = 'pending'", [sale.id], conn);
   await q('INSERT INTO qr_payments (token, kind, ref_id, amount, title, expires_at) VALUES (?, ?, ?, ?, ?, NOW(3) + INTERVAL ? MINUTE)', [token, 'sale', sale.id, amount, `${shop.name}: чек`, QR_MINUTES], conn);
-  return { token, url: `${config.publicWebUrl}/bank/#/qr/${token}`, amount, expires_minutes: QR_MINUTES };
+  return { token, url: `${await webUrl()}/bank/#/qr/${token}`, amount, expires_minutes: QR_MINUTES };
 }
 
 export async function qrInfo(token) {
@@ -413,7 +412,7 @@ export async function receiptData(saleId) {
     cashier: cashier?.full_name || '',
     shift: shift?.number || null,
     refunds: refunds.map((r) => ({ ...r, amount: Number(r.amount) })),
-    verify_url: `${config.publicWebUrl}/services/#/verify/receipt/${sale.verify_code}`,
+    verify_url: `${await webUrl()}/services/#/verify/receipt/${sale.verify_code}`,
   };
 }
 

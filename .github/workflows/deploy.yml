@@ -44,6 +44,12 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     environment: production
+    env:
+      # Обязательные секреты: FTP_HOST, FTP_USER, FTP_PASSWORD, FTP_DIR, VPS_HOST, VPS_USER, VPS_SSH_KEY.
+      # Остальное — со значениями по умолчанию; адреса сайта и почта настраиваются в админке.
+      API_DOMAIN: ${{ vars.API_DOMAIN || 'bln-api.vladinc.ru' }}
+      APP_DIR: ${{ secrets.VPS_APP_DIR || '/srv/balesnolandia' }}
+      SSH_TARGET: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,11 +58,15 @@ jobs:
           cache: npm
       - run: npm ci
 
+      - name: Адреса API
+        run: |
+          echo "API_URL=${{ secrets.API_URL }}" >> "$GITHUB_ENV"
+          echo "WS_URL=${{ secrets.WS_URL }}" >> "$GITHUB_ENV"
+          [ -n "${{ secrets.API_URL }}" ] || echo "API_URL=https://$API_DOMAIN" >> "$GITHUB_ENV"
+          [ -n "${{ secrets.WS_URL }}" ] || echo "WS_URL=wss://$API_DOMAIN/ws" >> "$GITHUB_ENV"
+
       - name: Сборка фронтенда
-        run: npm run build
-        env:
-          VITE_API_URL: ${{ secrets.API_URL }}
-          VITE_WS_URL: ${{ secrets.WS_URL }}
+        run: VITE_API_URL="$API_URL" VITE_WS_URL="$WS_URL" npm run build
 
       - name: Фронтенд → shared hosting (FTP)
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
@@ -72,20 +82,29 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "SSH=ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes $SSH_TARGET" >> "$GITHUB_ENV"
 
-      - name: API → VPS
+      - name: Код API → VPS
         run: |
-          rsync -azR --delete --exclude node_modules --exclude .env \
-            -e "ssh -i ~/.ssh/deploy_key" \
-            package.json package-lock.json ecosystem.config.cjs api/ shared/ web/package.json \
-            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/"
+          $SSH "set -e; S=''; [ \"\$(id -u)\" = 0 ] || S='sudo -n'; \$S mkdir -p '$APP_DIR'; \$S chown \"\$(id -un)\": '$APP_DIR'; \
+                cd '$APP_DIR' && rm -rf api/src api/scripts api/test shared deploy"
+          tar czf - --exclude='api/.env' --exclude='node_modules' \
+              package.json package-lock.json ecosystem.config.cjs api shared deploy web/package.json \
+            | $SSH "tar xzf - -C '$APP_DIR'"
+
+      - name: Сервер — nginx, сертификат, база, .env
+        run: |
+          $SSH "S=''; [ \"\$(id -u)\" = 0 ] || S='sudo -n'; \$S env \
+            DOMAIN='$API_DOMAIN' APP_DIR='$APP_DIR' APP_USER=\"\$(id -un)\" \
+            ADMIN_EMAILS='${{ secrets.ADMIN_EMAILS }}' CERTBOT_EMAIL='${{ secrets.CERTBOT_EMAIL }}' \
+            bash '$APP_DIR/deploy/setup-server.sh'"
 
       - name: Зависимости, миграции, перезапуск
         run: |
-          ssh -i ~/.ssh/deploy_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" bash -se <<EOF
+          $SSH bash -se <<EOF
           set -euo pipefail
-          cd "${{ secrets.VPS_APP_DIR }}"
+          cd "$APP_DIR"
           npm ci --omit=dev --workspace api --include-workspace-root=false --no-audit --no-fund
           npm run migrate --workspace api
           pm2 startOrReload ecosystem.config.cjs --update-env
@@ -93,4 +112,6 @@ jobs:
           EOF
 
       - name: Проверка API
-        run: curl -fsS "${{ secrets.API_URL }}/api/health"
+        run: |
+          for i in 1 2 3 4 5 6; do curl -fsS "$API_URL/api/health" && exit 0; sleep 5; done
+          echo "API не отвечает по $API_URL" && exit 1
