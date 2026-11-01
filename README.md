@@ -109,16 +109,16 @@ API сам делает при запуске то, что раньше дела
 
 Settings → Secrets and variables → Actions, окружение `production`:
 
-У сайта и API — отдельные FTP-доступы (у каждого сайта Vladhost свой, вкладка «FTP»).
+У сайта и API — отдельные FTP-доступы (у каждого сайта Vladhost свой, вкладка «FTP»). FTP всегда на порту `2121`. База — на сервере `db.vladinc.ru`, логин базы совпадает с её именем, поэтому отдельные `DB_HOST` и `DB_USER` не нужны.
 
 | Секрет | Обязателен | Что это |
 | --- | --- | --- |
 | `FTP_HOST`, `FTP_USER`, `FTP_PASSWORD` | да | FTP сайта `balesnolandia.vladislavb.ru` |
-| `FTP_PORT`, `FTP_DIR` | нет | порт (по умолчанию 21) и папка (по умолчанию корень `./`) |
+| `FTP_DIR` | нет | папка (по умолчанию корень `./`) |
 | `FTP_API_HOST`, `FTP_API_USER`, `FTP_API_PASSWORD` | да | FTP сайта `api.balesnolandia.vladislavb.ru` |
-| `FTP_API_PORT`, `FTP_API_DIR` | нет | порт (по умолчанию 21) и папка (по умолчанию корень `./`) |
+| `FTP_API_DIR` | нет | папка (по умолчанию корень `./`) |
 | `DB_NAME`, `DB_PASSWORD` | да | база MariaDB из панели |
-| `DB_HOST`, `DB_PORT`, `DB_USER` | нет | по умолчанию `127.0.0.1`, `3306`, `DB_USER` = `DB_NAME` |
+| `DB_PORT` | нет | по умолчанию `3306` |
 | `ADMIN_EMAILS` | желательно | ваш email — при регистрации с ним выдаётся роль admin |
 
 Переменные (Variables): `SITE_DOMAIN`, `API_DOMAIN` — если домены поменяются. `FTP_PROTOCOL` — по умолчанию `ftps`, как требует Vladhost. `FTP_SECURITY=loose` — если сертификат FTP-сервера не проходит проверку.
