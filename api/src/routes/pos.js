@@ -25,11 +25,22 @@ function image(v, name) {
 }
 
 function shopView(s) {
-  return { id: s.id, name: s.name, type: s.type, color: s.color, logo: s.logo, inn: s.inn, ip_number: s.ip_number, address: s.address, receipt_footer: s.receipt_footer, status: s.status, account_id: s.account_id };
+  return { id: s.id, name: s.name, type: s.type, color: s.color, logo: s.logo, inn: s.inn, ip_number: s.ip_number, address: s.address, receipt_footer: s.receipt_footer, status: s.status, account_id: s.account_id, cashback_category_id: s.cashback_category_id ?? null };
 }
 
 function productView(p) {
   return { id: p.id, name: p.name, category: p.category, barcode: p.barcode, price: Number(p.price), cost: Number(p.cost), unit: p.unit, age_limit: p.age_limit, photo: p.photo, track_stock: !!p.track_stock, stock_milli: Number(p.stock_milli), active: !!p.active, sort: p.sort };
+}
+
+/** Категория кешбэка магазина: выбранная владельцем или по умолчанию по типу (кафе / магазин). */
+async function cashbackCategory(conn, id, type) {
+  if (id) {
+    const c = await one('SELECT id FROM cashback_categories WHERE id = ? AND active = 1', [Number(id) || 0], conn);
+    if (!c) throw bad('invalid', 'Неизвестная категория кешбэка');
+    return c.id;
+  }
+  const d = await one('SELECT id FROM cashback_categories WHERE name = ? AND active = 1', [type === 'cafe' ? 'Кафе и рестораны' : 'Продукты'], conn);
+  return d?.id || null;
 }
 
 async function shopOf(req, conn) {
@@ -46,6 +57,8 @@ export async function posRoutes(app) {
   const owner = { preHandler: needPos({ owner: true }) };
 
   // ——— Магазины: создание и вход ———
+  app.get('/cashback-categories', async () => ({ categories: await q('SELECT id, name, rate_bp FROM cashback_categories WHERE active = 1 ORDER BY sort, id') }));
+
   app.get('/my-shops', bankAuth, async (req) => {
     const rows = await q("SELECT s.*, st.role AS my_role, st.pin_hash IS NOT NULL AS has_pin FROM shops s JOIN shop_staff st ON st.shop_id = s.id AND st.bank_user_id = ? AND st.active = 1 WHERE s.status = 'active' ORDER BY s.name", [req.bank.id]);
     const ip = await ipOf(req.bank.user);
@@ -68,8 +81,10 @@ export async function posRoutes(app) {
       const inn = await innOf(u, conn);
       const pin = String(b.pin || '');
       need(/^\d{4}$/.test(pin), 'PIN кассира — 4 цифры');
-      const res = await q('INSERT INTO shops (owner_id, name, type, color, account_id, inn, ip_number, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
-        u.id, str(b.name, 'название', { min: 2, max: 80 }), b.type === 'cafe' ? 'cafe' : 'shop', COLOR_RE.test(b.color) ? b.color : '#0f766e', acc.id, inn?.number || '', ip.number, str(b.address, 'адрес', { optional: true, max: 160 }),
+      const type = b.type === 'cafe' ? 'cafe' : 'shop';
+      const res = await q('INSERT INTO shops (owner_id, name, type, color, account_id, inn, ip_number, address, cashback_category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+        u.id, str(b.name, 'название', { min: 2, max: 80 }), type, COLOR_RE.test(b.color) ? b.color : '#0f766e', acc.id, inn?.number || '', ip.number, str(b.address, 'адрес', { optional: true, max: 160 }),
+        await cashbackCategory(conn, b.cashback_category_id, type),
       ], conn);
       await q("INSERT INTO shop_staff (shop_id, bank_user_id, role, pin_hash) VALUES (?, ?, 'owner', ?)", [res.insertId, u.id, await hash(pin)], conn);
       await audit(conn, actorOf(req.bank), 'pos.shop_create', 'shop', res.insertId);
@@ -114,6 +129,8 @@ export async function posRoutes(app) {
     const b = req.body || {};
     const shop = await shopOf(req);
     const logo = image(b.logo, 'логотип');
+    const cat = b.cashback_category_id !== undefined ? await cashbackCategory(null, b.cashback_category_id, shop.type) : shop.cashback_category_id;
+    await q('UPDATE shops SET cashback_category_id = ? WHERE id = ?', [cat, shop.id]);
     await q('UPDATE shops SET name = ?, type = ?, color = ?, address = ?, receipt_footer = ?, logo = ? WHERE id = ?', [
       b.name !== undefined ? str(b.name, 'название', { min: 2, max: 80 }) : shop.name,
       b.type === 'cafe' || b.type === 'shop' ? b.type : shop.type,

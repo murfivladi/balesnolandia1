@@ -11,7 +11,11 @@ import { formatMoney, percentOf } from '@bln/shared/money.js';
 import { isValidCardNumber } from '@bln/shared/format.js';
 import { parseMmYY } from '@bln/shared/time.js';
 
+/** Виды счетов, которые клиент открывает сам. Кредитный, ссудный, детский и подарочный
+ *  счета создаются вместе с картой или кредитом (lib/finance.js). */
 export const ACCOUNT_NAMES = { current: 'Расчётный счёт', savings: 'Накопительный счёт', term: 'Вклад', business: 'Бизнес-счёт' };
+/** К какому виду счёта привязывается карта каждого вида. */
+const CARD_ACCOUNT = { debit: ['current', 'business'], credit: ['credit'], child: ['child'], gift: ['gift'] };
 const PIN_LOCK_SECONDS = 60;
 const PIN_MAX_FAILS = 3;
 
@@ -79,9 +83,12 @@ export async function openAccount(conn, user, { type, name, compound = false, te
   return one('SELECT * FROM accounts WHERE id = ?', [id], conn);
 }
 
-/** Со вклада на срок деньги не тратятся напрямую — только закрытием вклада. */
+/** Со вклада на срок деньги не тратятся напрямую — только закрытием вклада.
+ *  Ссудный счёт — это долг, подарочный тратится только картой. */
 export function assertSpendable(account) {
   if (account.type === 'term') throw bad('term_locked', 'Со вклада на срок нельзя платить — закройте вклад');
+  if (account.type === 'loan') throw bad('loan_locked', 'Со ссудного счёта нельзя платить');
+  if (account.type === 'gift') throw bad('gift_locked', 'Подарочная карта тратится на кассе или зачисляется на счёт');
 }
 
 export function checkPinFormat(pin) {
@@ -89,10 +96,11 @@ export function checkPinFormat(pin) {
   return String(pin);
 }
 
-export async function issueCard(conn, { user, account, pin, type = 'debit', background = 'classic', issuedBy = null, chargeFee = true, feeKey = 'card_issue_fee' }) {
+export async function issueCard(conn, { user, account, pin, pinHash = null, type = 'debit', background = 'classic', issuedBy = null, chargeFee = true, feeKey = 'card_issue_fee', holderName = null, holderUserId = null }) {
   requireVerified(user);
   if (account.owner_id !== user.id || account.owner_kind !== 'bank_user') throw forbidden();
-  if (!['current', 'business'].includes(account.type)) throw bad('invalid_account', 'Карту можно привязать к расчётному или бизнес-счёту');
+  if (!CARD_ACCOUNT[type]) throw bad('invalid_type', 'Неизвестный вид карты');
+  if (!CARD_ACCOUNT[type].includes(account.type)) throw bad('invalid_account', type === 'debit' ? 'Карту можно привязать к расчётному или бизнес-счёту' : 'Счёт не подходит для этой карты');
   if (account.status === 'closed') throw bad('account_closed', 'Счёт закрыт');
   const s = await getSettings();
   const month = await currentMonth(conn);
@@ -104,12 +112,12 @@ export async function issueCard(conn, { user, account, pin, type = 'debit', back
       entries: [{ account: account.id, amount: -fee }, { account: await sys('TREASURY', conn), amount: fee }],
     });
   }
-  const pinHash = await hash(checkPinFormat(pin));
-  const holder = translit(user.full_name).toUpperCase().slice(0, 26);
+  const pinH = pinHash || (await hash(checkPinFormat(pin)));
+  const holder = translit(holderName || user.full_name).toUpperCase().slice(0, 26);
   const id = await withUnique(async () => {
     const r = await q(
-      'INSERT INTO cards (account_id, bank_user_id, number, exp_month, pin_hash, type, holder_name, background, issued_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [account.id, user.id, newCardNumber(), month + Number(s.card_valid_months || 36), pinHash, type, holder, background, issuedBy],
+      'INSERT INTO cards (account_id, bank_user_id, holder_user_id, number, exp_month, pin_hash, type, holder_name, background, issued_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [account.id, user.id, holderUserId, newCardNumber(), month + Number(s.card_valid_months || 36), pinH, type, holder, background, issuedBy],
       conn,
     );
     return r.insertId;
@@ -139,6 +147,9 @@ export function cardView(c, { full = true } = {}) {
     limit_tx: c.limit_tx === null ? null : Number(c.limit_tx),
     limit_daily: c.limit_daily === null ? null : Number(c.limit_daily),
     background: c.background,
+    holder_user_id: c.holder_user_id ?? null,
+    balance: c.balance === undefined ? undefined : Number(c.balance),
+    available: c.balance === undefined ? undefined : Number(c.balance) + Number(c.credit_limit || 0),
     locked_until: c.locked_until && new Date(c.locked_until) > new Date() ? c.locked_until : null,
     created_at: c.created_at,
   };
@@ -153,6 +164,7 @@ export function accountView(a) {
     balance: Number(a.balance),
     status: a.status,
     rate_bp: a.rate_bp,
+    credit_limit: Number(a.credit_limit || 0),
     compound: !!a.compound,
     term_months: a.term_months,
     opened_month: a.opened_month,

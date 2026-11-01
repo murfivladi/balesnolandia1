@@ -19,7 +19,7 @@ export function newCardNumber() {
 
 /** Номер счёта: 16 знаков, BF + тип + цифры — не похож на IBAN и реальные счета. */
 export function newAccountNumber(type) {
-  const t = { current: '40', savings: '42', term: '43', business: '45' }[type] || '49';
+  const t = { current: '40', savings: '42', term: '43', gift: '44', business: '45', child: '46', credit: '47', loan: '48' }[type] || '49';
   return `BF${t}${randomDigits(12)}`;
 }
 

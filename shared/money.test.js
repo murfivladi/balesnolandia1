@@ -44,3 +44,14 @@ test('game time and card', () => {
   assert.ok(isValidCardNumber(base + luhnDigit(base)));
   assert.equal(normalizePassport('bln 1234 5678'), 'BLN-1234-5678');
 });
+
+test('annuity schedule', async () => {
+  const { annuitySchedule } = await import('./money.js');
+  const s = annuitySchedule(100000, 12, 200);
+  assert.equal(s.rows.length, 12);
+  assert.equal(s.rows.reduce((a, r) => a + r.principal, 0), 100000);
+  assert.equal(s.payment, 9456);
+  for (const r of s.rows.slice(0, 11)) assert.equal(r.principal + r.interest, s.payment);
+  const z = annuitySchedule(1000, 3, 0);
+  assert.deepEqual(z.rows.map((r) => r.principal), [334, 334, 332]);
+});

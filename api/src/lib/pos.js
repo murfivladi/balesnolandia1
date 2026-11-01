@@ -6,6 +6,7 @@ import { post, sys } from './ledger.js';
 import { publish } from './hub.js';
 import { notify } from './notify.js';
 import { checkCardLimits, primaryAccount } from './bank.js';
+import { accrueCashback, revokeCashback, reviewIfLarge } from './finance.js';
 import { randomToken, newVerifyCode } from './ids.js';
 import { createInvoice } from './gov.js';
 import { formatMoney, percentOf, vatIncluded } from '@bln/shared/money.js';
@@ -191,6 +192,9 @@ async function applyAccountPayment(conn, { sale, shop, method, amount, payerAcco
     meta: { goods, vat, tip, fee },
   });
   if (r.duplicate) return { duplicate: true };
+  // Кешбэк по категории магазина (если клиент выбрал её на этот месяц) и антифрод для крупных сумм.
+  await accrueCashback(conn, { accountId: payerAccountId, shop, goods, saleId: sale.id });
+  await reviewIfLarge(conn, { accountId: payerAccountId, amount, kind: method === 'qr' ? 'qr_payment' : 'card_payment', txId: r.id, cardId: card?.id || null });
   await q('INSERT INTO sale_payments (sale_id, method, amount, tip, card_id, payer_account_id, tx_id) VALUES (?, ?, ?, ?, ?, ?, ?)', [sale.id, method, amount, tip, card?.id || null, payerAccountId, r.id], conn);
   await q('UPDATE sales SET paid = paid + ? WHERE id = ?', [amount, sale.id], conn);
   const payer = await one('SELECT owner_id FROM accounts WHERE id = ?', [payerAccountId], conn);
@@ -318,6 +322,7 @@ export async function refundSale(conn, { sale, shop, staff, lines, all = false, 
       if (part.vat) entries.push({ account: await sys('BUDGET', conn), amount: -part.vat });
       const r = await post(conn, { kind: 'refund', memo: `Возврат: ${shop.name}, чек №${sale.number}`, entries, ref: { type: 'sale', id: sale.id }, actor: { kind: 'bank', id: staff.bank_user_id }, idem: idem ? `${idem}:${p.id}` : null });
       txIds.push(r.id);
+      await revokeCashback(conn, { saleId: sale.id, accountId: p.payer_account_id, amount: part.amount, saleTotal: Number(sale.total) });
       const payer = await one('SELECT owner_id FROM accounts WHERE id = ?', [p.payer_account_id], conn);
       if (payer) await notify(conn, 'bank', payer.owner_id, { title: `Возврат ${formatMoney(part.amount)}`, body: shop.name });
     }

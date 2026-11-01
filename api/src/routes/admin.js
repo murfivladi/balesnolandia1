@@ -57,7 +57,7 @@ function cleanSettings(body) {
 }
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const KEEP_ON_RESET = new Set(['schema_migrations', 'settings']);
+const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories']);
 
 async function tableNames(conn) {
   const rows = await q('SHOW TABLES', [], conn);
@@ -79,7 +79,10 @@ export async function adminRoutes(app) {
       (SELECT COUNT(*) FROM shops WHERE status = 'active') AS shops,
       (SELECT COUNT(*) FROM bank_users WHERE status = 'pending') AS pending_bank,
       (SELECT COUNT(*) FROM applications WHERE status = 'pending') AS pending_apps,
-      (SELECT COUNT(*) FROM cards WHERE status = 'active') AS cards`);
+      (SELECT COUNT(*) FROM cards WHERE status = 'active') AS cards,
+      (SELECT COUNT(*) FROM loans WHERE status = 'pending') + (SELECT COUNT(*) FROM credit_lines WHERE status = 'pending') AS pending_credit,
+      (SELECT COUNT(*) FROM fraud_queue WHERE status = 'pending') AS pending_fraud`);
+    for (const k of Object.keys(counts)) counts[k] = Number(counts[k]);
     return { counts, economy: await economy(), clock: await clockState() };
   });
 
@@ -87,7 +90,10 @@ export async function adminRoutes(app) {
     const sysRows = await q("SELECT system_code, balance FROM accounts WHERE owner_kind = 'system'");
     const sysBal = Object.fromEntries(sysRows.map((r) => [r.system_code, Number(r.balance)]));
     const byType = await q("SELECT type, COUNT(*) AS n, COALESCE(SUM(balance),0) AS total FROM accounts WHERE owner_kind = 'bank_user' AND status <> 'closed' GROUP BY type");
-    const deposits = byType.reduce((s, r) => s + Number(r.total), 0);
+    // Деньги клиентов — положительные остатки; долги по кредитам и кредитным картам — отдельно.
+    const pos = await one("SELECT COALESCE(SUM(GREATEST(balance,0)),0) AS p, COALESCE(-SUM(LEAST(balance,0)),0) AS d FROM accounts WHERE owner_kind = 'bank_user' AND status <> 'closed'");
+    const deposits = Number(pos.p);
+    const idx = await one('SELECT index_ppm, rate_bp FROM price_index ORDER BY month DESC LIMIT 1');
     return {
       emitted: -(sysBal.EMISSION || 0),
       treasury: sysBal.TREASURY || 0,
@@ -95,6 +101,9 @@ export async function adminRoutes(app) {
       cash: sysBal.CASH || 0,
       deposits,
       money_supply: deposits + (sysBal.CASH || 0),
+      debt: Number(pos.d),
+      price_index: idx ? Number(idx.index_ppm) / 1e6 : 1,
+      inflation_bp: idx ? idx.rate_bp : 0,
       by_type: byType.map((r) => ({ type: r.type, count: Number(r.n), total: Number(r.total) })),
     };
   }
@@ -201,7 +210,13 @@ export async function adminRoutes(app) {
       const accounts = await q("SELECT * FROM accounts WHERE owner_kind = 'bank_user' AND owner_id = ? ORDER BY id", [id]);
       const cards = await q('SELECT * FROM cards WHERE bank_user_id = ? ORDER BY id DESC', [id]);
       const shops = await q('SELECT id, name, status FROM shops WHERE owner_id = ?', [id]);
-      return { user: publicBankUser(u, await rolesOf('bank', id)), accounts: accounts.map(accountView), cards: cards.map((c) => cardView(c)), shops };
+      const loans = await q('SELECT id, amount, amount_requested, months, status, created_at FROM loans WHERE bank_user_id = ? ORDER BY id DESC', [id]);
+      const fraud = await q('SELECT id, kind, mode, amount, reason, status, created_at FROM fraud_queue WHERE bank_user_id = ? ORDER BY id DESC LIMIT 20', [id]);
+      return {
+        user: publicBankUser(u, await rolesOf('bank', id)), accounts: accounts.map(accountView), cards: cards.map((c) => cardView(c)), shops,
+        loans: loans.map((l) => ({ ...l, amount: l.amount === null ? null : Number(l.amount), amount_requested: Number(l.amount_requested) })),
+        fraud: fraud.map((f) => ({ ...f, amount: Number(f.amount) })),
+      };
     }
     const u = await one('SELECT * FROM gov_users WHERE id = ?', [id]);
     if (!u) throw notFound();
@@ -495,6 +510,7 @@ export async function adminRoutes(app) {
       }
       await conn.query("INSERT INTO accounts (number, owner_kind, type, name, allow_negative, system_code) VALUES ('BF00000000000001','system','system','Эмиссия',1,'EMISSION'),('BF00000000000002','system','system','Казна ВлодБанка',1,'TREASURY'),('BF00000000000003','system','system','Госбюджет БФ',1,'BUDGET'),('BF00000000000004','system','system','Наличные в обороте',1,'CASH')");
       await conn.query('INSERT INTO game_clock (id, month_index, last_tick_at, paused) VALUES (1, 0, NOW(3), 0)');
+      await conn.query('INSERT INTO price_index (month, rate_bp, index_ppm) VALUES (0, 0, 1000000)');
       await conn.commit();
     } catch (err) {
       await conn.rollback().catch(() => {});

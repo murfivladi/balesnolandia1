@@ -12,6 +12,8 @@ import { authRoutes } from './routes/auth.js';
 import { commonRoutes } from './routes/common.js';
 import { govRoutes } from './routes/gov.js';
 import { bankRoutes } from './routes/bank.js';
+import { financeRoutes } from './routes/finance.js';
+import { adminFinanceRoutes } from './routes/admin-finance.js';
 import { posRoutes } from './routes/pos.js';
 import { adminRoutes } from './routes/admin.js';
 
@@ -60,8 +62,10 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
   await app.register(commonRoutes, { prefix: '/api' });
   await app.register(govRoutes, { prefix: '/api/gov' });
   await app.register(bankRoutes, { prefix: '/api/bank' });
+  await app.register(financeRoutes, { prefix: '/api/bank' });
   await app.register(posRoutes, { prefix: '/api/pos' });
   await app.register(adminRoutes, { prefix: '/api/admin' });
+  await app.register(adminFinanceRoutes, { prefix: '/api/admin' });
 
   return app;
 }

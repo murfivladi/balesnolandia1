@@ -14,6 +14,7 @@ import {
   checkCardLimits, transferFee, checkPinFormat, ipOf, assertSpendable,
 } from '../lib/bank.js';
 import { payQr, qrInfo, receiptData } from '../lib/pos.js';
+import { moveMoney, transferSuspicion, addFraud, reviewIfLarge } from '../lib/finance.js';
 import { hash } from '../lib/auth.js';
 import { formatMoney, percentOf } from '@bln/shared/money.js';
 import { normalizePassport } from '@bln/shared/format.js';
@@ -32,12 +33,15 @@ async function resolveRecipient(conn, to, userId) {
   if (type === 'card') {
     const c = await one('SELECT * FROM cards WHERE number = ?', [value.replace(/\D/g, '')], conn);
     if (!c || !['active', 'frozen'].includes(c.status)) throw bad('recipient_not_found', 'Карта получателя не найдена');
+    if (c.type === 'gift') throw bad('recipient_gift', 'На подарочную карту переводить нельзя');
     return one('SELECT * FROM accounts WHERE id = ?', [c.account_id], conn);
   }
   if (type === 'account' || type === 'own') {
     const a = await one("SELECT * FROM accounts WHERE (number = ? OR id = ?) AND owner_kind = 'bank_user'", [value.toUpperCase(), type === 'own' ? Number(value) || 0 : 0], conn);
     if (!a || a.status === 'closed') throw bad('recipient_not_found', 'Счёт получателя не найден');
     if (type === 'own' && a.owner_id !== userId) throw forbidden();
+    if (a.type === 'loan') throw bad('recipient_loan', 'Кредит погашается по графику или досрочно в разделе «Кредиты»');
+    if (a.type === 'gift') throw bad('recipient_gift', 'На подарочную карту переводить нельзя');
     return a;
   }
   if (type === 'user') {
@@ -48,12 +52,21 @@ async function resolveRecipient(conn, to, userId) {
   throw bad('invalid', 'Укажите получателя');
 }
 
+/** Карты клиента: свои и детские, где он держатель (ребёнок видит свою карту, управляет родитель). */
+async function myCards(userId) {
+  const rows = await q(
+    "SELECT c.*, a.balance, a.credit_limit FROM cards c JOIN accounts a ON a.id = c.account_id WHERE (c.bank_user_id = ? OR c.holder_user_id = ?) AND c.status <> 'reissued' ORDER BY c.id DESC",
+    [userId, userId],
+  );
+  return rows.map((c) => ({ ...cardView(c), managed_by_parent: c.bank_user_id !== userId }));
+}
+
 export async function bankRoutes(app) {
   const auth = { preHandler: needBank() };
 
   app.get('/overview', auth, async (req) => {
     const accounts = await q("SELECT * FROM accounts WHERE owner_kind = 'bank_user' AND owner_id = ? AND status <> 'closed' ORDER BY is_primary DESC, type, id", [req.bank.id]);
-    const cards = await q("SELECT * FROM cards WHERE bank_user_id = ? AND status NOT IN ('reissued') ORDER BY id DESC", [req.bank.id]);
+    const cards = await myCards(req.bank.id);
     const link = await one("SELECT status, created_at FROM passport_links WHERE bank_user_id = ? ORDER BY id DESC LIMIT 1", [req.bank.id]);
     const recent = await q(
       `SELECT t.id, t.kind, t.memo, t.created_at, e.amount, e.account_id FROM ledger_entries e JOIN ledger_tx t ON t.id = e.tx_id
@@ -63,7 +76,7 @@ export async function bankRoutes(app) {
     return {
       user: publicBankUser(await freshUser(req.bank.id), req.bank.roles),
       accounts: accounts.map(accountView),
-      cards: cards.map((c) => cardView(c)),
+      cards,
       passport_link: link,
       has_ip: !!(await ipOf(req.bank.user)),
       recent: recent.map((r) => ({ ...r, amount: Number(r.amount) })),
@@ -131,6 +144,8 @@ export async function bankRoutes(app) {
       const a = await ownAccount(req.bank.id, int(req.params.id, 'id'), conn, { lock: true });
       if (a.status === 'closed') throw bad('account_closed', 'Счёт уже закрыт');
       if (a.status !== 'active') throw bad('account_' + a.status, 'Счёт заморожен или арестован');
+      if (a.type === 'loan') throw bad('loan_account', 'Ссудный счёт закрывается после погашения кредита');
+      if (a.type === 'credit' && Number(a.balance) < 0) throw bad('has_debt', 'Сначала погасите долг по кредитной карте');
       const cards = await one("SELECT COUNT(*) AS n FROM cards WHERE account_id = ? AND status IN ('active','frozen')", [a.id], conn);
       if (cards.n > 0) throw bad('has_cards', 'Сначала закройте карты этого счёта');
       if (a.type === 'business' && (await one("SELECT id FROM shops WHERE account_id = ? AND status = 'active'", [a.id], conn))) throw bad('has_shop', 'К счёту привязан магазин');
@@ -145,7 +160,9 @@ export async function bankRoutes(app) {
         if (penalty) entries.push({ account: await sys('TREASURY', conn), amount: penalty });
         await post(conn, { kind: 'account_close', memo: `Закрытие счёта ${a.name}${penalty ? ' (штраф за досрочное закрытие)' : ''}`, entries, actor: actorOf(req.bank) });
       }
-      await q("UPDATE accounts SET status = 'closed', is_primary = 0, closed_at = NOW(3) WHERE id = ?", [a.id], conn);
+      await q("UPDATE accounts SET status = 'closed', is_primary = 0, credit_limit = 0, closed_at = NOW(3) WHERE id = ?", [a.id], conn);
+      if (a.type === 'credit') await q("UPDATE credit_lines SET status = 'closed' WHERE account_id = ?", [a.id], conn);
+      await q("UPDATE autopayments SET status = 'cancelled' WHERE (from_account_id = ? OR to_account_id = ?) AND status IN ('active','paused')", [a.id, a.id], conn);
       if (a.is_primary && target) await q('UPDATE accounts SET is_primary = 1 WHERE id = ?', [target.id], conn);
       await audit(conn, actorOf(req.bank), 'bank.account_close', 'account', a.id, { penalty });
       return { penalty };
@@ -154,10 +171,7 @@ export async function bankRoutes(app) {
   });
 
   // ——— Карты ———
-  app.get('/cards', auth, async (req) => {
-    const rows = await q("SELECT * FROM cards WHERE bank_user_id = ? AND status <> 'reissued' ORDER BY id DESC", [req.bank.id]);
-    return { cards: rows.map((c) => cardView(c)) };
-  });
+  app.get('/cards', auth, async (req) => ({ cards: await myCards(req.bank.id) }));
 
   app.post('/cards', auth, async (req) => {
     const b = req.body || {};
@@ -212,10 +226,14 @@ export async function bankRoutes(app) {
     const card = await tx(async (conn) => {
       const c = await ownCard(req, conn);
       if (!['active', 'frozen', 'expired', 'blocked'].includes(c.status)) throw bad('invalid_state', 'Карту нельзя перевыпустить');
+      if (c.type === 'gift') throw bad('invalid_state', 'Подарочная карта не перевыпускается');
       const u = await freshUser(req.bank.id, conn);
       const acc = await ownAccount(u.id, c.account_id, conn, { lock: true });
       const pin = req.body?.pin ?? null;
-      const nc = await issueCard(conn, { user: u, account: acc, pin: pin ?? '000', type: c.type, background: c.background, feeKey: 'card_reissue_fee' });
+      const nc = await issueCard(conn, { user: u, account: acc, pin: pin ?? '000', type: c.type, background: c.background, feeKey: 'card_reissue_fee', holderName: null, holderUserId: c.holder_user_id });
+      await q('UPDATE cards SET holder_name = ? WHERE id = ?', [c.holder_name, nc.id], conn);
+      await q('UPDATE autopayments SET card_id = ? WHERE card_id = ?', [nc.id, c.id], conn);
+      await q('UPDATE credit_lines SET card_id = ? WHERE card_id = ?', [nc.id, c.id], conn);
       if (pin === null) await q('UPDATE cards SET pin_hash = ? WHERE id = ?', [c.pin_hash, nc.id]); // PIN сохраняется
       await q('UPDATE cards SET limit_tx = ?, limit_daily = ? WHERE id = ?', [c.limit_tx, c.limit_daily, nc.id]);
       await q("UPDATE cards SET status = 'reissued' WHERE id = ?", [c.id]);
@@ -228,6 +246,8 @@ export async function bankRoutes(app) {
   app.post('/cards/:id/close', auth, async (req) => {
     const c = await ownCard(req);
     await q("UPDATE cards SET status = 'blocked' WHERE id = ?", [c.id]);
+    // Карманные деньги на закрытую детскую карту больше не переводятся.
+    await q("UPDATE autopayments SET status = 'cancelled' WHERE card_id = ? AND status IN ('active','paused')", [c.id]);
     await audit(null, actorOf(req.bank), 'bank.card_close', 'card', c.id);
     return { ok: true };
   });
@@ -268,20 +288,25 @@ export async function bankRoutes(app) {
       assertSpendable(from);
       const to = await resolveRecipient(conn, b.to, u.id);
       if (to.id === from.id) throw bad('same_account', 'Нельзя перевести на тот же счёт');
-      const own = to.owner_id === u.id;
-      const fee = own ? 0 : transferFee(amount, await getSettings());
-      const entries = [{ account: from.id, amount: -(amount + fee) }, { account: to.id, amount }];
-      if (fee) entries.push({ account: await sys('TREASURY', conn), amount: fee });
-      const r = await post(conn, {
-        kind: own ? 'transfer_own' : 'transfer',
-        memo: memo || (own ? 'Перевод между своими счетами' : `Перевод: ${u.full_name}`),
-        entries,
-        idem,
-        actor: actorOf(req.bank),
-        meta: { fee, from: from.id, to: to.id },
-      });
-      if (!own) await notify(conn, 'bank', to.owner_id, { title: `Поступление ${formatMoney(amount)}`, body: `От: ${u.full_name}${memo ? ` — ${memo}` : ''}`, link: `#/accounts/${to.id}` });
-      return { tx: r.id, fee };
+      // Антифрод: подозрительный перевод чужому получателю ждёт решения админа.
+      if (to.owner_id !== u.id) {
+        if (idem) {
+          const held = await one("SELECT id FROM fraud_queue WHERE bank_user_id = ? AND status = 'pending' AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.idem')) = ?", [u.id, idem], conn);
+          if (held) return { held: true, fraud_id: held.id };
+        }
+        const reason = await transferSuspicion(conn, u.id, amount, await getSettings());
+        if (reason) {
+          const fee = transferFee(amount, await getSettings());
+          const available = Number(from.balance) + Number(from.credit_limit || 0);
+          if (available < amount + fee) throw bad('insufficient_funds', 'Недостаточно средств', { account: from.id });
+          const id = await addFraud(conn, { userId: u.id, kind: 'transfer', mode: 'hold', amount, reason, data: { from: from.id, to: to.id, memo, idem } });
+          await notify(conn, 'bank', u.id, { title: 'Перевод на проверке', body: `${formatMoney(amount)}: служба безопасности банка проверит операцию`, link: '#/' });
+          await audit(conn, actorOf(req.bank), 'bank.transfer_held', 'fraud', id, { amount, reason });
+          return { held: true, fraud_id: id, reason };
+        }
+      }
+      const r = await moveMoney(conn, { user: u, from, to, amount, memo, idem, actor: actorOf(req.bank) });
+      return { tx: r.tx, fee: r.fee };
     });
     return { ok: true, ...result };
   });
@@ -361,7 +386,7 @@ export async function bankRoutes(app) {
         if (dir === 'withdraw') await checkCardLimits(conn, card, amount);
         const cash = await sys('CASH', conn);
         const sign = dir === 'withdraw' ? -1 : 1;
-        await post(conn, {
+        const r = await post(conn, {
           kind: dir === 'withdraw' ? 'atm_withdraw' : 'atm_deposit',
           memo: dir === 'withdraw' ? 'Снятие наличных в банкомате' : 'Внесение наличных в банкомате',
           entries: [{ account: card.account_id, amount: sign * amount }, { account: cash, amount: -sign * amount }],
@@ -369,6 +394,7 @@ export async function bankRoutes(app) {
           cardId: card.id,
           actor: { kind: 'bank', id: card.bank_user_id },
         });
+        if (dir === 'withdraw' && !r.duplicate) await reviewIfLarge(conn, { accountId: card.account_id, amount, kind: 'atm_withdraw', txId: r.id, cardId: card.id });
       });
       return { ok: true, ...(await atmState(cardId)) };
     });
