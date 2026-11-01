@@ -1,0 +1,27 @@
+{
+  "name": "@bln/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node scripts/migrate.js",
+    "make-admin": "node scripts/make-admin.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
+  },
+  "dependencies": {
+    "@bln/shared": "1.0.0",
+    "@fastify/cookie": "^11.1.0",
+    "@fastify/cors": "^11.1.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "@fastify/websocket": "^11.2.0",
+    "bcryptjs": "^3.0.2",
+    "dotenv": "^17.2.0",
+    "fastify": "^5.6.0",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.15.0",
+    "nodemailer": "^7.0.6"
+  }
+}

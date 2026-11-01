@@ -1,0 +1,14 @@
+{
+  "name": "balesnolandia",
+  "private": true,
+  "type": "module",
+  "workspaces": ["shared", "api", "web"],
+  "scripts": {
+    "dev:api": "npm run dev -w api",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w web",
+    "test": "npm test -w shared && npm test -w api",
+    "migrate": "npm run migrate -w api"
+  },
+  "engines": { "node": ">=20.19" }
+}

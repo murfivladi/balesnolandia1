@@ -1,0 +1,12 @@
+{
+  "name": "@bln/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./money.js": "./money.js",
+    "./time.js": "./time.js",
+    "./format.js": "./format.js"
+  },
+  "scripts": { "test": "node --test" }
+}
