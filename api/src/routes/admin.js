@@ -57,7 +57,7 @@ function cleanSettings(body) {
 }
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories']);
+const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories', 'wholesale_items']);
 
 async function tableNames(conn) {
   const rows = await q('SHOW TABLES', [], conn);
@@ -99,6 +99,7 @@ export async function adminRoutes(app) {
       treasury: sysBal.TREASURY || 0,
       budget: sysBal.BUDGET || 0,
       cash: sysBal.CASH || 0,
+      wholesale: sysBal.WHOLESALE || 0,
       deposits,
       money_supply: deposits + (sysBal.CASH || 0),
       debt: Number(pos.d),
@@ -508,7 +509,7 @@ export async function adminRoutes(app) {
           await conn.query(`DELETE FROM \`${t}\``);
         }
       }
-      await conn.query("INSERT INTO accounts (number, owner_kind, type, name, allow_negative, system_code) VALUES ('BF00000000000001','system','system','Эмиссия',1,'EMISSION'),('BF00000000000002','system','system','Казна ВлодБанка',1,'TREASURY'),('BF00000000000003','system','system','Госбюджет БФ',1,'BUDGET'),('BF00000000000004','system','system','Наличные в обороте',1,'CASH')");
+      await conn.query("INSERT INTO accounts (number, owner_kind, type, name, allow_negative, system_code) VALUES ('BF00000000000001','system','system','Эмиссия',1,'EMISSION'),('BF00000000000002','system','system','Казна ВлодБанка',1,'TREASURY'),('BF00000000000003','system','system','Госбюджет БФ',1,'BUDGET'),('BF00000000000004','system','system','Наличные в обороте',1,'CASH'),('BF00000000000005','system','system','Оптовая база БФ',1,'WHOLESALE')");
       await conn.query('INSERT INTO game_clock (id, month_index, last_tick_at, paused) VALUES (1, 0, NOW(3), 0)');
       await conn.query('INSERT INTO price_index (month, rate_bp, index_ppm) VALUES (0, 0, 1000000)');
       await conn.commit();

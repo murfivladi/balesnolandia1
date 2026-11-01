@@ -1,4 +1,4 @@
-import { tx, q, one, afterCommit } from '../db.js';
+import { tx, q, one, afterCommit, json } from '../db.js';
 import { bad, notFound, forbidden, int, str, amount as amountOf, need, idemKey } from '../lib/errors.js';
 import { needBank, needPos, issue, clear, hash, verifyHash, actorOf } from '../lib/auth.js';
 import { getSettings, webUrl } from '../lib/settings.js';
@@ -8,7 +8,8 @@ import { sendMail } from '../lib/mail.js';
 import { ipOf, innOf, authorizeCard, requireVerified, ownAccount } from '../lib/bank.js';
 import { payInvoice, publicInvoice } from '../lib/gov.js';
 import {
-  openShift, posLog, createSale, loadSale, saleView, payByCard, payByCash, createQr, refundSale, shiftReport, settleCashVat, terminalBySale, receiptData, receiptText,
+  openShift, posLog, createSale, loadSale, saleView, payByCard, payByCash, payByDebt, createQr, refundSale, shiftReport, settleCashVat, terminalBySale, receiptData, receiptText,
+  loyaltyCustomer, restorePoints, revertTab,
 } from '../lib/pos.js';
 import { newTerminalCode, withUnique } from '../lib/ids.js';
 import { ageFrom } from '@bln/shared/format.js';
@@ -25,11 +26,39 @@ function image(v, name) {
 }
 
 function shopView(s) {
-  return { id: s.id, name: s.name, type: s.type, color: s.color, logo: s.logo, inn: s.inn, ip_number: s.ip_number, address: s.address, receipt_footer: s.receipt_footer, status: s.status, account_id: s.account_id, cashback_category_id: s.cashback_category_id ?? null };
+  return {
+    id: s.id, name: s.name, type: s.type, color: s.color, logo: s.logo, inn: s.inn, ip_number: s.ip_number, address: s.address, receipt_footer: s.receipt_footer, status: s.status, account_id: s.account_id,
+    cashback_category_id: s.cashback_category_id ?? null, loyalty_bp: s.loyalty_bp ?? 0, loyalty_max_bp: s.loyalty_max_bp ?? 5000, kitchen_enabled: !!s.kitchen_enabled,
+  };
 }
 
-function productView(p) {
-  return { id: p.id, name: p.name, category: p.category, barcode: p.barcode, price: Number(p.price), cost: Number(p.cost), unit: p.unit, age_limit: p.age_limit, photo: p.photo, track_stock: !!p.track_stock, stock_milli: Number(p.stock_milli), active: !!p.active, sort: p.sort };
+export function productView(p, extras = {}) {
+  return {
+    id: p.id, name: p.name, category: p.category, barcode: p.barcode, price: Number(p.price), cost: Number(p.cost), b2b_price: p.b2b_price === null || p.b2b_price === undefined ? null : Number(p.b2b_price),
+    unit: p.unit, age_limit: p.age_limit, photo: p.photo, track_stock: !!p.track_stock, to_kitchen: !!p.to_kitchen, stock_milli: Number(p.stock_milli), active: !!p.active, sort: p.sort,
+    variants: extras.variants?.get(p.id) || [], modifiers: extras.modifiers?.get(p.id) || [],
+  };
+}
+
+/** Варианты и добавки товаров магазина, сгруппированные по товару. */
+async function productExtras(shopId, { all = false } = {}) {
+  const act = all ? '' : ' AND x.active = 1';
+  const vs = await q(`SELECT x.* FROM product_variants x JOIN products p ON p.id = x.product_id AND p.shop_id = ?${act} ORDER BY x.sort, x.id`, [shopId]);
+  const ms = await q(`SELECT x.* FROM modifiers x JOIN products p ON p.id = x.product_id AND p.shop_id = ?${act} ORDER BY x.sort, x.id`, [shopId]);
+  const group = (rows, f) => {
+    const m = new Map();
+    for (const r of rows) m.set(r.product_id, [...(m.get(r.product_id) || []), f(r)]);
+    return m;
+  };
+  return {
+    variants: group(vs, (v) => ({ id: v.id, name: v.name, price_delta: Number(v.price_delta), active: !!v.active })),
+    modifiers: group(ms, (m) => ({ id: m.id, name: m.name, price: Number(m.price), active: !!m.active })),
+  };
+}
+
+async function oneProduct(id) {
+  const p = await one('SELECT * FROM products WHERE id = ?', [id]);
+  return productView(p, await productExtras(p.shop_id, { all: true }));
 }
 
 /** Категория кешбэка магазина: выбранная владельцем или по умолчанию по типу (кафе / магазин). */
@@ -82,9 +111,9 @@ export async function posRoutes(app) {
       const pin = String(b.pin || '');
       need(/^\d{4}$/.test(pin), 'PIN кассира — 4 цифры');
       const type = b.type === 'cafe' ? 'cafe' : 'shop';
-      const res = await q('INSERT INTO shops (owner_id, name, type, color, account_id, inn, ip_number, address, cashback_category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+      const res = await q('INSERT INTO shops (owner_id, name, type, color, account_id, inn, ip_number, address, cashback_category_id, kitchen_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [
         u.id, str(b.name, 'название', { min: 2, max: 80 }), type, COLOR_RE.test(b.color) ? b.color : '#0f766e', acc.id, inn?.number || '', ip.number, str(b.address, 'адрес', { optional: true, max: 160 }),
-        await cashbackCategory(conn, b.cashback_category_id, type),
+        await cashbackCategory(conn, b.cashback_category_id, type), type === 'cafe' ? 1 : 0,
       ], conn);
       await q("INSERT INTO shop_staff (shop_id, bank_user_id, role, pin_hash) VALUES (?, ?, 'owner', ?)", [res.insertId, u.id, await hash(pin)], conn);
       await audit(conn, actorOf(req.bank), 'pos.shop_create', 'shop', res.insertId);
@@ -112,7 +141,7 @@ export async function posRoutes(app) {
   app.get('/session', pos, async (req) => {
     const shop = await shopOf(req);
     const shift = await openShift(null, req.pos.staff.id);
-    const held = await one("SELECT COUNT(*) AS n FROM sales WHERE shop_id = ? AND status = 'held'", [shop.id]);
+    const held = await one("SELECT COUNT(*) AS n FROM sales WHERE shop_id = ? AND status = 'held' AND table_id IS NULL", [shop.id]);
     const s = await getSettings();
     return {
       shop: shopView(shop),
@@ -131,6 +160,9 @@ export async function posRoutes(app) {
     const logo = image(b.logo, 'логотип');
     const cat = b.cashback_category_id !== undefined ? await cashbackCategory(null, b.cashback_category_id, shop.type) : shop.cashback_category_id;
     await q('UPDATE shops SET cashback_category_id = ? WHERE id = ?', [cat, shop.id]);
+    if (b.loyalty_bp !== undefined) await q('UPDATE shops SET loyalty_bp = ? WHERE id = ?', [int(Number(b.loyalty_bp) || 0, 'баллы', { min: 0, max: 5000 }), shop.id]);
+    if (b.loyalty_max_bp !== undefined) await q('UPDATE shops SET loyalty_max_bp = ? WHERE id = ?', [int(Number(b.loyalty_max_bp) || 0, 'доля баллов', { min: 0, max: 10000 }), shop.id]);
+    if (b.kitchen_enabled !== undefined) await q('UPDATE shops SET kitchen_enabled = ? WHERE id = ?', [b.kitchen_enabled ? 1 : 0, shop.id]);
     await q('UPDATE shops SET name = ?, type = ?, color = ?, address = ?, receipt_footer = ?, logo = ? WHERE id = ?', [
       b.name !== undefined ? str(b.name, 'название', { min: 2, max: 80 }) : shop.name,
       b.type === 'cafe' || b.type === 'shop' ? b.type : shop.type,
@@ -179,7 +211,8 @@ export async function posRoutes(app) {
   app.get('/products', pos, async (req) => {
     const all = req.query.all === '1' && req.pos.staff.role === 'owner';
     const rows = await q(`SELECT * FROM products WHERE shop_id = ?${all ? '' : ' AND active = 1'} ORDER BY category, sort, name`, [req.pos.shopId]);
-    return { products: rows.map(productView) };
+    const extras = await productExtras(req.pos.shopId, { all });
+    return { products: rows.map((p) => productView(p, extras)) };
   });
 
   function productFields(b, prev = {}) {
@@ -190,6 +223,8 @@ export async function posRoutes(app) {
       barcode: val('barcode', (v) => (v ? String(v).replace(/\s/g, '').slice(0, 64) : null)) ?? null,
       price: val('price', (v) => amountOf(v, 'цена')),
       cost: val('cost', (v) => (v === '' || v === null ? 0 : int(v, 'закупочная цена', { min: 0, max: 1e12 }))) ?? 0,
+      b2b_price: val('b2b_price', (v) => (v === '' || v === null ? null : amountOf(v, 'оптовая цена'))) ?? null,
+      to_kitchen: val('to_kitchen', (v) => (v ? 1 : 0)) ?? 0,
       unit: val('unit', (v) => (v === 'kg' ? 'kg' : 'pcs')) ?? 'pcs',
       age_limit: val('age_limit', (v) => int(Number(v) || 0, 'возраст', { min: 0, max: 21 })) ?? 0,
       photo: b.photo !== undefined ? image(b.photo, 'фото') : prev.photo ?? null,
@@ -202,21 +237,21 @@ export async function posRoutes(app) {
   app.post('/products', owner, async (req) => {
     const f = productFields(req.body || {});
     need(f.name && f.price, 'Укажите название и цену');
-    const res = await q('INSERT INTO products (shop_id, name, category, barcode, price, cost, unit, age_limit, photo, track_stock, sort, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [req.pos.shopId, f.name, f.category, f.barcode, f.price, f.cost, f.unit, f.age_limit, f.photo, f.track_stock, f.sort, f.active]);
+    const res = await q('INSERT INTO products (shop_id, name, category, barcode, price, cost, b2b_price, unit, age_limit, photo, track_stock, to_kitchen, sort, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [req.pos.shopId, f.name, f.category, f.barcode, f.price, f.cost, f.b2b_price, f.unit, f.age_limit, f.photo, f.track_stock, f.to_kitchen, f.sort, f.active]);
     const initial = Number(req.body?.stock_milli || 0);
     if (initial > 0) {
       await q('UPDATE products SET stock_milli = ? WHERE id = ?', [Math.round(initial), res.insertId]);
       await q("INSERT INTO stock_moves (product_id, qty_milli, reason, staff_id) VALUES (?, ?, 'manual', ?)", [res.insertId, Math.round(initial), req.pos.staff.id]);
     }
-    return { product: productView(await one('SELECT * FROM products WHERE id = ?', [res.insertId])) };
+    return { product: await oneProduct(res.insertId) };
   });
 
   app.patch('/products/:id', owner, async (req) => {
     const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ?', [int(req.params.id, 'id'), req.pos.shopId]);
     if (!p) throw notFound('Товар не найден');
-    const f = productFields(req.body || {}, { ...p, price: Number(p.price), cost: Number(p.cost) });
-    await q('UPDATE products SET name = ?, category = ?, barcode = ?, price = ?, cost = ?, unit = ?, age_limit = ?, photo = ?, track_stock = ?, sort = ?, active = ? WHERE id = ?', [f.name, f.category, f.barcode, f.price, f.cost, f.unit, f.age_limit, f.photo, f.track_stock, f.sort, f.active, p.id]);
-    return { product: productView(await one('SELECT * FROM products WHERE id = ?', [p.id])) };
+    const f = productFields(req.body || {}, { ...p, price: Number(p.price), cost: Number(p.cost), b2b_price: p.b2b_price === null ? null : Number(p.b2b_price) });
+    await q('UPDATE products SET name = ?, category = ?, barcode = ?, price = ?, cost = ?, b2b_price = ?, unit = ?, age_limit = ?, photo = ?, track_stock = ?, to_kitchen = ?, sort = ?, active = ? WHERE id = ?', [f.name, f.category, f.barcode, f.price, f.cost, f.b2b_price, f.unit, f.age_limit, f.photo, f.track_stock, f.to_kitchen, f.sort, f.active, p.id]);
+    return { product: await oneProduct(p.id) };
   });
 
   // Ручная корректировка остатка (полный склад и закупки — этап 7).
@@ -228,7 +263,7 @@ export async function posRoutes(app) {
       await q('UPDATE products SET stock_milli = stock_milli + ? WHERE id = ?', [delta, p.id], conn);
       await q("INSERT INTO stock_moves (product_id, qty_milli, reason, staff_id) VALUES (?, ?, ?, ?)", [p.id, delta, delta < 0 ? 'writeoff' : 'manual', req.pos.staff.id], conn);
     });
-    return { product: productView(await one('SELECT * FROM products WHERE id = ?', [p.id])) };
+    return { product: await oneProduct(p.id) };
   });
 
   // ——— Смены ———
@@ -258,7 +293,13 @@ export async function posRoutes(app) {
       if (!shift) throw bad('no_shift', 'Смена не открыта');
       const open = await one("SELECT COUNT(*) AS n FROM sales WHERE shift_id = ? AND status = 'open' AND paid > 0", [shift.id], conn);
       if (open.n) throw bad('open_sales', 'Есть недоплаченные чеки — завершите или отмените их');
-      await q("UPDATE sales SET status = 'cancelled' WHERE shift_id = ? AND status = 'open'", [shift.id], conn);
+      for (const o of await q("SELECT * FROM sales WHERE shift_id = ? AND status = 'open'", [shift.id], conn)) {
+        if (o.source === 'tab' && o.table_id) await revertTab(conn, o);
+        else {
+          await restorePoints(conn, o);
+          await q("UPDATE sales SET status = 'cancelled' WHERE id = ?", [o.id], conn);
+        }
+      }
       const report = await shiftReport(conn, shift);
       const shop = await one('SELECT * FROM shops WHERE id = ?', [shift.shop_id], conn);
       report.vat_settlement = await settleCashVat(conn, { shop, shift, amount: report.cash_vat });
@@ -287,6 +328,10 @@ export async function posRoutes(app) {
       lines: b.items,
       discount: b.discount ? int(b.discount, 'скидка', { min: 0, max: 1e12 }) : 0,
       tipPct: Number(b.tip_pct || 0),
+      promoCode: b.promo_code || null,
+      loyalty: b.loyalty || null,
+      redeemPoints: b.redeem_points ? int(b.redeem_points, 'баллы', { min: 0, max: 1e12 }) : 0,
+      source: b.source === 'kiosk' ? 'kiosk' : 'pos',
     }));
     return { sale: saleView(sale) };
   });
@@ -358,6 +403,14 @@ export async function posRoutes(app) {
     const method = b.method;
     const amount = amountOf(b.amount);
     const idem = idemKey(req, `pos${req.pos.staff.id}:pay`);
+    if (method !== 'card') {
+      const src = await one('SELECT source FROM sales WHERE id = ?', [saleId]);
+      if (src?.source === 'kiosk') throw bad('kiosk_method', 'В киоске — только оплата картой или по QR');
+    }
+    if (method === 'debt') {
+      const customer = b.customer ? await loyaltyCustomer(null, b.customer) : null;
+      return payFlow(req, saleId, (conn, sale, shop) => payByDebt(conn, { sale, shop, amount, customerName: b.customer_name, customer, note: str(b.note, 'комментарий', { optional: true, max: 200 }) }));
+    }
     if (method === 'cash') {
       const res = await payFlow(req, saleId, (conn, sale, shop) => payByCash(conn, { sale, shop, amount, cashGiven: b.cash_given !== undefined ? int(b.cash_given, 'получено') : null, idem }));
       return res;
@@ -397,6 +450,9 @@ export async function posRoutes(app) {
       if (sale.shop_id !== req.pos.shopId) throw notFound();
       if (!['open', 'held'].includes(sale.status)) throw bad('sale_closed', 'Чек уже закрыт');
       if (Number(sale.paid) > 0) throw bad('has_payments', 'По чеку уже есть оплата — оформите возврат после закрытия');
+      // Отмена оплаты счёта стола возвращает счёт на стол.
+      if (sale.status === 'open' && sale.source === 'tab' && sale.table_id) return revertTab(conn, sale);
+      await restorePoints(conn, sale);
       await q("UPDATE sales SET status = 'cancelled' WHERE id = ?", [sale.id], conn);
       await posLog(conn, { shopId: sale.shop_id, staffId: req.pos.staff.id, shiftId: sale.shift_id, action: 'sale_cancel', saleId: sale.id, data: { total: Number(sale.total) } });
     });
@@ -405,7 +461,7 @@ export async function posRoutes(app) {
 
   // Отложенные чеки.
   app.get('/held', pos, async (req) => {
-    const rows = await q("SELECT s.id, s.hold_label, s.total, s.created_at, u.full_name FROM sales s JOIN shop_staff st ON st.id = s.staff_id JOIN bank_users u ON u.id = st.bank_user_id WHERE s.shop_id = ? AND s.status = 'held' ORDER BY s.id DESC", [req.pos.shopId]);
+    const rows = await q("SELECT s.id, s.hold_label, s.total, s.created_at, u.full_name FROM sales s JOIN shop_staff st ON st.id = s.staff_id JOIN bank_users u ON u.id = st.bank_user_id WHERE s.shop_id = ? AND s.status = 'held' AND s.table_id IS NULL ORDER BY s.id DESC", [req.pos.shopId]);
     return { held: rows.map((r) => ({ ...r, total: Number(r.total) })) };
   });
 
@@ -419,8 +475,9 @@ export async function posRoutes(app) {
     const out = await tx(async (conn) => {
       const sale = await loadSale(conn, int(req.params.id, 'id'), { lock: true });
       if (sale.shop_id !== req.pos.shopId || sale.status !== 'held') throw notFound('Отложенный чек не найден');
+      if (sale.table_id) throw bad('is_tab', 'Это счёт стола — откройте его в разделе «Столы»');
       await q("UPDATE sales SET status = 'cancelled' WHERE id = ?", [sale.id], conn);
-      return sale.items.map((i) => ({ product_id: i.product_id, qty_milli: Number(i.qty_milli) }));
+      return sale.items.map((i) => ({ product_id: i.product_id, qty_milli: Number(i.qty_milli), variant_id: i.variant_id || undefined, modifier_ids: (json(i.modifiers, []) || []).map((m) => m.id) }));
     });
     return { items: out };
   });
@@ -578,29 +635,4 @@ export async function posRoutes(app) {
     publish(`terminal:${code}`, { type: 'pay_result', ok: true, sale_id: pending.sale_id, amount: pending.amount, finished: result.finished, method: 'card' });
     return { ok: true, finished: result.finished };
   });
-
-  // ——— Отчёт владельцу (кратко; полные отчёты — этап 7) ———
-  app.get('/reports', owner, async (req) => {
-    const days = Math.min(90, Math.max(1, Number(req.query.days) || 7));
-    const totals = await one(`SELECT COUNT(*) AS n, COALESCE(SUM(total),0) AS revenue, COALESCE(SUM(vat),0) AS vat, COALESCE(SUM(refunded),0) AS refunded FROM sales WHERE shop_id = ? AND status = 'paid' AND paid_at >= NOW() - INTERVAL ? DAY`, [req.pos.shopId, days]);
-    const cost = await one(`SELECT COALESCE(SUM(ROUND(p.cost * (i.qty_milli - i.refunded_milli) / 1000)),0) AS cost FROM sale_items i JOIN sales s ON s.id = i.sale_id JOIN products p ON p.id = i.product_id WHERE s.shop_id = ? AND s.status = 'paid' AND s.paid_at >= NOW() - INTERVAL ? DAY`, [req.pos.shopId, days]);
-    const top = await q(`SELECT i.name, SUM(i.qty_milli - i.refunded_milli) AS qty_milli, SUM(i.total) AS total FROM sale_items i JOIN sales s ON s.id = i.sale_id WHERE s.shop_id = ? AND s.status = 'paid' AND s.paid_at >= NOW() - INTERVAL ? DAY GROUP BY i.name ORDER BY total DESC LIMIT 10`, [req.pos.shopId, days]);
-    const byCashier = await q(`SELECT u.full_name, COUNT(*) AS n, SUM(s.total) AS total, SUM(s.tip) AS tips FROM sales s JOIN shop_staff st ON st.id = s.staff_id JOIN bank_users u ON u.id = st.bank_user_id WHERE s.shop_id = ? AND s.status = 'paid' AND s.paid_at >= NOW() - INTERVAL ? DAY GROUP BY u.full_name ORDER BY total DESC`, [req.pos.shopId, days]);
-    const byHour = await q(`SELECT HOUR(paid_at) AS h, COUNT(*) AS n, SUM(total) AS total FROM sales WHERE shop_id = ? AND status = 'paid' AND paid_at >= NOW() - INTERVAL ? DAY GROUP BY HOUR(paid_at) ORDER BY h`, [req.pos.shopId, days]);
-    const balance = await one('SELECT a.balance FROM shops s JOIN accounts a ON a.id = s.account_id WHERE s.id = ?', [req.pos.shopId]);
-    const revenue = Number(totals.revenue) - Number(totals.refunded);
-    return {
-      days,
-      sales: Number(totals.n),
-      revenue,
-      vat: Number(totals.vat),
-      cost: Number(cost.cost),
-      profit: revenue - Number(totals.vat) - Number(cost.cost),
-      business_balance: Number(balance?.balance || 0),
-      top: top.map((r) => ({ name: r.name, qty_milli: Number(r.qty_milli), total: Number(r.total) })),
-      by_cashier: byCashier.map((r) => ({ name: r.full_name, sales: Number(r.n), total: Number(r.total), tips: Number(r.tips) })),
-      by_hour: byHour.map((r) => ({ hour: r.h, sales: Number(r.n), total: Number(r.total) })),
-    };
-  });
 }
-

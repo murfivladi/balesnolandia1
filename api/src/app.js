@@ -16,6 +16,8 @@ import { financeRoutes } from './routes/finance.js';
 import { adminFinanceRoutes } from './routes/admin-finance.js';
 import { posRoutes } from './routes/pos.js';
 import { adminRoutes } from './routes/admin.js';
+import { posExtRoutes, bankDebtRoutes } from './routes/pos-ext.js';
+import { adminPosRoutes } from './routes/admin-pos.js';
 
 export async function buildApp({ logger = config.env !== 'test' } = {}) {
   const app = Fastify({
@@ -64,8 +66,11 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
   await app.register(bankRoutes, { prefix: '/api/bank' });
   await app.register(financeRoutes, { prefix: '/api/bank' });
   await app.register(posRoutes, { prefix: '/api/pos' });
+  await app.register(posExtRoutes, { prefix: '/api/pos' });
+  await app.register(bankDebtRoutes, { prefix: '/api/bank' });
   await app.register(adminRoutes, { prefix: '/api/admin' });
   await app.register(adminFinanceRoutes, { prefix: '/api/admin' });
+  await app.register(adminPosRoutes, { prefix: '/api/admin' });
 
   return app;
 }
