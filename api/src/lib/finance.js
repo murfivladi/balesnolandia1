@@ -8,6 +8,9 @@ import { post, sys, reverse } from './ledger.js';
 import { notify, notifyAdmins } from './notify.js';
 import { primaryAccount, transferFee, issueCard } from './bank.js';
 import { newAccountNumber, withUnique } from './ids.js';
+import { checkDealOpen, sellerAccount, transferProperty } from './state.js';
+
+export const LOAN_KIND_TITLES = { consumer: 'Кредит', mortgage: 'Ипотека', auto: 'Автокредит' };
 import { formatMoney, percentOf, annuitySchedule } from '@bln/shared/money.js';
 
 // ——— Общее ———
@@ -255,15 +258,28 @@ export async function issueLoan(conn, loan, { amount, months, rateBp, actor, not
   if (!pay) throw bad('no_account', 'У клиента нет расчётного счёта');
   const month = await currentMonth(conn);
   const sched = annuitySchedule(amount, months, rateBp);
-  const acc = await createAccount(conn, { userId: user.id, type: 'loan', name: `Кредит №${loan.id}`, creditLimit: amount });
-  await post(conn, {
-    kind: 'loan_issue',
-    memo: `Выдача кредита №${loan.id}`,
-    entries: [{ account: acc.id, amount: -amount }, { account: pay.id, amount }],
-    ref: { type: 'loan', id: loan.id },
-    idem: `loan_issue:${loan.id}`,
-    actor,
-  });
+  const acc = await createAccount(conn, { userId: user.id, type: 'loan', name: `${LOAN_KIND_TITLES[loan.kind] || 'Кредит'} №${loan.id}`, creditLimit: amount });
+  if (loan.deal_id) {
+    // Ипотека / автокредит: кредит и первый взнос уходят продавцу, имущество — в залог банку.
+    const deal = await one('SELECT * FROM property_deals WHERE id = ? FOR UPDATE', [loan.deal_id], conn);
+    if (!deal || deal.status !== 'loan') throw bad('deal_closed', 'Сделка уже закрыта');
+    await checkDealOpen(conn, deal);
+    const down = Number(loan.down_payment);
+    if (amount + down !== Number(deal.price)) throw bad('invalid', 'Сумма кредита и взнос должны покрыть цену сделки');
+    const entries = [{ account: acc.id, amount: -amount }, { account: await sellerAccount(conn, deal), amount: amount + down }];
+    if (down) entries.push({ account: pay.id, amount: -down });
+    const r = await post(conn, { kind: 'loan_issue', memo: `${LOAN_KIND_TITLES[loan.kind]} №${loan.id}: оплата сделки №${deal.id}`, entries, ref: { type: 'loan', id: loan.id }, idem: `loan_issue:${loan.id}`, actor });
+    await transferProperty(conn, { deal, txId: r.id, lienLoanId: loan.id });
+  } else {
+    await post(conn, {
+      kind: 'loan_issue',
+      memo: `Выдача кредита №${loan.id}`,
+      entries: [{ account: acc.id, amount: -amount }, { account: pay.id, amount }],
+      ref: { type: 'loan', id: loan.id },
+      idem: `loan_issue:${loan.id}`,
+      actor,
+    });
+  }
   for (const row of sched.rows) {
     await q('INSERT INTO loan_schedule (loan_id, n, due_month, principal, interest) VALUES (?, ?, ?, ?, ?)', [loan.id, row.n, month + row.n, row.principal, row.interest], conn);
   }
@@ -275,6 +291,7 @@ export async function issueLoan(conn, loan, { amount, months, rateBp, actor, not
 
 export async function rejectLoan(conn, loan, { actor, note }) {
   if (loan.status !== 'pending') throw bad('decided', 'Решение уже принято');
+  if (loan.deal_id) await q("UPDATE property_deals SET status = 'pending', loan_id = NULL WHERE id = ? AND status = 'loan'", [loan.deal_id], conn);
   await q("UPDATE loans SET status = 'rejected', decided_by = ?, decision_note = ?, decided_at = NOW(3) WHERE id = ?", [`${actor.kind}:${actor.id}`, note, loan.id], conn);
   await notify(conn, 'bank', loan.bank_user_id, { title: 'Кредит: отказ', body: note || 'Банк не одобрил заявку', link: '#/credit', email: true });
 }
@@ -301,6 +318,7 @@ async function finishLoanIfDone(conn, loan) {
   const left = await one("SELECT COUNT(*) AS n FROM loan_schedule WHERE loan_id = ? AND status IN ('planned','overdue')", [loan.id], conn);
   if (Number(left.n) > 0) return false;
   await q("UPDATE loans SET status = 'repaid', closed_at = NOW(3) WHERE id = ?", [loan.id], conn);
+  if (loan.property_id) await q('UPDATE properties SET lien_loan_id = NULL WHERE id = ? AND lien_loan_id = ?', [loan.property_id, loan.id], conn);
   await q("UPDATE accounts SET status = 'closed', credit_limit = 0, closed_at = NOW(3) WHERE id = ? AND balance = 0", [loan.loan_account_id], conn);
   await adjustScore(conn, loan.bank_user_id, 30);
   await notify(conn, 'bank', loan.bank_user_id, { title: `Кредит №${loan.id} погашен`, link: '#/credit' });
@@ -343,6 +361,9 @@ export async function loanView(loan, conn) {
     id: loan.id,
     kind: loan.kind,
     purpose: loan.purpose,
+    deal_id: loan.deal_id ?? null,
+    property_id: loan.property_id ?? null,
+    down_payment: Number(loan.down_payment || 0),
     status: loan.status,
     amount_requested: n(loan.amount_requested),
     months_requested: loan.months_requested,

@@ -321,7 +321,7 @@ export async function bankRoutes(app) {
       requireVerified(u);
       const from = await ownAccount(u.id, int(req.body?.account_id, 'счёт'), conn);
       assertSpendable(from);
-      const r = await payInvoice(conn, String(req.params.no).toUpperCase(), { fromAccount: from.id, via: 'bank', actor: actorOf(req.bank), idem });
+      const r = await payInvoice(conn, String(req.params.no).toUpperCase(), { fromAccount: from.id, via: 'bank', actor: actorOf(req.bank), idem, allowArrested: true });
       return { tx: r.tx };
     });
     return { ok: true, ...res };
@@ -421,7 +421,7 @@ export async function bankRoutes(app) {
     if (!u) throw notFound();
     const accounts = await q("SELECT * FROM accounts WHERE owner_kind = 'bank_user' AND owner_id = ? AND status <> 'closed' ORDER BY id", [u.id]);
     const cards = await q("SELECT * FROM cards WHERE bank_user_id = ? AND status <> 'reissued' ORDER BY id DESC", [u.id]);
-    return { client: publicBankUser(u), accounts: accounts.map(accountView), cards: cards.map((c) => cardView(c, { full: false })) };
+    return { client: publicBankUser(u), accounts: accounts.map(accountView), cards: cards.map((c) => cardView(c)) };
   });
 
   app.post('/teller/clients/:id/accounts', teller, async (req) => {

@@ -38,7 +38,7 @@ export async function adminFinanceRoutes(app) {
       if (b.approve) {
         const amount = b.amount ? amountOf(b.amount) : Number(loan.amount_requested);
         const months = b.months ? int(b.months, 'срок', { min: 1, max: 600 }) : loan.months_requested;
-        const rateBp = b.rate_bp !== undefined && b.rate_bp !== null && b.rate_bp !== '' ? int(b.rate_bp, 'ставка', { min: 0, max: 10000 }) : Number(s.loan_rate_bp);
+        const rateBp = b.rate_bp !== undefined && b.rate_bp !== null && b.rate_bp !== '' ? int(b.rate_bp, 'ставка', { min: 0, max: 10000 }) : Number(loan.kind === 'mortgage' ? s.mortgage_rate_bp : loan.kind === 'auto' ? s.auto_loan_rate_bp : s.loan_rate_bp);
         await issueLoan(conn, loan, { amount, months, rateBp, actor: actor(req), note: note(req) });
       } else {
         await rejectLoan(conn, loan, { actor: actor(req), note: note(req) });

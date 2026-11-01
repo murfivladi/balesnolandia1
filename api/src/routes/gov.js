@@ -1,7 +1,7 @@
 import { tx, q, one, json } from '../db.js';
 import { bad, notFound, str, need, int } from '../lib/errors.js';
 import { needGov, needRole, actorOf } from '../lib/auth.js';
-import { citizenOf, activePassport, submitApplication, processApplication, rejectApplication, publicInvoice, APP_TITLES } from '../lib/gov.js';
+import { citizenOf, activePassport, submitApplication, processApplication, rejectApplication, publicInvoice, APP_TITLES, hasTravelBan } from '../lib/gov.js';
 import { notify } from '../lib/notify.js';
 import { audit } from '../lib/audit.js';
 import { currentMonth } from '../lib/clock.js';
@@ -104,24 +104,60 @@ export async function govRoutes(app) {
 
   app.post('/documents/:type', auth, async (req) => {
     const type = req.params.type;
-    if (!['inn', 'ip'].includes(type)) throw bad('unknown_type', 'Этот документ пока выдаётся только через админа');
+    if (!['inn', 'ip', 'driver', 'foreign_passport', 'visa', 'marriage', 'birth'].includes(type)) throw bad('unknown_type', 'Неизвестный документ');
+    const b = req.body || {};
     const result = await tx(async (conn) => {
       const citizen = await citizenOf(req.gov.id, conn);
       if (!citizen || !(await activePassport(citizen.id, conn))) throw bad('no_passport', 'Сначала получите паспорт БФ');
-      const have = await one("SELECT id FROM documents WHERE citizen_id = ? AND type = ? AND status = 'active'", [citizen.id, type], conn);
-      if (have) throw bad('already_have', 'Документ уже выдан');
+      if (['inn', 'ip', 'driver', 'foreign_passport'].includes(type)) {
+        const have = await one("SELECT id FROM documents WHERE citizen_id = ? AND type = ? AND status = 'active'", [citizen.id, type], conn);
+        if (have) throw bad('already_have', 'Документ уже выдан');
+      }
       const pending = await one("SELECT id FROM applications WHERE gov_user_id = ? AND type = ? AND status IN ('pending','awaiting_payment')", [req.gov.id, type], conn);
       if (pending) throw bad('already_pending', 'Заявление уже подано');
       let data = {};
+      let fee = null;
       if (type === 'ip') {
         const inn = await one("SELECT id FROM documents WHERE citizen_id = ? AND type = 'inn' AND status = 'active'", [citizen.id], conn);
         if (!inn) throw bad('no_inn', 'Для регистрации ИП нужен ИНН');
         data = {
-          trade_name: str(req.body?.trade_name, 'название', { min: 2, max: 80 }),
-          activity: str(req.body?.activity, 'вид деятельности', { optional: true, max: 120 }),
+          trade_name: str(b.trade_name, 'название', { min: 2, max: 80 }),
+          activity: str(b.activity, 'вид деятельности', { optional: true, max: 120 }),
         };
       }
-      const a = await submitApplication(conn, { govUserId: req.gov.id, citizenId: citizen.id, type, data });
+      if (type === 'driver') {
+        if (ageFrom(citizen.birth_date) < 16) throw bad('too_young', 'Права выдаются с 16 лет');
+        data = { categories: ['A', 'B', 'C', 'AB', 'BC'].includes(b.categories) ? b.categories : 'B' };
+      }
+      if (type === 'foreign_passport' || type === 'visa') {
+        if (await hasTravelBan(conn, citizen.id)) throw bad('travel_ban', 'Действует запрет выезда за неуплату');
+      }
+      if (type === 'visa') {
+        const fp = await one("SELECT id FROM documents WHERE citizen_id = ? AND type = 'foreign_passport' AND status = 'active'", [citizen.id], conn);
+        if (!fp) throw bad('no_foreign_passport', 'Сначала получите загранпаспорт');
+        const c = await one('SELECT * FROM countries WHERE id = ? AND active = 1', [int(b.country_id, 'страна')], conn);
+        if (!c) throw notFound('Страна не найдена');
+        if (!c.visa_required) throw bad('visa_free', `В ${c.name} виза не нужна`);
+        const month = await currentMonth(conn);
+        const has = await one("SELECT id FROM documents WHERE citizen_id = ? AND type = 'visa' AND status = 'active' AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.country_code')) = ? AND (expires_month IS NULL OR expires_month >= ?)", [citizen.id, c.code, month], conn);
+        if (has) throw bad('already_have', 'Виза в эту страну уже действует');
+        data = { country_id: c.id, country: c.name };
+        fee = Number(c.visa_fee);
+      }
+      if (type === 'marriage') {
+        if (citizen.marital_status === 'married') throw bad('already_married', 'Вы уже состоите в браке');
+        const sp = String(b.spouse_passport || '').trim().toUpperCase();
+        const spouse = await one('SELECT id, full_name, marital_status FROM citizens WHERE passport_no = ?', [sp], conn);
+        if (!spouse || spouse.id === citizen.id) throw notFound('Паспорт супруга(и) не найден');
+        if (spouse.marital_status === 'married') throw bad('spouse_married', 'Этот человек уже состоит в браке');
+        data = { spouse_passport: sp, spouse_name: spouse.full_name };
+      }
+      if (type === 'birth') {
+        const d = str(b.child_birth_date, 'дата рождения', { max: 10 });
+        need(/^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d)), 'Неверная дата рождения');
+        data = { child_name: str(b.child_name, 'имя ребёнка', { min: 2, max: 80 }), child_birth_date: d };
+      }
+      const a = await submitApplication(conn, { govUserId: req.gov.id, citizenId: citizen.id, type, data, fee });
       await audit(conn, actorOf(req.gov), `gov.${type}_apply`, 'application', a.id);
       return a;
     });
