@@ -87,7 +87,7 @@ API-тесты используют отдельную базу `bln_test` (им
 
 1. Тесты, затем сборка фронтенда с адресом API `https://bln-api.vladinc.ru`.
 2. Фронтенд по FTP на shared hosting.
-3. Код API на VPS по SSH.
+3. Код API на VPS по SSH (вход по паролю `VPS_PASS` или по ключу `VPS_SSH_KEY`).
 4. `deploy/setup-server.sh` от root (идемпотентный, повтор ничего не ломает):
    - ставит nginx, certbot, MariaDB, Node.js 20 и pm2, если их нет;
    - создаёт базу и пользователя со случайным паролем;
@@ -100,7 +100,7 @@ API-тесты используют отдельную базу `bln_test` (им
 Перед первым деплоем:
 
 - DNS: запись `A` для `bln-api.vladinc.ru` указывает на VPS, порты 80 и 443 открыты.
-- Пользователь `VPS_USER` — root или с `sudo` без пароля. ОС — Debian или Ubuntu.
+- Пользователь `VPS_USER` — root или состоит в группе `sudo`: пароль для `sudo` берётся тот же, `VPS_PASS`. ОС — Debian или Ubuntu.
 
 Секреты репозитория (Settings → Secrets and variables → Actions, окружение `production`):
 
@@ -108,11 +108,15 @@ API-тесты используют отдельную базу `bln_test` (им
 | --- | --- | --- |
 | `FTP_HOST`, `FTP_USER`, `FTP_PASSWORD` | да | доступ к shared hosting |
 | `FTP_DIR` | да | `/public_html/balesnolandia/` (со слешем в конце) |
-| `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` | да | SSH-доступ к VPS (приватный ключ целиком) |
+| `VPS_HOST`, `VPS_USER` | да | адрес VPS и пользователь (например, `root`) |
+| `VPS_PASS` | да* | пароль этого пользователя — для входа по SSH и для `sudo` |
+| `VPS_SSH_KEY` | нет* | приватный ключ целиком; если задан, вход по ключу (`VPS_PASS` тогда нужен только для `sudo` не-root) |
 | `ADMIN_EMAILS` | желательно | ваш email — при регистрации с ним выдаётся роль admin |
 | `CERTBOT_EMAIL` | нет | email для уведомлений Let's Encrypt |
 | `VPS_APP_DIR` | нет | `/srv/balesnolandia` |
 | `API_URL`, `WS_URL` | нет | `https://bln-api.vladinc.ru`, `wss://bln-api.vladinc.ru/ws` |
+
+\* Нужен хотя бы один из `VPS_PASS` и `VPS_SSH_KEY`.
 
 Другой домен API задаётся переменной репозитория `API_DOMAIN` (Variables, не Secrets).
 

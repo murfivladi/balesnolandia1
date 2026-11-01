@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Подготовка VPS (Debian/Ubuntu) для API Балесноландии. Запускается деплоем от root (через sudo)
 # при каждом деплое и ничего не ломает при повторе:
-#   пакеты (nginx, certbot, MariaDB, Node.js 20, pm2) → база и пользователь → api/.env →
+#   код из RELEASE_DIR → пакеты (nginx, certbot, MariaDB, Node.js 20, pm2) → база и пользователь → api/.env →
 #   конфиг nginx → сертификат Let's Encrypt → перезагрузка nginx.
 # Всё, что не нужно для первого запуска (адрес сайта, CORS, почта SMTP), настраивается в админке.
 set -euo pipefail
@@ -47,9 +47,14 @@ if [ "$node_major" -lt 20 ]; then
 fi
 have pm2 || { log "Устанавливаю pm2"; npm install -g pm2 --no-audit --no-fund >/dev/null; }
 
-# ——— Каталог приложения ———
+# ——— Каталог приложения: новый код из RELEASE_DIR, .env и node_modules остаются ———
 mkdir -p "$APP_DIR/api"
-chown "$APP_USER": "$APP_DIR" "$APP_DIR/api"
+if [ -n "${RELEASE_DIR:-}" ] && [ -d "$RELEASE_DIR" ]; then
+  log "Обновляю код в $APP_DIR"
+  rm -rf "$APP_DIR/api/src" "$APP_DIR/api/scripts" "$APP_DIR/api/test" "$APP_DIR/shared" "$APP_DIR/deploy"
+  (cd "$RELEASE_DIR" && tar cf - .) | (cd "$APP_DIR" && tar xf -)
+fi
+chown -R "$APP_USER": "$APP_DIR"
 
 # ——— .env: только то, что нужно для первого запуска ———
 touch "$ENV_FILE"
