@@ -7,7 +7,7 @@ export const COINS = [1, 2, 5, 10, 20, 50, 100, 200];
 export const NOTES = [500, 1000, 2000, 5000, 10000, 20000, 50000];
 export const DENOMINATIONS = [...NOTES, ...COINS].sort((a, b) => b - a);
 
-const NBSP_THIN = ' '; // неразрывный пробел между разрядами и перед «В»
+const NBSP_THIN = '\u00a0'; // неразрывный пробел между разрядами и перед «В»
 
 /** 125000 → "1 250,00 В" */
 export function formatMoney(minor, { sign = true, plus = false } = {}) {
@@ -26,7 +26,7 @@ export function formatMoney(minor, { sign = true, plus = false } = {}) {
 export function parseMoney(input) {
   if (typeof input === 'number') return Number.isFinite(input) ? Math.round(input * 100) : null;
   if (typeof input !== 'string') return null;
-  const s = input.replace(/[\s В]/g, '').replace(',', '.');
+  const s = input.replace(/[\s\u00a0В]/g, '').replace(',', '.');
   if (!/^-?\d+(\.\d{0,2})?$/.test(s)) return null;
   const neg = s.startsWith('-');
   const [w, f = ''] = s.replace('-', '').split('.');

@@ -347,13 +347,8 @@ export async function posRoutes(app) {
       return res;
     }
     if (method === 'card') {
-      let card;
-      try {
-        card = await authorizeCard({ number: b.number, exp: b.exp, pin: b.pin });
-      } catch (err) {
-        publish(`shop:${req.pos.shopId}`, { type: 'pay_declined', sale_id: saleId, reason: err.message });
-        throw err;
-      }
+      // Отказ показывает сама касса (экран «Отказано»); терминал сообщает об отказе через WebSocket.
+      const card = await authorizeCard({ number: b.number, exp: b.exp, pin: b.pin });
       return payFlow(req, saleId, (conn, sale, shop) => payByCard(conn, { sale, shop, card, amount, actor: staffActor(req), idem }));
     }
     throw bad('invalid_method', 'Способ оплаты: наличные, карта или QR');
@@ -561,7 +556,7 @@ export async function posRoutes(app) {
     } catch (err) {
       const retry = err.code === 'pin_wrong';
       publish(`terminal:${code}`, { type: 'pay_result', ok: false, code: err.code, message: err.message, retry });
-      publish(`shop:${t.shop_id}`, { type: 'pay_declined', sale_id: pending.sale_id, reason: err.message });
+      if (!retry) publish(`shop:${t.shop_id}`, { type: 'pay_declined', sale_id: pending.sale_id, reason: err.message });
       throw err;
     }
     publish(`terminal:${code}`, { type: 'pay_result', ok: true, sale_id: pending.sale_id, amount: pending.amount, finished: result.finished, method: 'card' });

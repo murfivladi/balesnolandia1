@@ -1,0 +1,16 @@
+# Необязательно: приложения используют hash-маршруты (#/...) и работают без перенаправлений.
+# Если хостинг разрешает .htaccess — эти правила дают правильные типы и кеширование.
+AddType application/manifest+json .webmanifest
+AddType application/javascript .js
+
+<IfModule mod_headers.c>
+  <FilesMatch "\.(js|css|png|svg|woff2)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "(index\.html|sw\.js|manifest\.webmanifest)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>
+
+# /balesnolandia/bank → /balesnolandia/bank/
+DirectorySlash On

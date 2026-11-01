@@ -11,7 +11,7 @@ import { payInvoice } from '../lib/gov.js';
 import { requestPassportLink, publicBankUser } from './auth.js';
 import {
   requireVerified, primaryAccount, ownAccount, openAccount, issueCard, cardView, accountView, authorizeCard,
-  checkCardLimits, transferFee, checkPinFormat, ipOf,
+  checkCardLimits, transferFee, checkPinFormat, ipOf, assertSpendable,
 } from '../lib/bank.js';
 import { payQr, qrInfo, receiptData } from '../lib/pos.js';
 import { hash } from '../lib/auth.js';
@@ -265,6 +265,7 @@ export async function bankRoutes(app) {
       const u = await freshUser(req.bank.id, conn);
       requireVerified(u);
       const from = await ownAccount(u.id, int(b.from_account, 'счёт списания'), conn);
+      assertSpendable(from);
       const to = await resolveRecipient(conn, b.to, u.id);
       if (to.id === from.id) throw bad('same_account', 'Нельзя перевести на тот же счёт');
       const own = to.owner_id === u.id;
@@ -294,6 +295,7 @@ export async function bankRoutes(app) {
       const u = await freshUser(req.bank.id, conn);
       requireVerified(u);
       const from = await ownAccount(u.id, int(req.body?.account_id, 'счёт'), conn);
+      assertSpendable(from);
       const r = await payInvoice(conn, String(req.params.no).toUpperCase(), { fromAccount: from.id, via: 'bank', actor: actorOf(req.bank), idem });
       return { tx: r.tx };
     });
@@ -308,6 +310,7 @@ export async function bankRoutes(app) {
       const u = await freshUser(req.bank.id, conn);
       requireVerified(u);
       const from = await ownAccount(u.id, int(req.body?.account_id, 'счёт'), conn);
+      assertSpendable(from);
       return payQr(conn, req.params.token, { user: u, account: from });
     });
     return { ok: true, ...res };

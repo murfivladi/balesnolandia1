@@ -79,6 +79,11 @@ export async function openAccount(conn, user, { type, name, compound = false, te
   return one('SELECT * FROM accounts WHERE id = ?', [id], conn);
 }
 
+/** Со вклада на срок деньги не тратятся напрямую — только закрытием вклада. */
+export function assertSpendable(account) {
+  if (account.type === 'term') throw bad('term_locked', 'Со вклада на срок нельзя платить — закройте вклад');
+}
+
 export function checkPinFormat(pin) {
   if (!/^\d{3}$/.test(String(pin || ''))) throw bad('invalid_pin', 'PIN — 3 цифры');
   return String(pin);
