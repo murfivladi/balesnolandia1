@@ -14,7 +14,7 @@ export function BankCard({ card, small = false, showCodes = false, hideNumber = 
       <div className="bc-top">
         <div>
           <div className="bc-bank">ВлодБанк</div>
-          <div className="bc-type">{t(CARD_TYPES[card.type] || card.type)}</div>
+          <div className={`bc-type bc-type-${card.type || 'debit'}`}>{t(CARD_TYPES[card.type] || card.type)}</div>
         </div>
         {showCodes && !small ? <div className="bc-qr"><QR value={`BLNCARD:${card.number}`} size={56} margin={0} /></div> : <div className="bc-chip" />}
       </div>

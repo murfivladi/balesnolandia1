@@ -6,7 +6,8 @@ import { useRoute, pick, navigate } from '../shared/router.js';
 import { Topbar, NavLink, DisclaimerBar, Spinner, useChannel, useIdle, useToast, Bell, Input, Form, Tabs, Empty, ErrorBox } from '../shared/ui.jsx';
 import { BankLogo } from '../shared/brand.jsx';
 import { LoginForm, AuthDisclaimer, NotificationsModal } from '../shared/auth.jsx';
-import { Dashboard, AccountPage, OpenAccount, CardsPage, NewCard, TransferPage, PayInvoice, QrPay, ReceiptPage, ProfilePage } from './pages.jsx';
+import { Dashboard, AccountPage, OpenAccount, CardsPage, TransferPage, PayInvoice, QrPay, ReceiptPage, ProfilePage } from './pages.jsx';
+import { NewCard, CreditPage, AutopayPage, CashbackPage } from './finance.jsx';
 import { Atm } from './atm.jsx';
 import { TellerPage } from './teller.jsx';
 
@@ -81,6 +82,8 @@ export default function App() {
             <NavLink href="#/cards" path={route.path}>{t('Карты')}</NavLink>
             <NavLink href="#/transfer" path={route.path}>{t('Переводы')}</NavLink>
             <NavLink href="#/pay" path={route.path}>{t('Платежи')}</NavLink>
+            <NavLink href="#/credit" path={route.path}>{t('Кредиты')}</NavLink>
+            <NavLink href="#/cashback" path={route.path}>{t('Кешбэк')}</NavLink>
             {isTeller && <NavLink href="#/teller" path={route.path}>{t('Операционист')}</NavLink>}
           </>
         )}
@@ -102,8 +105,11 @@ export default function App() {
           ['/cards/new', () => <NewCard />],
           ['/transfer', () => <TransferPage />],
           ['/pay', () => <PayInvoice />],
+          ['/credit', () => <CreditPage tick={tick} />],
           ['/pay/:no', (p) => <PayInvoice number={p.no} />],
           ['/qr/:token', (p) => <QrPay token={p.token} />],
+          ['/autopay', () => <AutopayPage tick={tick} />],
+          ['/cashback', () => <CashbackPage tick={tick} />],
           ['/receipt/:id', (p) => <ReceiptPage id={p.id} />],
           ['/profile', () => <ProfilePage me={me} />],
           ['/teller', () => (isTeller ? <TellerPage /> : <Empty>{t('Нет доступа')}</Empty>)],

@@ -21,6 +21,7 @@ export function publicBankUser(u, roles = []) {
     gov_linked: !!u.gov_user_id,
     status: u.status,
     lang: u.lang,
+    credit_score: u.credit_score ?? 500,
     roles,
   };
 }

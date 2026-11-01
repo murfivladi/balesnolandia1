@@ -1,0 +1,15 @@
+{
+  "name": "balesnolandia-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "API Балесноландии: собранный server.mjs со всеми зависимостями внутри, npm install не нужен.",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "dependencies": {}
+}

@@ -38,9 +38,10 @@ const DEBIT_BLOCKED = {
  * @param {{account:number, amount:number}[]} p.entries  amount > 0 — зачисление, < 0 — списание
  * @param {string} [p.idem]  ключ идемпотентности (уникален в журнале)
  * @param {boolean} [p.force] разрешить списание с замороженного/арестованного счёта (админ)
+ * @param {boolean} [p.overLimit] разрешить уход ниже кредитного лимита (проценты и штрафы банка по долгу)
  * @returns {Promise<{id:number, duplicate?:boolean, balances:Map<number,number>}>}
  */
-export async function post(conn, { kind, memo = null, entries, idem = null, actor = null, ref = null, meta = null, force = false, reversalOf = null, cardId = null }) {
+export async function post(conn, { kind, memo = null, entries, idem = null, actor = null, ref = null, meta = null, force = false, overLimit = false, reversalOf = null, cardId = null }) {
   if (idem) {
     const prev = await findIdem(conn, idem);
     if (prev) return { id: prev.id, duplicate: true, balances: new Map() };
@@ -58,7 +59,7 @@ export async function post(conn, { kind, memo = null, entries, idem = null, acto
 
   const ids = [...byAcc.keys()].sort((a, b) => a - b);
   // Блокируем строки счетов в одном порядке, чтобы не ловить взаимные блокировки.
-  const rows = await q(`SELECT id, owner_kind, owner_id, balance, status, allow_negative, name FROM accounts WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY id FOR UPDATE`, ids, conn);
+  const rows = await q(`SELECT id, owner_kind, owner_id, type, balance, status, allow_negative, credit_limit, name FROM accounts WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY id FOR UPDATE`, ids, conn);
   if (rows.length !== ids.length) throw bad('account_not_found', 'Счёт не найден');
   const accs = new Map(rows.map((r) => [r.id, r]));
 
@@ -67,8 +68,9 @@ export async function post(conn, { kind, memo = null, entries, idem = null, acto
     if (a.status === 'closed') throw bad('account_closed', 'Счёт закрыт');
     if (amt < 0) {
       if (!force && a.status !== 'active') throw bad('account_' + a.status, DEBIT_BLOCKED[a.status] || 'Счёт недоступен');
-      if (!a.allow_negative && Number(a.balance) + amt < 0) {
-        throw bad('insufficient_funds', 'Недостаточно средств', { account: id });
+      // Кредитный и ссудный счёт уходят в минус до лимита; остальные — только до нуля.
+      if (!a.allow_negative && !overLimit && Number(a.balance) + amt < -Number(a.credit_limit || 0)) {
+        throw bad('insufficient_funds', a.type === 'credit' ? 'Недостаточно кредитного лимита' : 'Недостаточно средств', { account: id });
       }
     }
   }
@@ -102,7 +104,7 @@ export async function post(conn, { kind, memo = null, entries, idem = null, acto
     publish('admin', { type: 'tx', tx: txId, kind });
   });
 
-  return { id: txId, balances };
+  return { id: txId, balances, accounts: accs };
 }
 
 /** Сторно: обратная проводка. Арест и заморозка не мешают (решение админа). */
@@ -120,6 +122,7 @@ export async function reverse(conn, txId, { actor, memo } = {}) {
     ref: { type: 'tx', id: txId },
     reversalOf: txId,
     force: true,
+    overLimit: true,
   });
   await q('UPDATE ledger_tx SET reversed_by = ? WHERE id = ?', [res.id, txId], conn);
   return res;

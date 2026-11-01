@@ -382,3 +382,14 @@ table.table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 /* ВлодБанк в тёмной теме: золотые кнопки, чтобы не сливались с фоном */
 :root[data-theme='dark'] body[data-app='bank'] .btn:not(.ghost):not(.danger):not(.secondary):not(.ok-btn) { background: var(--accent); color: #14120a; }
 :root[data-theme='dark'] body[data-app='admin'] .topbar, :root[data-theme='dark'] body[data-app='bank'] .topbar { border-bottom: 1px solid var(--line); }
+
+/* Кредитный рейтинг */
+.score-bar { height: 8px; border-radius: 99px; background: linear-gradient(90deg, var(--err, #c0392b), #e5a50a 45%, var(--ok, #1e8e3e)); position: relative; opacity: .9; }
+.score-bar > div { height: 100%; border-right: 3px solid var(--text, #111); border-radius: 99px 0 0 99px; background: transparent; }
+
+/* Вид карты — цветная метка: дебетовая, кредитная, детская, подарочная */
+.bc-type { display: inline-block; }
+.bc-type-credit, .bc-type-child, .bc-type-gift { padding: 1px 7px; border-radius: 99px; color: #fff; }
+.bc-type-credit { background: #b3261e; }
+.bc-type-child { background: #1f8f5a; }
+.bc-type-gift { background: #7b3fb5; }

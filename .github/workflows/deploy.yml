@@ -52,6 +52,9 @@ jobs:
       # Vladhost: FTPS (явный TLS). Если сертификат FTP-сервера не проходит проверку — переменная FTP_SECURITY=loose.
       FTP_PROTOCOL: ${{ vars.FTP_PROTOCOL || 'ftps' }}
       FTP_SECURITY: ${{ vars.FTP_SECURITY || 'strict' }}
+      # FTP Vladhost — порт 2121 (и для сайта, и для API).
+      FTP_PORT: 2121
+      DB_HOST: db.vladinc.ru
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -88,22 +91,21 @@ jobs:
 
       - name: Сборка API (один файл server.mjs + миграции + bln.env)
         env:
-          DB_HOST: ${{ secrets.DB_HOST }}
           DB_PORT: ${{ secrets.DB_PORT }}
           DB_NAME: ${{ secrets.DB_NAME }}
-          DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
         run: |
           npm run build -w api
           # Настройки для первого запуска; остальное (почта, адреса) — в админке.
           # PORT не пишем: его передаёт панель хостинга.
+          # База Vladhost: сервер db.vladinc.ru, логин совпадает с именем базы.
           {
             echo "NODE_ENV=production"
-            echo "DB_HOST=${DB_HOST:-127.0.0.1}"
+            echo "DB_HOST=$DB_HOST"
             echo "DB_PORT=${DB_PORT:-3306}"
             echo "DB_NAME=$DB_NAME"
-            echo "DB_USER=${DB_USER:-$DB_NAME}"
+            echo "DB_USER=$DB_NAME"
             echo "DB_PASSWORD=$DB_PASSWORD"
             echo "ADMIN_EMAILS=$ADMIN_EMAILS"
             echo "PUBLIC_WEB_URL=https://$SITE_DOMAIN"
@@ -117,7 +119,7 @@ jobs:
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_HOST }}
-          port: ${{ secrets.FTP_PORT || 21 }}
+          port: ${{ env.FTP_PORT }}
           username: ${{ secrets.FTP_USER }}
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}
@@ -129,7 +131,7 @@ jobs:
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_API_HOST }}
-          port: ${{ secrets.FTP_API_PORT || 21 }}
+          port: ${{ env.FTP_PORT }}
           username: ${{ secrets.FTP_API_USER }}
           password: ${{ secrets.FTP_API_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}
@@ -141,7 +143,7 @@ jobs:
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_API_HOST }}
-          port: ${{ secrets.FTP_API_PORT || 21 }}
+          port: ${{ env.FTP_PORT }}
           username: ${{ secrets.FTP_API_USER }}
           password: ${{ secrets.FTP_API_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}

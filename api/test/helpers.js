@@ -24,12 +24,15 @@ export async function setup() {
 }
 
 /** Клиент с банкой cookie поверх app.inject. */
+let clients = 0;
 export function client(app) {
   const jar = new Map();
   let n = 0;
+  // У каждого клиента свой адрес — ограничение частоты считается по IP, как у живых игроков.
+  const ip = `10.0.${Math.floor(++clients / 250)}.${clients % 250}`;
   async function call(method, url, body, headers = {}) {
     const cookie = [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
-    const res = await app.inject({ method, url, payload: body, headers: { ...(cookie ? { cookie } : {}), ...headers } });
+    const res = await app.inject({ method, url, payload: body, remoteAddress: ip, headers: { ...(cookie ? { cookie } : {}), ...headers } });
     for (const c of res.cookies) {
       if (!c.value || (c.expires && new Date(c.expires) < new Date())) jar.delete(c.name);
       else jar.set(c.name, c.value);

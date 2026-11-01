@@ -68,3 +68,22 @@ export function vatIncluded(total, rateBp) {
 export function percentOf(amount, rateBp) {
   return Math.round((amount * rateBp) / 10000);
 }
+
+/**
+ * Аннуитетный график кредита: равные платежи, в начале больше процентов.
+ * rateBp — ставка за игровой месяц в базисных пунктах. Последний платёж закрывает остаток.
+ * @returns {{payment:number, total:number, rows:{n:number, principal:number, interest:number}[]}}
+ */
+export function annuitySchedule(amount, months, rateBp) {
+  const r = rateBp / 10000;
+  const payment = r > 0 ? Math.ceil((amount * r) / (1 - (1 + r) ** -months)) : Math.ceil(amount / months);
+  const rows = [];
+  let left = amount;
+  for (let n = 1; n <= months; n++) {
+    const interest = Math.round(left * r);
+    const principal = n === months ? left : Math.min(left, Math.max(0, payment - interest));
+    rows.push({ n, principal, interest });
+    left -= principal;
+  }
+  return { payment, total: rows.reduce((s, x) => s + x.principal + x.interest, 0), rows };
+}
