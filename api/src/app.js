@@ -18,6 +18,9 @@ import { posRoutes } from './routes/pos.js';
 import { adminRoutes } from './routes/admin.js';
 import { posExtRoutes, bankDebtRoutes } from './routes/pos-ext.js';
 import { adminPosRoutes } from './routes/admin-pos.js';
+import { govExtRoutes } from './routes/gov-ext.js';
+import { adminGovRoutes } from './routes/admin-gov.js';
+import { bankGovRoutes } from './routes/bank-gov.js';
 
 export async function buildApp({ logger = config.env !== 'test' } = {}) {
   const app = Fastify({
@@ -63,14 +66,17 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
   await app.register(authRoutes, { prefix: '/api' });
   await app.register(commonRoutes, { prefix: '/api' });
   await app.register(govRoutes, { prefix: '/api/gov' });
+  await app.register(govExtRoutes, { prefix: '/api/gov' });
   await app.register(bankRoutes, { prefix: '/api/bank' });
   await app.register(financeRoutes, { prefix: '/api/bank' });
   await app.register(posRoutes, { prefix: '/api/pos' });
   await app.register(posExtRoutes, { prefix: '/api/pos' });
   await app.register(bankDebtRoutes, { prefix: '/api/bank' });
+  await app.register(bankGovRoutes, { prefix: '/api/bank' });
   await app.register(adminRoutes, { prefix: '/api/admin' });
   await app.register(adminFinanceRoutes, { prefix: '/api/admin' });
   await app.register(adminPosRoutes, { prefix: '/api/admin' });
+  await app.register(adminGovRoutes, { prefix: '/api/admin' });
 
   return app;
 }

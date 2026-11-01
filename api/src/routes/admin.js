@@ -57,7 +57,7 @@ function cleanSettings(body) {
 }
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories', 'wholesale_items']);
+const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories', 'wholesale_items', 'fine_articles', 'countries']);
 
 async function tableNames(conn) {
   const rows = await q('SHOW TABLES', [], conn);
@@ -81,7 +81,11 @@ export async function adminRoutes(app) {
       (SELECT COUNT(*) FROM applications WHERE status = 'pending') AS pending_apps,
       (SELECT COUNT(*) FROM cards WHERE status = 'active') AS cards,
       (SELECT COUNT(*) FROM loans WHERE status = 'pending') + (SELECT COUNT(*) FROM credit_lines WHERE status = 'pending') AS pending_credit,
-      (SELECT COUNT(*) FROM fraud_queue WHERE status = 'pending') AS pending_fraud`);
+      (SELECT COUNT(*) FROM fraud_queue WHERE status = 'pending') AS pending_fraud,
+      (SELECT COUNT(*) FROM fines WHERE appeal_status = 'pending') AS pending_fine_appeals,
+      (SELECT COUNT(*) FROM benefits WHERE status = 'pending') AS pending_benefits,
+      (SELECT COUNT(*) FROM appeals WHERE status = 'open') AS open_appeals,
+      (SELECT COUNT(*) FROM citizen_sanctions WHERE active = 1) AS sanctions`);
     for (const k of Object.keys(counts)) counts[k] = Number(counts[k]);
     return { counts, economy: await economy(), clock: await clockState() };
   });
