@@ -37,14 +37,14 @@ async function receive(conn, product, qty, unitCost, { reason = 'purchase', refI
 /** Товар магазина, в который приходит закупка: указанный, связанный или новый. */
 async function targetProduct(conn, shopId, { productId, wholesaleItemId = null, template }) {
   if (productId) {
-    const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ?', [productId, shopId], conn);
+    const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ? AND deleted_at IS NULL', [productId, shopId], conn);
     if (!p) throw notFound('Товар магазина не найден');
     if (p.unit !== template.unit) throw bad('unit_mismatch', `Единицы не совпадают: ${p.name}`);
     return p;
   }
   const found = wholesaleItemId
-    ? await one('SELECT * FROM products WHERE shop_id = ? AND wholesale_item_id = ? ORDER BY active DESC, id LIMIT 1', [shopId, wholesaleItemId], conn)
-    : await one('SELECT * FROM products WHERE shop_id = ? AND name = ? AND unit = ? ORDER BY active DESC, id LIMIT 1', [shopId, template.name, template.unit], conn);
+    ? await one('SELECT * FROM products WHERE shop_id = ? AND wholesale_item_id = ? AND deleted_at IS NULL ORDER BY active DESC, id LIMIT 1', [shopId, wholesaleItemId], conn)
+    : await one('SELECT * FROM products WHERE shop_id = ? AND name = ? AND unit = ? AND deleted_at IS NULL ORDER BY active DESC, id LIMIT 1', [shopId, template.name, template.unit], conn);
   if (found) return found;
   const r = await q(
     'INSERT INTO products (shop_id, name, category, barcode, price, cost, unit, age_limit, photo, track_stock, wholesale_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)',
@@ -99,7 +99,7 @@ export async function orderFromShop(conn, { shop, staff, sellerShopId, lines, no
   if (!Array.isArray(lines) || !lines.length || lines.length > 100) throw bad('empty', 'Укажите товары для заказа');
   const items = [];
   for (const l of lines) {
-    const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ? AND active = 1 AND b2b_price IS NOT NULL', [Number(l.product_id) || 0, seller.id], conn);
+    const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ? AND active = 1 AND deleted_at IS NULL AND b2b_price IS NOT NULL', [Number(l.product_id) || 0, seller.id], conn);
     if (!p) throw notFound('Товар продавца не найден или не продаётся оптом');
     const qty = Math.round(Number(l.qty_milli));
     checkQty(qty, p.unit, p.name);

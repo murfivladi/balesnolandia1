@@ -1282,4 +1282,18 @@ export const IT = {
   "Одежда и обувь": "Abbigliamento e scarpe",
   "Развлечения": "Intrattenimento",
   "Прочее": "Altro",
+  // ——— Касса: удаление товаров ———
+  "Показать удалённые": "Mostra eliminati",
+  "Скрыть удалённые": "Nascondi eliminati",
+  "Удалён": "Eliminato",
+  "Удалённых товаров нет": "Nessun prodotto eliminato",
+  "Удалить товар «{name}»? Он исчезнет из кассы, но останется в истории продаж.": "Eliminare il prodotto «{name}»? Sparirà dalla cassa ma resterà nello storico delle vendite.",
+  "Товар удалён": "Prodotto eliminato",
+  "Товар восстановлен": "Prodotto ripristinato",
+  "Удаление товара": "Eliminazione prodotto",
+  "Восстановление товара": "Ripristino prodotto",
+  "Товар удалён из каталога": "Prodotto eliminato dal catalogo",
+  "Удалить товар из чека": "Rimuovi il prodotto dallo scontrino",
+  "Удалённые товары не видны кассирам и не попадают в новые чеки; историю продаж и возвраты можно посмотреть в отчётах.": "I prodotti eliminati non sono visibili ai cassieri e non entrano nei nuovi scontrini; lo storico delle vendite e i resi restano nei report.",
+  "Удалённый товар не найден": "Prodotto eliminato non trovato",
 };

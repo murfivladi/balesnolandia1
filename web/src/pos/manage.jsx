@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { get, post, patch } from '../shared/api.js';
+import { get, post, patch, del } from '../shared/api.js';
 import { t, fmtDate } from '../shared/i18n.js';
 import { pick } from '../shared/router.js';
-import { Spinner, useAsync, Money, MoneyInput, Input, Select, Form, Modal, Empty, Badge, PhotoInput, Scanner, useToast, Seg, Field } from '../shared/ui.jsx';
+import { Spinner, useAsync, Money, MoneyInput, Input, Select, Form, Modal, Empty, Badge, PhotoInput, Scanner, useToast, Seg, Field, ActionButton } from '../shared/ui.jsx';
 import { formatMoney } from '@bln/shared/money.js';
 import { applyShopColor } from './App.jsx';
 
@@ -10,6 +10,7 @@ const ACTIONS = {
   login: 'Вход кассира', shift_open: 'Открытие смены', shift_close: 'Закрытие смены', remove_item: 'Удаление из чека', clear_cart: 'Очистка чека',
   discount: 'Скидка', drawer_open: 'Открытие ящика', refund: 'Возврат', sale_cancel: 'Отмена чека', invoice_cash: 'Квитанция наличными',
   age_ok: 'Проверка возраста', age_denied: 'Отказ по возрасту', collection: 'Инкассация', qty_change: 'Изменение количества',
+  product_delete: 'Удаление товара', product_restore: 'Восстановление товара',
 };
 
 export function Manage({ session, route, onChange }) {
@@ -33,29 +34,53 @@ export function Manage({ session, route, onChange }) {
 }
 
 function Products() {
-  const { data, loading, reload } = useAsync(() => get('/pos/products?all=1'), []);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const { data, loading, reload } = useAsync(() => get(`/pos/products?all=1${showDeleted ? '&deleted=1' : ''}`), [showDeleted]);
   const [edit, setEdit] = useState(null);
   const [stock, setStock] = useState(null);
   if (loading && !data) return <Spinner />;
   return (
     <div className="page">
-      <div className="page-head"><h1>{t('Товары')}</h1><button className="btn" onClick={() => setEdit({ unit: 'pcs', age_limit: 0, track_stock: true, active: true })}>+ {t('Товар')}</button></div>
-      {!data.products.length ? <Empty>{t('Каталог пуст')}</Empty> : (
+      <div className="page-head">
+        <h1>{t('Товары')}</h1>
+        <div className="row nowrap">
+          <button className="btn ghost sm" onClick={() => setShowDeleted(!showDeleted)}>{t(showDeleted ? 'Скрыть удалённые' : 'Показать удалённые')}</button>
+          <button className="btn" onClick={() => setEdit({ unit: 'pcs', age_limit: 0, track_stock: true, active: true })}>+ {t('Товар')}</button>
+        </div>
+      </div>
+      {!data.products.length ? <Empty>{t(showDeleted ? 'Удалённых товаров нет' : 'Каталог пуст')}</Empty> : (
         <div className="card table-wrap">
           <table className="table">
             <thead><tr><th /><th>{t('Название')}</th><th>{t('Категория')}</th><th>{t('Цена')}</th><th>{t('Закупка')}</th><th>{t('Остаток')}</th><th /></tr></thead>
             <tbody>
               {data.products.map((p) => (
-                <tr key={p.id} style={{ opacity: p.active ? 1 : 0.5 }}>
+                <tr key={p.id} style={{ opacity: p.deleted_at ? 0.7 : p.active ? 1 : 0.5 }}>
                   <td style={{ width: 48 }}>{p.photo ? <img src={p.photo} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6 }} /> : null}</td>
-                  <td>{p.name} {p.age_limit > 0 && <Badge kind="err">{p.age_limit}+</Badge>}<div className="tiny muted mono">{p.barcode}</div></td>
+                  <td>
+                    {p.name} {p.age_limit > 0 && <Badge kind="err">{p.age_limit}+</Badge>} {p.deleted_at && <Badge kind="err">{t('Удалён')}</Badge>}
+                    <div className="tiny muted mono">{p.barcode}</div>
+                    {p.deleted_at && <div className="tiny muted">{fmtDate(p.deleted_at)}</div>}
+                  </td>
                   <td>{p.category}</td>
                   <td className="num">{formatMoney(p.price)}{p.unit === 'kg' ? ` / ${t('кг')}` : ''}</td>
                   <td className="num muted">{formatMoney(p.cost)}</td>
                   <td className="num">{p.track_stock ? (p.unit === 'kg' ? `${(p.stock_milli / 1000).toFixed(3)} ${t('кг')}` : `${p.stock_milli / 1000} ${t('шт')}`) : '∞'}</td>
                   <td className="right nowrap">
-                    <button className="btn ghost sm" onClick={() => setStock(p)}>{t('Остаток')}</button>
-                    <button className="btn secondary sm" onClick={() => setEdit(p)}>{t('Изменить')}</button>
+                    {showDeleted ? (
+                      <ActionButton size="sm" action={async () => { await post(`/pos/products/${p.id}/restore`); reload(); }} okMessage={t('Товар восстановлен')}>{t('Восстановить')}</ActionButton>
+                    ) : (
+                      <>
+                        <button className="btn ghost sm" onClick={() => setStock(p)}>{t('Остаток')}</button>
+                        <button className="btn secondary sm" onClick={() => setEdit(p)}>{t('Изменить')}</button>
+                        <ActionButton
+                          kind="danger"
+                          size="sm"
+                          confirm={t('Удалить товар «{name}»? Он исчезнет из кассы, но останется в истории продаж.', { name: p.name })}
+                          action={async () => { await del(`/pos/products/${p.id}`); reload(); }}
+                          okMessage={t('Товар удалён')}
+                        >{t('Удалить')}</ActionButton>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -63,6 +88,7 @@ function Products() {
           </table>
         </div>
       )}
+      <p className="small muted">{t('Удалённые товары не видны кассирам и не попадают в новые чеки; историю продаж и возвраты можно посмотреть в отчётах.')}</p>
       {edit && <ProductModal product={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); reload(); }} />}
       {stock && <StockModal product={stock} onClose={() => setStock(null)} onSaved={() => { setStock(null); reload(); }} />}
     </div>

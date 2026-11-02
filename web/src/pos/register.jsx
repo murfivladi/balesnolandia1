@@ -34,7 +34,14 @@ export function Register({ session, onSession }) {
   const total = Math.max(0, subtotal - discount);
 
   useChannel(`shop:${session.shop.id}`, (m) => {
-    if (m.type === 'sale_paid') reloadProducts();
+    if (m.type === 'sale_paid' || m.type === 'product_restored') reloadProducts();
+    if (m.type === 'product_deleted') {
+      const next = cart.filter((l) => l.product_id !== m.id);
+      setCart(next);
+      if (!next.length) setDiscount(0);
+      reloadProducts();
+      toast(t('Товар удалён из каталога'), 'err');
+    }
   });
 
   // Показ корзины на терминале покупателя.
@@ -204,7 +211,7 @@ export function Register({ session, onSession }) {
                   ) : qtyLabel('kg', l.qty_milli)}
                   × {formatMoney(p.price)}
                 </span>
-                <button className="btn ghost sm" style={{ justifySelf: 'end' }} onClick={() => remove(i)} aria-label={t('Удалить')}>✕</button>
+                <button className="btn ghost sm" style={{ justifySelf: 'end' }} onClick={() => remove(i)} aria-label={t('Удалить')} title={t('Удалить товар из чека')}>✕ {t('Удалить')}</button>
               </div>
             );
           })}
