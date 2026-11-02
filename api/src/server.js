@@ -4,8 +4,11 @@ import { migrate } from './migrate.js';
 import { startClock } from './lib/clock.js';
 import { ensureJwtSecret } from './lib/secrets.js';
 import { VERSION, watchForNewVersion } from './lib/version.js';
+import { guardNetworkInterfaces } from './lib/network.js';
 import { pool } from './db.js';
 
+// До app.listen(): на некоторых хостингах Fastify падает в os.networkInterfaces().
+guardNetworkInterfaces();
 const app = await buildApp();
 
 // Всё, что раньше делали скрипты на сервере: схема базы и секрет — при запуске.
