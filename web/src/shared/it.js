@@ -1296,4 +1296,8 @@ export const IT = {
   "Удалить товар из чека": "Rimuovi il prodotto dallo scontrino",
   "Удалённые товары не видны кассирам и не попадают в новые чеки; историю продаж и возвраты можно посмотреть в отчётах.": "I prodotti eliminati non sono visibili ai cassieri e non entrano nei nuovi scontrini; lo storico delle vendite e i resi restano nei report.",
   "Удалённый товар не найден": "Prodotto eliminato non trovato",
+  // ——— Бургер-меню на телефоне ———
+  "Меню": "Menu",
+  "Закрыть меню": "Chiudi menu",
+  "Разделы": "Sezioni",
 };
