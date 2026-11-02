@@ -119,6 +119,52 @@ img { max-width: 100%; }
 .subnav .nav a.active { background: var(--brand-2); color: var(--accent); }
 .subnav-inner { max-width: 1200px; margin: 0 auto; padding: 6px 16px; }
 
+/* Бургер-меню: общий для шапки всех приложений и для подменю кассы */
+.topbar .tb-btn.burger { display: none; padding: 0 9px !important; }
+.burger-lines { display: inline-flex; flex-direction: column; gap: 4px; width: 18px; }
+.burger-lines i { display: block; height: 2px; border-radius: 2px; background: currentColor; transition: transform .15s ease, opacity .15s ease; }
+.menu-open .burger-lines i:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.menu-open .burger-lines i:nth-child(2) { opacity: 0; }
+.menu-open .burger-lines i:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+.topbar-menu, .topbar-backdrop, .subnav-burger { display: none; }
+.topbar-menu {
+  border-top: 1px solid rgba(255,255,255,.18);
+  padding: 8px 16px 12px;
+  background: var(--brand);
+  box-shadow: 0 8px 18px rgba(0,0,0,.18);
+}
+.topbar-menu .nav { flex-direction: column; align-items: stretch; gap: 2px; overflow: visible; }
+.topbar-menu .nav a { padding: 10px 12px; font-size: 1rem; }
+.topbar-menu-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.18);
+}
+.topbar-backdrop { position: fixed; inset: 0; z-index: 29; border: 0; padding: 0; background: rgba(0,0,0,.35); }
+.subnav-burger {
+  align-items: center; gap: 8px; background: var(--surface); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; cursor: pointer;
+}
+.subnav-burger .burger-lines i { background: currentColor; }
+
+@media (max-width: 720px) {
+  .topbar-inner { padding: 8px 12px; gap: 8px; }
+  .brand { font-size: 1rem; min-width: 0; }
+  .brand img, .brand svg { flex: none; }
+  .brand span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar > .topbar-inner > .nav, .topbar > .topbar-inner > .topbar-actions { display: none; }
+  .topbar .tb-btn.burger { display: inline-flex; }
+  .topbar-backdrop { display: block; }
+  .topbar.menu-open .topbar-menu { display: block; }
+  .subnav-inner { padding: 8px 12px; }
+  .subnav-burger { display: inline-flex; }
+  .subnav .nav { display: none; flex-direction: column; align-items: stretch; gap: 2px; margin-top: 8px; overflow: visible; }
+  .subnav.menu-open .nav { display: flex; }
+  .subnav .nav a { padding: 9px 10px; }
+}
+@media (min-width: 721px) {
+  .topbar-backdrop { display: none !important; }
+}
+
 .page { max-width: 1200px; width: 100%; margin: 0 auto; padding: 20px 16px 40px; flex: 1; }
 .page.narrow { max-width: 520px; }
 .page.medium { max-width: 820px; }
@@ -373,7 +419,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 .landing a.card:hover { transform: translateY(-2px); }
 
 @media print {
-  .topbar, .subnav, .no-print, .toasts { display: none !important; }
+  .topbar, .topbar-backdrop, .subnav, .no-print, .toasts { display: none !important; }
   body { background: #fff; }
 }
 

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { get, post, patch, del } from '../shared/api.js';
 import { t, fmtDate } from '../shared/i18n.js';
 import { pick } from '../shared/router.js';
-import { Spinner, useAsync, Money, MoneyInput, Input, Select, Form, Modal, Empty, Badge, PhotoInput, Scanner, useToast, Seg, Field, ActionButton } from '../shared/ui.jsx';
+import { Spinner, useAsync, Money, MoneyInput, Input, Select, Form, Modal, Empty, Badge, PhotoInput, Scanner, useToast, Seg, Field, ActionButton, Subnav } from '../shared/ui.jsx';
 import { formatMoney } from '@bln/shared/money.js';
 import { applyShopColor } from './App.jsx';
 
@@ -18,7 +18,7 @@ export function Manage({ session, route, onChange }) {
   const tabs = [['products', 'Товары'], ['staff', 'Персонал'], ['shop', 'Магазин'], ['reports', 'Отчёты'], ['shifts', 'Смены'], ['log', 'Журнал']];
   return (
     <>
-      <div className="subnav"><div className="subnav-inner"><nav className="nav">{tabs.map(([k, l]) => <a key={k} href={`#/manage/${k}`} className={sub === k ? 'active' : ''}>{t(l)}</a>)}</nav></div></div>
+      <Subnav items={tabs.map(([k, l]) => [`#/manage/${k}`, t(l), sub === k])} />
       {pick([
         ['/manage', () => <Products />],
         ['/manage/products', () => <Products />],
