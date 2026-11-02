@@ -1,0 +1,112 @@
+name: Deploy frontend to Cloudflare Pages
+
+# На production попадает только фронтенд из main. API этим workflow не меняется.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'shared/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.nvmrc'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-pages-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # В том числе при ручном запуске нельзя случайно опубликовать другую ветку.
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    env:
+      BASE_PATH: /
+      VITE_API_URL: https://vps.vladislavb.qzz.io
+      VITE_WS_URL: wss://vps.vladislavb.qzz.io/ws
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: bln_test
+          MARIADB_USER: bln
+          MARIADB_PASSWORD: bln
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - name: Тесты shared и API на отдельной тестовой базе
+        run: npm test
+        env:
+          DB_HOST: 127.0.0.1
+          DB_USER: bln
+          DB_PASSWORD: bln
+          TEST_DB_NAME: bln_test
+      - name: Сборка сайта
+        run: npm run build -w web
+      - name: Проверка файлов и адресов сборки
+        run: |
+          for page in index.html bank/index.html pos/index.html services/index.html admin/index.html; do
+            test -s "web/dist/$page"
+            grep -Eq 'src="/assets/[^"]+\.js"' "web/dist/$page"
+          done
+          for app in bank pos services admin; do test -s "web/dist/$app/manifest.webmanifest"; done
+          test -s web/dist/sw.js
+          grep -qRF -- "$VITE_API_URL" web/dist/assets
+          grep -qRF -- "$VITE_WS_URL" web/dist/assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-pages-web
+          path: web/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: cloudflare-pages
+    steps:
+      - name: Проверка настроек Cloudflare
+        env:
+          PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$PAGES_PROJECT" ] || [ -z "$ACCOUNT_ID" ] || [ -z "$API_TOKEN" ]; then
+            echo '::error::В окружении cloudflare-pages задайте переменную CLOUDFLARE_PAGES_PROJECT и секреты CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN.'
+            exit 1
+          fi
+          if [[ ! "$PAGES_PROJECT" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            echo '::error::Имя проекта Pages должно начинаться с маленькой буквы или цифры и содержать только маленькие буквы, цифры и дефисы.'
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: cloudflare-pages-web
+          path: web/dist
+      - name: Публикация только собранного фронтенда
+        # cloudflare/wrangler-action v4.1.3, закреплённый на конкретном коммите.
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4.156.1'
+          command: pages deploy web/dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }} --branch=main
