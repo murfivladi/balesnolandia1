@@ -6,6 +6,7 @@ import { post, sys } from './ledger.js';
 import { publish } from './hub.js';
 import { notify } from './notify.js';
 import { priceIndex } from './finance.js';
+import { posLog } from './pos.js';
 import { formatMoney } from '@bln/shared/money.js';
 
 const QTY_ONE = 1000;
@@ -88,6 +89,10 @@ export async function buyWholesale(conn, { shop, staff, lines, idem = null }) {
     });
     await receive(conn, prod, p.qty, p.unitPrice, { refId: ins.insertId, staffId: staff.id });
   }
+  await posLog(conn, {
+    shopId: shop.id, staffId: staff.id, action: 'purchase',
+    data: { source: 'wholesale', purchase_id: ins.insertId, total, positions: items.length },
+  });
   return { id: ins.insertId, total, tx: r.id };
 }
 
@@ -108,6 +113,7 @@ export async function orderFromShop(conn, { shop, staff, sellerShopId, lines, no
   }
   const total = items.reduce((s, i) => s + i.total, 0);
   const r = await q("INSERT INTO purchases (shop_id, source, seller_shop_id, status, items, total, staff_id, note) VALUES (?, 'shop', ?, 'pending', ?, ?, ?, ?)", [shop.id, seller.id, JSON.stringify(items), total, staff.id, note], conn);
+  await posLog(conn, { shopId: shop.id, staffId: staff.id, action: 'purchase_order', data: { seller: seller.name, purchase_id: r.insertId, total, positions: items.length } });
   await notify(conn, 'bank', seller.owner_id, { title: `Заказ от магазина «${shop.name}»`, body: `${formatMoney(total)} — подтвердите в кассе: Управление → Склад` });
   afterCommit(conn, () => publish(`shop:${seller.id}`, { type: 'order', id: r.insertId }));
   return { id: r.insertId, total };
@@ -144,6 +150,7 @@ export async function acceptOrder(conn, { purchaseId, seller, staff }) {
     await receive(conn, prod, it.qty_milli, it.price, { refId: pur.id });
   }
   await q("UPDATE purchases SET status = 'done', tx_id = ?, decided_at = NOW(3) WHERE id = ?", [r.id, pur.id], conn);
+  await posLog(conn, { shopId: seller.id, staffId: staff.id, action: 'purchase_sold', data: { purchase_id: pur.id, buyer: buyer.name, total: Number(pur.total) } });
   await notify(conn, 'bank', buyer.owner_id, { title: `Заказ у «${seller.name}» выполнен`, body: `${formatMoney(pur.total)}: товар на складе` });
   afterCommit(conn, () => publish(`shop:${buyer.id}`, { type: 'order_done', id: pur.id }));
   return { tx: r.id };

@@ -159,7 +159,7 @@ export async function shareCanvas(canvas, filename) {
 
 const qtyText = (i) => (i.unit === 'kg' ? `${(i.qty_milli / 1000).toFixed(3).replace('.', ',')} кг` : `${i.qty_milli / 1000} шт`);
 const m = (v) => formatMoney(v).replace(/\u00a0/g, ' ');
-const METHOD = { cash: 'Наличные', card: 'Карта', qr: 'QR-оплата' };
+const METHOD = { cash: 'Наличные', card: 'Карта', qr: 'QR-оплата', debt: 'В долг' };
 
 /** Блоки кассового чека. tr — функция перевода. */
 export function receiptBlocks(r, tr = (s) => s) {
@@ -186,6 +186,8 @@ export function receiptBlocks(r, tr = (s) => s) {
     { t: 'row', left: tr('ИТОГО'), right: m(s.total), size: 28, bold: true },
     { t: 'row', left: `${tr('в т.ч. НДС')} ${s.vat_bp / 100}%`, right: m(s.vat), size: 18 },
     s.tip ? { t: 'row', left: `${tr('Чаевые кассиру')} ${s.tip_pct}%`, right: m(s.tip), size: 19 } : null,
+    s.points_used ? { t: 'row', left: tr('Оплачено баллами'), right: `−${m(s.points_used)}`, size: 17 } : null,
+    s.points_earned ? { t: 'row', left: tr('Начислено баллов'), right: String(s.points_earned), size: 17 } : null,
     { t: 'space', h: 4 },
     ...s.payments.flatMap((p) => [
       { t: 'row', left: tr(METHOD[p.method]), right: m(p.amount), size: 20 },
@@ -223,8 +225,10 @@ export function reportBlocks(rep, { shop, cashier, z }, tr = (s) => s) {
     { t: 'row', left: tr('Наличные'), right: m(rep.by_method.cash), size: 19 },
     { t: 'row', left: tr('Карта'), right: m(rep.by_method.card), size: 19 },
     { t: 'row', left: tr('QR-оплата'), right: m(rep.by_method.qr), size: 19 },
+    rep.by_method.debt ? { t: 'row', left: tr('В долг'), right: m(rep.by_method.debt), size: 19 } : null,
     { t: 'row', left: tr('Возвраты'), right: m(rep.refunds_total), size: 19 },
     { t: 'row', left: tr('Квитанции наличными'), right: m(rep.invoices_cash.amount), size: 18 },
+    rep.debts_cash?.amount ? { t: 'row', left: tr('Погашено долгов наличными'), right: m(rep.debts_cash.amount), size: 18 } : null,
     { t: 'line' },
     { t: 'row', left: tr('Разменный фонд'), right: m(rep.opening_float), size: 18 },
     { t: 'row', left: tr('Инкассация'), right: m(rep.collected), size: 18 },

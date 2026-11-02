@@ -1,30 +1,48 @@
 import { useState } from 'react';
-import { get, post, patch, del } from '../shared/api.js';
+import { get, post, patch, del, appUrl } from '../shared/api.js';
 import { t, fmtDate } from '../shared/i18n.js';
 import { pick } from '../shared/router.js';
-import { Spinner, useAsync, Money, MoneyInput, Input, Select, Form, Modal, Empty, Badge, PhotoInput, Scanner, useToast, Seg, Field, ActionButton, Subnav } from '../shared/ui.jsx';
+import { Spinner, useAsync, Money, MoneyInput, Input, Select, Form, Modal, Empty, Badge, PhotoInput, Scanner, useToast, Field, ActionButton, Subnav, QR, Button, ErrorBox } from '../shared/ui.jsx';
 import { formatMoney } from '@bln/shared/money.js';
 import { applyShopColor } from './App.jsx';
+import { Stock, Purchases } from './stock.jsx';
+import { Promos } from './promos.jsx';
+import { Debts } from './debts.jsx';
+import { TablesAdmin } from './tables-admin.jsx';
+import { Reports } from './reports.jsx';
 
 const ACTIONS = {
   login: 'Вход кассира', shift_open: 'Открытие смены', shift_close: 'Закрытие смены', remove_item: 'Удаление из чека', clear_cart: 'Очистка чека',
-  discount: 'Скидка', drawer_open: 'Открытие ящика', refund: 'Возврат', sale_cancel: 'Отмена чека', invoice_cash: 'Квитанция наличными',
+  discount: 'Ручная скидка', promo: 'Акция или промокод', drawer_open: 'Открытие ящика', refund: 'Возврат', sale_cancel: 'Отмена чека', invoice_cash: 'Квитанция наличными',
   age_ok: 'Проверка возраста', age_denied: 'Отказ по возрасту', collection: 'Инкассация', qty_change: 'Изменение количества',
   product_delete: 'Удаление товара', product_restore: 'Восстановление товара',
+  debt: 'Продажа в долг', debt_cash: 'Погашение долга наличными',
+  table_open: 'Открыт счёт стола', table_item: 'Добавлены блюда в счёт', table_checkout: 'Счёт стола передан к оплате', table_cancel: 'Счёт стола отменён',
+  kitchen_send: 'Отправлено на кухню', kitchen_status: 'Статус кухни',
+  purchase: 'Закупка на оптовой базе', purchase_order: 'Заказ у магазина', purchase_sold: 'Продажа другому магазину',
 };
 
 export function Manage({ session, route, onChange }) {
   const sub = route.path.split('/')[2] || 'products';
-  const tabs = [['products', 'Товары'], ['staff', 'Персонал'], ['shop', 'Магазин'], ['reports', 'Отчёты'], ['shifts', 'Смены'], ['log', 'Журнал']];
+  const tabs = [
+    ['products', 'Товары'], ['stock', 'Склад'], ['purchases', 'Закупки'], ['promos', 'Акции'], ['debts', 'Долги'],
+    ...(session.shop.type === 'cafe' ? [['tables', 'Столы']] : []),
+    ['reports', 'Отчёты'], ['staff', 'Персонал'], ['shop', 'Магазин'], ['shifts', 'Смены'], ['log', 'Журнал'],
+  ];
   return (
     <>
       <Subnav items={tabs.map(([k, l]) => [`#/manage/${k}`, t(l), sub === k])} />
       {pick([
-        ['/manage', () => <Products />],
-        ['/manage/products', () => <Products />],
+        ['/manage', () => <Products session={session} />],
+        ['/manage/products', () => <Products session={session} />],
+        ['/manage/stock', () => <Stock />],
+        ['/manage/purchases', () => <Purchases />],
+        ['/manage/promos', () => <Promos session={session} onChange={onChange} />],
+        ['/manage/debts', () => <Debts session={session} />],
+        ['/manage/tables', () => <TablesAdmin session={session} />],
+        ['/manage/reports', () => <Reports />],
         ['/manage/staff', () => <Staff />],
         ['/manage/shop', () => <ShopSettings session={session} onChange={onChange} />],
-        ['/manage/reports', () => <Reports />],
         ['/manage/shifts', () => <Shifts />],
         ['/manage/log', () => <Log />],
         ['*', () => <Empty>{t('Страница не найдена')}</Empty>],
@@ -33,11 +51,10 @@ export function Manage({ session, route, onChange }) {
   );
 }
 
-function Products() {
+function Products({ session }) {
   const [showDeleted, setShowDeleted] = useState(false);
   const { data, loading, reload } = useAsync(() => get(`/pos/products?all=1${showDeleted ? '&deleted=1' : ''}`), [showDeleted]);
   const [edit, setEdit] = useState(null);
-  const [stock, setStock] = useState(null);
   if (loading && !data) return <Spinner />;
   return (
     <div className="page">
@@ -51,27 +68,27 @@ function Products() {
       {!data.products.length ? <Empty>{t(showDeleted ? 'Удалённых товаров нет' : 'Каталог пуст')}</Empty> : (
         <div className="card table-wrap">
           <table className="table">
-            <thead><tr><th /><th>{t('Название')}</th><th>{t('Категория')}</th><th>{t('Цена')}</th><th>{t('Закупка')}</th><th>{t('Остаток')}</th><th /></tr></thead>
+            <thead><tr><th /><th>{t('Название')}</th><th>{t('Цена')}</th><th>{t('Закупка')}</th><th>{t('Оптом')}</th><th>{t('Остаток')}</th><th>{t('Модификации')}</th><th /></tr></thead>
             <tbody>
               {data.products.map((p) => (
                 <tr key={p.id} style={{ opacity: p.deleted_at ? 0.7 : p.active ? 1 : 0.5 }}>
                   <td style={{ width: 48 }}>{p.photo ? <img src={p.photo} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6 }} /> : null}</td>
                   <td>
-                    {p.name} {p.age_limit > 0 && <Badge kind="err">{p.age_limit}+</Badge>} {p.deleted_at && <Badge kind="err">{t('Удалён')}</Badge>}
+                    {p.name} {p.age_limit > 0 && <Badge kind="err">{p.age_limit}+</Badge>} {p.deleted_at && <Badge kind="err">{t('Удалён')}</Badge>} {p.to_kitchen && <Badge kind="brand">{t('кухня')}</Badge>}
                     <div className="tiny muted mono">{p.barcode}</div>
-                    {p.deleted_at && <div className="tiny muted">{fmtDate(p.deleted_at)}</div>}
+                    <div className="tiny muted">{p.category}</div>
                   </td>
-                  <td>{p.category}</td>
                   <td className="num">{formatMoney(p.price)}{p.unit === 'kg' ? ` / ${t('кг')}` : ''}</td>
                   <td className="num muted">{formatMoney(p.cost)}</td>
+                  <td className="num muted">{p.b2b_price !== null ? formatMoney(p.b2b_price) : '—'}</td>
                   <td className="num">{p.track_stock ? (p.unit === 'kg' ? `${(p.stock_milli / 1000).toFixed(3)} ${t('кг')}` : `${p.stock_milli / 1000} ${t('шт')}`) : '∞'}</td>
+                  <td className="small muted">{(p.variants?.length || 0) + (p.modifiers?.length || 0) || '—'}</td>
                   <td className="right nowrap">
                     {showDeleted ? (
                       <ActionButton size="sm" action={async () => { await post(`/pos/products/${p.id}/restore`); reload(); }} okMessage={t('Товар восстановлен')}>{t('Восстановить')}</ActionButton>
                     ) : (
                       <>
-                        <button className="btn ghost sm" onClick={() => setStock(p)}>{t('Остаток')}</button>
-                        <button className="btn secondary sm" onClick={() => setEdit(p)}>{t('Изменить')}</button>
+                        <button className="btn ghost sm" onClick={() => setEdit(p)}>{t('Изменить')}</button>
                         <ActionButton
                           kind="danger"
                           size="sm"
@@ -89,23 +106,51 @@ function Products() {
         </div>
       )}
       <p className="small muted">{t('Удалённые товары не видны кассирам и не попадают в новые чеки; историю продаж и возвраты можно посмотреть в отчётах.')}</p>
-      {edit && <ProductModal product={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); reload(); }} />}
-      {stock && <StockModal product={stock} onClose={() => setStock(null)} onSaved={() => { setStock(null); reload(); }} />}
+      {edit && <ProductModal product={edit} kitchen={session.shop.kitchen_enabled} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); reload(); }} />}
     </div>
   );
 }
 
-function ProductModal({ product, onClose, onSaved }) {
-  const [f, setF] = useState({ ...product, price: product.price ?? null, cost: product.cost ?? null, stock: null });
+function ProductModal({ product, kitchen, onClose, onSaved }) {
+  const [f, setF] = useState({ ...product, price: product.price ?? null, cost: product.cost ?? null, b2b_price: product.b2b_price ?? null, stock: null });
+  const [variants, setVariants] = useState((product.variants || []).map((v) => ({ ...v })));
+  const [modifiers, setModifiers] = useState((product.modifiers || []).map((m) => ({ ...m })));
   const [scan, setScan] = useState(false);
+  const [error, setError] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e?.target ? (e.target.type === 'checkbox' ? e.target.checked : e.target.value) : e });
+  const toast = useToast();
+
+  async function saveVariants(productId) {
+    for (const v of variants) {
+      if (!v.name?.trim()) continue;
+      if (!v.id) await post(`/pos/products/${productId}/variants`, { name: v.name, price_delta: Number(v.price_delta) || 0 });
+      else if (v._dirty) await patch(`/pos/variants/${v.id}`, { name: v.name, price_delta: Number(v.price_delta) || 0, active: v.active !== false });
+      else if (v.active === false && v._wasActive !== false) await patch(`/pos/variants/${v.id}`, { active: false });
+    }
+    for (const m of modifiers) {
+      if (!m.name?.trim()) continue;
+      if (!m.id) await post(`/pos/products/${productId}/modifiers`, { name: m.name, price: Number(m.price) || 0 });
+      else if (m._dirty) await patch(`/pos/modifiers/${m.id}`, { name: m.name, price: Number(m.price) || 0, active: m.active !== false });
+      else if (m.active === false && m._wasActive !== false) await patch(`/pos/modifiers/${m.id}`, { active: false });
+    }
+  }
+
   return (
     <Modal title={product.id ? t('Товар') : t('Новый товар')} onClose={onClose} wide>
       <Form onSubmit={async () => {
-        const body = { name: f.name, category: f.category, barcode: f.barcode, price: f.price, cost: f.cost || 0, unit: f.unit, age_limit: Number(f.age_limit) || 0, photo: f.photo || null, track_stock: !!f.track_stock, active: !!f.active };
-        if (product.id) await patch(`/pos/products/${product.id}`, body);
-        else await post('/pos/products', { ...body, stock_milli: f.stock ? Math.round(Number(f.stock) * 1000) : 0 });
-        onSaved();
+        setError(null);
+        try {
+          const body = {
+            name: f.name, category: f.category, barcode: f.barcode, price: f.price, cost: f.cost || 0,
+            b2b_price: f.b2b_price || null, unit: f.unit, age_limit: Number(f.age_limit) || 0,
+            photo: f.photo || null, track_stock: !!f.track_stock, to_kitchen: !!f.to_kitchen, active: !!f.active,
+          };
+          let id = product.id;
+          if (id) await patch(`/pos/products/${id}`, body);
+          else id = (await post('/pos/products', { ...body, stock_milli: f.stock ? Math.round(Number(String(f.stock).replace(',', '.')) * 1000) : 0 })).product.id;
+          await saveVariants(id);
+          onSaved();
+        } catch (e) { setError(e); }
       }}>
         <div className="grid grid-2">
           <Input label={t('Название')} required value={f.name || ''} onChange={set('name')} />
@@ -117,41 +162,64 @@ function ProductModal({ product, onClose, onSaved }) {
           <MoneyInput label={t('Закупочная цена')} value={f.cost} onChange={set('cost')} />
         </div>
         <div className="grid grid-3">
+          <MoneyInput label={t('Оптовая цена для магазинов')} value={f.b2b_price} onChange={set('b2b_price')} hint={t('Пусто — не продаётся оптом')} />
           <Field label={t('Штрихкод')}>
             <div className="row nowrap"><input className="input" value={f.barcode || ''} onChange={set('barcode')} /><button type="button" className="btn secondary icon" onClick={() => setScan(true)}>📷</button></div>
           </Field>
           <Select label={t('Возраст')} value={String(f.age_limit || 0)} onChange={set('age_limit')} options={[{ value: '0', label: t('без ограничения') }, { value: '16', label: '16+' }, { value: '18', label: '18+' }, { value: '21', label: '21+' }]} />
-          {!product.id && <Input label={f.unit === 'kg' ? t('Начальный остаток, кг') : t('Начальный остаток, шт')} type="number" min={0} step="any" value={f.stock || ''} onChange={set('stock')} />}
         </div>
         <PhotoInput label={t('Фото')} value={f.photo} onChange={set('photo')} maxSize={320} aspect={1} />
+        {!product.id && <Input label={f.unit === 'kg' ? t('Начальный остаток, кг') : t('Начальный остаток, шт')} type="number" min={0} step="any" value={f.stock || ''} onChange={set('stock')} />}
         <div className="row">
           <label className="check"><input type="checkbox" checked={!!f.track_stock} onChange={set('track_stock')} /> {t('Учитывать остаток')}</label>
           <label className="check"><input type="checkbox" checked={!!f.active} onChange={set('active')} /> {t('В продаже')}</label>
+          {kitchen && <label className="check"><input type="checkbox" checked={!!f.to_kitchen} onChange={set('to_kitchen')} /> {t('Готовится на кухне')}</label>}
         </div>
+        <hr className="sep" />
+        <VariantEditor title={t('Варианты')} hint={t('Например: размер, молоко, сироп. Надбавка прибавляется к цене товара.')} rows={variants} setRows={setVariants} priceKey="price_delta" />
+        <ModifierEditor rows={modifiers} setRows={setModifiers} />
+        <ErrorBox error={error} />
       </Form>
-      {scan && <Scanner onClose={() => setScan(false)} onScan={(text) => { setScan(false); setF((x) => ({ ...x, barcode: String(text).trim() })); }} />}
+      {scan && <Scanner onClose={() => setScan(false)} onScan={(text) => { setScan(false); setF((x) => ({ ...x, barcode: String(text).trim() })); toast(t('Штрихкод считан'), 'ok'); }} />}
     </Modal>
   );
 }
 
-function StockModal({ product, onClose, onSaved }) {
-  const [mode, setMode] = useState('add');
-  const [qty, setQty] = useState('');
-  const unit = product.unit === 'kg' ? t('кг') : t('шт');
+function VariantEditor({ title, hint, rows, setRows, priceKey }) {
+  const update = (i, patchRow) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patchRow } : r)));
   return (
-    <Modal title={`${t('Остаток')}: ${product.name}`} onClose={onClose}>
-      <Form onSubmit={async () => {
-        const q = Math.round(Number(String(qty).replace(',', '.')) * 1000);
-        const delta = mode === 'set' ? q - product.stock_milli : mode === 'add' ? q : -q;
-        await post('/pos/stock', { product_id: product.id, qty_milli: delta });
-        onSaved();
-      }}>
-        <p>{t('Сейчас')}: <b>{product.stock_milli / 1000} {unit}</b></p>
-        <Seg value={mode} onChange={setMode} options={[{ value: 'add', label: t('Приход') }, { value: 'remove', label: t('Списание') }, { value: 'set', label: t('Инвентаризация') }]} />
-        <Input label={`${t('Количество')}, ${unit}`} inputMode="decimal" required value={qty} onChange={(e) => setQty(e.target.value)} />
-        <p className="small muted">{t('Закупки у оптовой базы и других магазинов появятся в расширении кассы.')}</p>
-      </Form>
-    </Modal>
+    <div className="stack">
+      <div className="card-head"><h3 style={{ margin: 0 }}>{title}</h3><span className="small muted">{hint}</span></div>
+      {rows.map((v, i) => (
+        <div key={v.id || `n${i}`} className="row nowrap">
+          <input className="input" placeholder={t('Название')} value={v.name || ''} onChange={(e) => update(i, { name: e.target.value, _dirty: true })} />
+          <input className="input" style={{ width: 120 }} type="number" step="1" placeholder="0" value={v[priceKey] ?? 0} onChange={(e) => update(i, { [priceKey]: e.target.value, _dirty: true })} title={t('Надбавка в влодинках')} />
+          <span className="small muted nowrap">+{formatMoney(Number(v[priceKey]) || 0)}</span>
+          <label className="check" title={t('Включён')}><input type="checkbox" checked={v.active !== false} onChange={(e) => update(i, { active: e.target.checked, _dirty: true })} /></label>
+          <button type="button" className="btn ghost sm" title={t('Убрать')} onClick={() => setRows((rs) => (v.id ? rs.map((r, j) => (j === i ? { ...r, active: false, _dirty: true } : r)) : rs.filter((_, j) => j !== i)))}>✕</button>
+        </div>
+      ))}
+      <Button type="button" kind="secondary" size="sm" onClick={() => setRows((rs) => [...rs, { name: '', price_delta: 0, price: 0, active: true, _dirty: true }])}>+ {t('Добавить')}</Button>
+    </div>
+  );
+}
+
+function ModifierEditor({ rows, setRows }) {
+  const update = (i, patchRow) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patchRow } : r)));
+  return (
+    <div className="stack">
+      <div className="card-head"><h3 style={{ margin: 0 }}>{t('Добавки')}</h3><span className="small muted">{t('Например: сыр, бекон, без сахара.')}</span></div>
+      {rows.map((m, i) => (
+        <div key={m.id || `n${i}`} className="row nowrap">
+          <input className="input" placeholder={t('Название')} value={m.name || ''} onChange={(e) => update(i, { name: e.target.value, _dirty: true })} />
+          <input className="input" style={{ width: 120 }} type="number" step="1" placeholder="0" value={m.price ?? 0} onChange={(e) => update(i, { price: e.target.value, _dirty: true })} title={t('Цена в влодинках')} />
+          <span className="small muted nowrap">+{formatMoney(Number(m.price) || 0)}</span>
+          <label className="check" title={t('Включена')}><input type="checkbox" checked={m.active !== false} onChange={(e) => update(i, { active: e.target.checked, _dirty: true })} /></label>
+          <button type="button" className="btn ghost sm" title={t('Убрать')} onClick={() => setRows((rs) => (m.id ? rs.map((r, j) => (j === i ? { ...r, active: false, _dirty: true } : r)) : rs.filter((_, j) => j !== i)))}>✕</button>
+        </div>
+      ))}
+      <Button type="button" kind="secondary" size="sm" onClick={() => setRows((rs) => [...rs, { name: '', price: 0, active: true, _dirty: true }])}>+ {t('Добавить')}</Button>
+    </div>
   );
 }
 
@@ -204,13 +272,18 @@ function ShopSettings({ session, onChange }) {
   const [f, setF] = useState({ ...session.shop });
   const { data: cats } = useAsync(() => get('/pos/cashback-categories'), []);
   const toast = useToast();
-  const set = (k) => (e) => setF({ ...f, [k]: e?.target ? e.target.value : e });
+  const set = (k) => (e) => setF({ ...f, [k]: e?.target ? (e.target.type === 'checkbox' ? e.target.checked : e.target.value) : e });
+  const queueUrl = appUrl('pos', `/queue?shop=${session.shop.id}`);
   return (
     <div className="page medium">
       <h1>{t('Магазин')}</h1>
       <div className="card">
         <Form onSubmit={async () => {
-          const r = await patch('/pos/shop', { name: f.name, type: f.type, color: f.color, address: f.address, receipt_footer: f.receipt_footer, logo: f.logo || null, cashback_category_id: f.cashback_category_id ? Number(f.cashback_category_id) : undefined });
+          const r = await patch('/pos/shop', {
+            name: f.name, type: f.type, color: f.color, address: f.address, receipt_footer: f.receipt_footer, logo: f.logo || null,
+            cashback_category_id: f.cashback_category_id ? Number(f.cashback_category_id) : undefined,
+            kitchen_enabled: !!f.kitchen_enabled,
+          });
           applyShopColor(r.shop.color);
           toast(t('Сохранено'), 'ok');
           onChange();
@@ -226,46 +299,24 @@ function ShopSettings({ session, onChange }) {
           <Input label={t('Подпись внизу чека')} value={f.receipt_footer || ''} onChange={set('receipt_footer')} maxLength={200} />
           {cats && <Select label={t('Категория для кешбэка ВлодБанка')} value={f.cashback_category_id || ''} onChange={set('cashback_category_id')} options={cats.categories.map((c) => ({ value: c.id, label: t(c.name) }))} hint={t('Покупатели, выбравшие эту категорию, получат кешбэк за оплату картой или по QR.')} />}
           <PhotoInput label={t('Логотип')} value={f.logo} onChange={set('logo')} maxSize={256} />
+          <label className="check"><input type="checkbox" checked={!!f.kitchen_enabled} onChange={set('kitchen_enabled')} /> {t('Кухня и очередь: позиции с отметкой «готовится на кухне» уходят на экран кухни')}</label>
           <div className="small muted">{t('ИНН')}: {f.inn} · {t('ИП')}: {f.ip_number}</div>
         </Form>
       </div>
-    </div>
-  );
-}
-
-function Reports() {
-  const [days, setDays] = useState(7);
-  const { data, loading } = useAsync(() => get(`/pos/reports?days=${days}`), [days]);
-  if (loading && !data) return <Spinner />;
-  const maxHour = Math.max(1, ...data.by_hour.map((h) => h.total));
-  return (
-    <div className="page">
-      <div className="page-head"><h1>{t('Отчёты')}</h1><Seg value={days} onChange={setDays} options={[{ value: 1, label: t('Сутки') }, { value: 7, label: t('7 дней') }, { value: 30, label: t('30 дней') }]} /></div>
-      <div className="grid grid-4">
-        <div className="card stat"><span className="label">{t('Выручка')}</span><span className="value"><Money value={data.revenue} /></span></div>
-        <div className="card stat"><span className="label">{t('Прибыль (без НДС и закупки)')}</span><span className="value"><Money value={data.profit} /></span></div>
-        <div className="card stat"><span className="label">{t('Чеков')}</span><span className="value">{data.sales}</span></div>
-        <div className="card stat"><span className="label">{t('Бизнес-счёт')}</span><span className="value"><Money value={data.business_balance} /></span></div>
-      </div>
-      <div className="grid grid-2" style={{ marginTop: 16 }}>
-        <div className="card">
-          <h2>{t('Популярные товары')}</h2>
-          {!data.top.length ? <p className="muted">{t('Продаж пока нет')}</p> : (
-            <table className="table"><tbody>{data.top.map((r) => <tr key={r.name}><td>{r.name}</td><td className="num right"><Money value={r.total} /></td></tr>)}</tbody></table>
-          )}
-        </div>
-        <div className="card">
-          <h2>{t('По кассирам')}</h2>
-          {!data.by_cashier.length ? <p className="muted">{t('Продаж пока нет')}</p> : (
-            <table className="table"><thead><tr><th>{t('Кассир')}</th><th>{t('Чеков')}</th><th>{t('Выручка')}</th><th>{t('Чаевые')}</th></tr></thead>
-              <tbody>{data.by_cashier.map((r) => <tr key={r.name}><td>{r.name}</td><td>{r.sales}</td><td className="num"><Money value={r.total} /></td><td className="num"><Money value={r.tips} /></td></tr>)}</tbody></table>
-          )}
-        </div>
-      </div>
       <div className="card" style={{ marginTop: 16 }}>
-        <h2>{t('Выручка по часам')}</h2>
-        <div className="chart-bars">{Array.from({ length: 24 }, (_, h) => { const r = data.by_hour.find((x) => x.hour === h); return <div key={h} className="bar" title={`${h}:00 — ${r ? formatMoney(r.total) : '0'}`} style={{ height: `${((r?.total || 0) / maxHour) * 100}%` }} />; })}</div>
-        <div className="chart-labels">{Array.from({ length: 24 }, (_, h) => <span key={h}>{h % 3 === 0 ? h : ''}</span>)}</div>
+        <h2>{t('Экраны')}</h2>
+        <div className="stack">
+          <div className="row"><a className="btn secondary" href="#/tables">{t('Столы')}</a><a className="btn secondary" href="#/kitchen">{t('Кухня')}</a><a className="btn secondary" href="#/kiosk">{t('Киоск')}</a></div>
+          <div className="row" style={{ alignItems: 'flex-start', gap: 16 }}>
+            <div style={{ background: '#fff', padding: 8, borderRadius: 10 }}><QR value={queueUrl} size={140} /></div>
+            <div className="stack-sm">
+              <b>{t('Табло очереди для зала')}</b>
+              <span className="small muted">{t('Открывается без входа на любом телевизоре или планшете.')}</span>
+              <span className="mono tiny" style={{ wordBreak: 'break-all' }}>{queueUrl}</span>
+              <a className="btn secondary sm" href={`#/queue?shop=${session.shop.id}`}>{t('Открыть')}</a>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -319,4 +370,3 @@ function Log() {
     </div>
   );
 }
-

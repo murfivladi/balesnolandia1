@@ -439,3 +439,113 @@ table.table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 .bc-type-credit { background: #b3261e; }
 .bc-type-child { background: #1f8f5a; }
 .bc-type-gift { background: #7b3fb5; }
+
+/* ——— Этап 7: графики ——— */
+.chart { display: flex; flex-direction: column; gap: 6px; }
+.chart-bars { display: flex; align-items: flex-end; gap: 4px; }
+.chart-bars .bar-wrap { flex: 1; height: 100%; display: flex; align-items: flex-end; min-width: 2px; }
+.chart-bars .bar { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; opacity: .85; transition: opacity .12s; }
+.chart-bars .bar[data-zero='1'] { background: var(--line); opacity: .8; }
+.chart-bars .bar-wrap:hover .bar { opacity: 1; }
+.chart-labels { display: flex; gap: 4px; font-size: .65rem; color: var(--muted); }
+.chart-labels span { flex: 1; text-align: center; overflow: hidden; white-space: nowrap; }
+.chart-line { position: relative; }
+.chart-line svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.chart-line .grid-line { stroke: var(--line); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.hbars { display: flex; flex-direction: column; gap: 8px; }
+.hbar-row { display: grid; grid-template-columns: minmax(90px, 34%) 1fr auto; gap: 10px; align-items: center; font-size: .88rem; }
+.hbar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hbar-track { height: 10px; background: var(--surface-2); border-radius: 99px; overflow: hidden; }
+.hbar-fill { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.hbar-value { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+
+/* ——— Этап 7: столики ——— */
+.tables-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.table-card {
+  position: relative; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 4px;
+  min-height: 118px; box-shadow: var(--shadow);
+}
+.table-card:hover { border-color: var(--brand); transform: translateY(-1px); }
+.table-card .tc-name { font-size: 1.15rem; font-weight: 800; }
+.table-card .tc-sub { color: var(--muted); font-size: .8rem; }
+.table-card .tc-sum { margin-top: auto; font-weight: 800; font-variant-numeric: tabular-nums; }
+.table-card.busy { border-left: 6px solid var(--warn); }
+.table-card.paying { border-left: 6px solid var(--accent); }
+.table-card.free { border-left: 6px solid var(--ok); }
+.table-card.off { opacity: .55; }
+.table-card .tc-badge { position: absolute; top: 10px; right: 10px; }
+
+/* ——— Этап 7: кухня ——— */
+.kds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.kds-col { background: var(--surface-2); border-radius: 14px; padding: 10px; min-height: 200px; border: 1px solid var(--line); }
+.kds-col h3 { margin: 4px 6px 10px; display: flex; align-items: center; gap: 8px; font-size: 1rem; }
+.kds-col h3 .count { margin-left: auto; color: var(--muted); font-weight: 600; }
+.kds-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; box-shadow: var(--shadow); }
+.kds-card .kc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.kds-card .kc-no { font-size: 1.6rem; font-weight: 800; line-height: 1; }
+.kds-card .kc-label { font-weight: 700; }
+.kds-card .kc-time { margin-left: auto; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.kds-card.overdue { border-color: var(--err); }
+.kds-card ul { margin: 0 0 8px; padding-left: 18px; }
+.kds-card li { margin: 2px 0; }
+.kds-card .kc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.kds-col.new { border-top: 4px solid var(--accent); }
+.kds-col.cooking { border-top: 4px solid var(--warn); }
+.kds-col.ready { border-top: 4px solid var(--ok); }
+@media (max-width: 900px) { .kds { grid-template-columns: 1fr; } }
+
+/* ——— Этап 7: табло очереди ——— */
+.queue-board { flex: 1; display: flex; flex-direction: column; gap: 20px; padding: 24px; background: var(--bg); }
+.queue-board .qb-head { display: flex; align-items: center; gap: 16px; }
+.queue-board .qb-head h1 { margin: 0; font-size: clamp(1.4rem, 3vw, 2.4rem); }
+.queue-board .qb-clock { margin-left: auto; font-size: clamp(1.4rem, 3vw, 2.4rem); font-variant-numeric: tabular-nums; font-weight: 700; }
+.queue-sections { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; flex: 1; }
+.queue-section { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+.queue-section h2 { margin: 0; font-size: clamp(1.1rem, 2vw, 1.6rem); letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
+.queue-numbers { display: flex; flex-wrap: wrap; gap: 14px; align-content: flex-start; }
+.queue-no {
+  font-size: clamp(2.2rem, 7vw, 5rem); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums;
+  background: var(--surface-2); border-radius: 16px; padding: 10px 20px; min-width: 2.2em; text-align: center;
+}
+.queue-section.ready .queue-no { background: var(--ok); color: #fff; animation: pop .35s; }
+.queue-section.cooking .queue-no { color: var(--text); }
+.queue-empty { color: var(--muted); font-size: 1.1rem; }
+@media (max-width: 700px) { .queue-sections { grid-template-columns: 1fr; } }
+
+/* ——— Этап 7: киоск ——— */
+.kiosk { min-height: calc(100vh - 33px); display: flex; flex-direction: column; background: var(--bg); }
+.kiosk-head { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.kiosk-head .kh-brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.2rem; }
+.kiosk-head .kh-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.kiosk-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 380px; min-height: 0; }
+.kiosk-catalog { padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+.kiosk-cart { border-left: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+.kiosk-attract {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; text-align: center; padding: 32px;
+  background: radial-gradient(circle at 50% 10%, color-mix(in srgb, var(--brand) 22%, transparent), transparent 60%);
+}
+.kiosk-attract h1 { font-size: clamp(2rem, 6vw, 4rem); margin: 0; }
+.kiosk-attract .ka-btn { font-size: 1.4rem; height: 72px; padding: 0 48px; border-radius: 18px; }
+.kiosk-done { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; padding: 24px; }
+.kiosk-done .kd-no { font-size: clamp(3rem, 12vw, 8rem); font-weight: 800; line-height: 1; }
+@media (max-width: 900px) { .kiosk-body { grid-template-columns: 1fr; } .kiosk-cart { border-left: 0; border-top: 1px solid var(--line); } }
+
+/* ——— Этап 7: склад, акции, долги ——— */
+.stock-row { display: flex; align-items: center; gap: 10px; }
+.stock-bar { height: 6px; border-radius: 99px; background: var(--surface-2); overflow: hidden; min-width: 70px; }
+.stock-bar > i { display: block; height: 100%; background: var(--ok); border-radius: 99px; }
+.stock-bar.low > i { background: var(--warn); }
+.stock-bar.zero > i { background: var(--err); }
+.cart-chip { display: inline-flex; align-items: center; gap: 4px; }
+.promo-tag { display: inline-flex; align-items: center; gap: 6px; background: var(--ok-bg); color: var(--ok); border-radius: 99px; padding: 2px 10px; font-size: .78rem; font-weight: 600; }
+.totals-box { display: flex; flex-direction: column; gap: 4px; }
+.totals-box .trow { display: flex; justify-content: space-between; gap: 10px; font-size: .92rem; }
+.totals-box .trow.big { font-size: 1.35rem; font-weight: 800; border-top: 1px dashed var(--line); padding-top: 6px; margin-top: 4px; }
+.totals-box .trow .neg { color: var(--ok); }
+.kitchen-item { display: flex; align-items: center; gap: 8px; }
+.purchase-line { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.purchase-line:last-child { border-bottom: 0; }
+
+/* Крупные экраны кассы и кухни: убираем ограничение ширины страницы */
+.fullbleed { width: 100%; }

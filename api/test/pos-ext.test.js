@@ -140,9 +140,12 @@ test('kitchen and queue board', async () => {
   assert.equal(o.status, 'new');
   let board = await owner.bank.get('/api/pos/queue');
   assert.ok(board.cooking.includes(o.queue_no));
+  await owner.bank.post(`/api/pos/kitchen/${o.id}/status`, { status: 'cooking' });
   await owner.bank.post(`/api/pos/kitchen/${o.id}/status`, { status: 'ready' });
   board = await owner.bank.get('/api/pos/queue');
   assert.ok(board.ready.includes(o.queue_no));
+  // Перешагнуть статус нельзя: сначала «готовится».
+  await assert.rejects(owner.bank.post(`/api/pos/kitchen/${o.id}/status`, { status: 'new' }), /kitchen_state/);
   await owner.bank.post(`/api/pos/kitchen/${o.id}/status`, { status: 'done' });
   board = await owner.bank.get('/api/pos/queue');
   assert.ok(!board.ready.includes(o.queue_no));
@@ -260,5 +263,45 @@ test('reports and Z close with debts and tabs', async () => {
   assert.ok(rep.by_method.debt >= 900);
   const z = (await owner.bank.post('/api/pos/shifts/z', { closing_cash: null })).report;
   assert.equal(z.shift.status, 'closed');
+  await noMoneyFromAir();
+});
+
+test('owner edits variants and modifiers, adjusts stock, switches promo off', async () => {
+  const p = (await owner.bank.post('/api/pos/products', { name: 'Чай', price: 200, stock_milli: 10000 })).product;
+  const v = await owner.bank.post(`/api/pos/products/${p.id}/variants`, { name: 'большой', price_delta: 50 });
+  const m = await owner.bank.post(`/api/pos/products/${p.id}/modifiers`, { name: 'лимон', price: 20 });
+  await owner.bank.patch(`/api/pos/variants/${v.id}`, { name: 'огромный', price_delta: 70 });
+  await owner.bank.patch(`/api/pos/modifiers/${m.id}`, { name: 'лайм', price: 30 });
+  let prod = (await owner.bank.get('/api/pos/products?all=1')).products.find((x) => x.id === p.id);
+  assert.equal(prod.variants.find((x) => x.id === v.id).name, 'огромный');
+  assert.equal(prod.variants.find((x) => x.id === v.id).price_delta, 70);
+  assert.equal(prod.modifiers.find((x) => x.id === m.id).name, 'лайм');
+
+  await owner.bank.post('/api/pos/shifts/open', { opening_float: 0 });
+  const sale = (await owner.bank.post('/api/pos/sales', { items: [{ product_id: p.id, qty_milli: 1000, variant_id: v.id, modifier_ids: [m.id] }] })).sale;
+  assert.equal(sale.items[0].name, 'Чай (огромный) + лайм');
+  assert.equal(sale.total, 300);
+  await owner.bank.post(`/api/pos/sales/${sale.id}/cancel`);
+
+  // Выключенные вариант и добавка в чек не попадают.
+  await owner.bank.patch(`/api/pos/variants/${v.id}`, { active: false });
+  await owner.bank.patch(`/api/pos/modifiers/${m.id}`, { active: false });
+  await assert.rejects(owner.bank.post('/api/pos/sales', { items: [{ product_id: p.id, qty_milli: 1000, variant_id: v.id }] }), /variant_not_found/);
+  await assert.rejects(owner.bank.post('/api/pos/sales', { items: [{ product_id: p.id, qty_milli: 1000, modifier_ids: [m.id] }] }), /modifier_not_found/);
+
+  // Ручная корректировка склада: остаток и журнал движений.
+  const after = (await owner.bank.post('/api/pos/stock', { product_id: p.id, qty_milli: -3000 })).product;
+  assert.equal(after.stock_milli, 7000);
+  const moves = (await owner.bank.get('/api/pos/stock/moves')).moves;
+  assert.ok(moves.some((x) => x.name === 'Чай' && x.qty_milli === -3000 && x.reason === 'writeoff'));
+
+  // Инвентаризация: остаток становится ровно введённым числом.
+  const delta = 5000 - after.stock_milli;
+  await owner.bank.post('/api/pos/stock', { product_id: p.id, qty_milli: delta });
+  assert.equal((await owner.bank.get('/api/pos/products?all=1')).products.find((x) => x.id === p.id).stock_milli, 5000);
+
+  const promo = await owner.bank.post('/api/pos/promos', { title: 'Тестовая', kind: 'percent', value: 500 });
+  await owner.bank.patch(`/api/pos/promos/${promo.id}`, { active: false });
+  assert.equal((await owner.bank.get('/api/pos/promos')).promos.find((x) => x.id === promo.id).active, false);
   await noMoneyFromAir();
 });
