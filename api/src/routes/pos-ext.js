@@ -7,11 +7,13 @@ import { publish } from '../lib/hub.js';
 import { authorizeCard, checkCardLimits, ownAccount, assertSpendable } from '../lib/bank.js';
 import { priceIndex } from '../lib/finance.js';
 import {
-  loadSale, saleView, loyaltyCustomer, pointsOf, repayDebt, openTab, addToTab, removeFromTab, sendTabToKitchen, tabCheckout,
+  loadSale, saleView, loyaltyCustomer, pointsOf, repayDebt, openTab, addToTab, removeFromTab, sendTabToKitchen, tabCheckout, posLog,
 } from '../lib/pos.js';
 import { buyWholesale, orderFromShop, acceptOrder, purchaseView, wholesaleView } from '../lib/stock.js';
 
 const KITCHEN_STATUSES = ['new', 'cooking', 'ready', 'done', 'cancelled'];
+const KITCHEN_NEXT = { new: ['cooking', 'cancelled'], cooking: ['ready', 'cancelled'], ready: ['done', 'cancelled'], done: [], cancelled: [] };
+const limited = (max) => ({ config: { rateLimit: { max, timeWindow: '1 minute' } } });
 
 function debtView(d) {
   return { id: d.id, shop_id: d.shop_id, shop_name: d.shop_name, sale_id: d.sale_id, customer_name: d.customer_name, bank_user_id: d.bank_user_id, amount: Number(d.amount), paid: Number(d.paid), left: Number(d.amount) - Number(d.paid), status: d.status, note: d.note, created_at: d.created_at, paid_at: d.paid_at };
@@ -22,7 +24,25 @@ function promoView(p) {
 }
 
 function kitchenView(k) {
-  return { id: k.id, sale_id: k.sale_id, queue_no: k.queue_no, label: k.label, items: json(k.items, []), status: k.status, created_at: k.created_at, updated_at: k.updated_at };
+  return {
+    id: k.id, sale_id: k.sale_id, sale_number: k.sale_number ?? null, queue_no: k.queue_no, label: k.label,
+    items: json(k.items, []), status: k.status, created_at: k.created_at, updated_at: k.updated_at,
+  };
+}
+
+/** Табло очереди: одинаково для кассира и для публичного экрана в зале. */
+async function queueBoard(shopId) {
+  const shop = await one("SELECT id, name, color, logo FROM shops WHERE id = ? AND status = 'active'", [shopId]);
+  if (!shop) throw notFound('Магазин не найден');
+  const rows = await q("SELECT queue_no, status, label, updated_at FROM kitchen_orders WHERE shop_id = ? AND status IN ('new','cooking','ready') ORDER BY queue_no", [shopId]);
+  return {
+    shop: { id: shop.id, name: shop.name, color: shop.color, logo: shop.logo },
+    new: rows.filter((r) => r.status === 'new').map((r) => r.queue_no),
+    cooking: rows.filter((r) => r.status !== 'ready').map((r) => r.queue_no),
+    ready: rows.filter((r) => r.status === 'ready').map((r) => r.queue_no),
+    ready_labels: rows.filter((r) => r.status === 'ready').map((r) => ({ queue_no: r.queue_no, label: r.label })),
+    updated_at: new Date().toISOString(),
+  };
 }
 
 export async function posExtRoutes(app) {
@@ -123,6 +143,23 @@ export async function posExtRoutes(app) {
     return { ok: true };
   });
 
+  // Сводка склада и бизнес-счёт: нужны страницам «Склад» и «Закупки».
+  app.get('/stock/summary', owner, async (req) => {
+    const n = (v) => Number(v || 0);
+    const p = await one(`SELECT COUNT(*) AS positions,
+      COALESCE(SUM(ROUND(cost * GREATEST(stock_milli, 0) / 1000)), 0) AS value,
+      COALESCE(SUM(track_stock = 1 AND stock_milli > 0 AND stock_milli <= 5000), 0) AS low,
+      COALESCE(SUM(track_stock = 1 AND stock_milli <= 0), 0) AS zero
+      FROM products WHERE shop_id = ? AND deleted_at IS NULL AND active = 1`, [req.pos.shopId]);
+    const shop = await shopOf(req);
+    const acc = await one('SELECT balance FROM accounts WHERE id = ?', [shop.account_id]);
+    const purchases = await one("SELECT COALESCE(SUM(total),0) AS s FROM purchases WHERE shop_id = ? AND status = 'pending'", [req.pos.shopId]);
+    return {
+      positions: n(p.positions), stock_value: n(p.value), low: n(p.low), zero: n(p.zero),
+      business_balance: n(acc?.balance), pending_purchases: n(purchases.s),
+    };
+  });
+
   app.get('/stock/moves', owner, async (req) => {
     const rows = await q(`SELECT m.*, p.name, p.unit FROM stock_moves m JOIN products p ON p.id = m.product_id WHERE p.shop_id = ?${req.query.product_id ? ' AND p.id = ?' : ''} ORDER BY m.id DESC LIMIT 200`, [req.pos.shopId, ...(req.query.product_id ? [Number(req.query.product_id)] : [])]);
     return { moves: rows.map((m) => ({ ...m, qty_milli: Number(m.qty_milli) })) };
@@ -221,12 +258,16 @@ export async function posExtRoutes(app) {
   app.get('/tables', pos, async (req) => {
     const all = req.query.all === '1';
     const tables = await q(`SELECT * FROM shop_tables WHERE shop_id = ?${all ? '' : ' AND active = 1'} ORDER BY sort, id`, [req.pos.shopId]);
-    const tabs = await q("SELECT id, table_id, total, created_at FROM sales WHERE shop_id = ? AND status = 'held' AND table_id IS NOT NULL", [req.pos.shopId]);
+    const tabs = await q("SELECT id, table_id, total, created_at, (SELECT COUNT(*) FROM sale_items i WHERE i.sale_id = sales.id) AS items_count FROM sales WHERE shop_id = ? AND status = 'held' AND table_id IS NOT NULL", [req.pos.shopId]);
     const paying = await q("SELECT id, table_id FROM sales WHERE shop_id = ? AND status = 'open' AND table_id IS NOT NULL", [req.pos.shopId]);
     return {
       tables: tables.map((t) => {
         const tab = tabs.find((x) => x.table_id === t.id);
-        return { id: t.id, name: t.name, seats: t.seats, active: !!t.active, sort: t.sort, tab: tab ? { id: tab.id, total: Number(tab.total), opened_at: tab.created_at } : null, paying: paying.some((x) => x.table_id === t.id) };
+        return {
+          id: t.id, name: t.name, seats: t.seats, active: !!t.active, sort: t.sort,
+          tab: tab ? { id: tab.id, total: Number(tab.total), opened_at: tab.created_at, items_count: Number(tab.items_count) } : null,
+          paying: paying.some((x) => x.table_id === t.id),
+        };
       }),
     };
   });
@@ -316,30 +357,48 @@ export async function posExtRoutes(app) {
     return { ok: true };
   });
 
+  // Отмена (закрытие без оплаты) счёта стола: позиции не продаются, остаток не меняется.
+  app.delete('/tables/:id/tab', pos, async (req) => {
+    await tx(async (conn) => {
+      const { tab } = await tabOf(req, req.params.id, conn);
+      await q("UPDATE sales SET status = 'cancelled' WHERE id = ?", [tab.id], conn);
+      await posLog(conn, {
+        shopId: req.pos.shopId, staffId: req.pos.staff.id, action: 'table_cancel', saleId: tab.id,
+        data: { total: Number(tab.total), items: tab.items.length },
+      });
+    });
+    publish(`shop:${req.pos.shopId}`, { type: 'tables' });
+    return { ok: true };
+  });
+
   // ——— Кухня и табло очереди ———
   app.get('/kitchen', pos, async (req) => {
-    const rows = await q("SELECT * FROM kitchen_orders WHERE shop_id = ? AND (status IN ('new','cooking','ready') OR (status = 'done' AND updated_at >= NOW(3) - INTERVAL 30 MINUTE)) ORDER BY id", [req.pos.shopId]);
+    const rows = await q("SELECT k.*, s.number AS sale_number FROM kitchen_orders k LEFT JOIN sales s ON s.id = k.sale_id WHERE k.shop_id = ? AND (k.status IN ('new','cooking','ready') OR (k.status = 'done' AND k.updated_at >= NOW(3) - INTERVAL 30 MINUTE)) ORDER BY k.id", [req.pos.shopId]);
     return { orders: rows.map(kitchenView) };
   });
 
   app.post('/kitchen/:id/status', pos, async (req) => {
     const status = String(req.body?.status || '');
     need(KITCHEN_STATUSES.includes(status), 'Неверный статус');
-    const r = await q('UPDATE kitchen_orders SET status = ? WHERE id = ? AND shop_id = ?', [status, int(req.params.id, 'id'), req.pos.shopId]);
-    if (!r.affectedRows) throw notFound();
-    publish(`shop:${req.pos.shopId}`, { type: 'kitchen', id: Number(req.params.id), status });
-    return { ok: true };
+    return tx(async (conn) => {
+      const order = await one('SELECT * FROM kitchen_orders WHERE id = ? AND shop_id = ? FOR UPDATE', [int(req.params.id, 'id'), req.pos.shopId], conn);
+      if (!order) throw notFound('Заказ не найден');
+      if (order.status === status) return { ok: true, status };
+      if (!(KITCHEN_NEXT[order.status] || []).includes(status)) throw bad('kitchen_state', 'Такой переход статуса недоступен');
+      await q('UPDATE kitchen_orders SET status = ? WHERE id = ?', [status, order.id], conn);
+      await posLog(conn, {
+        shopId: req.pos.shopId, staffId: req.pos.staff.id, action: 'kitchen_status',
+        data: { order: order.id, queue_no: order.queue_no, from: order.status, status },
+      });
+      afterCommit(conn, () => publish(`shop:${req.pos.shopId}`, { type: 'kitchen', id: order.id, queue_no: order.queue_no, status }));
+      return { ok: true, status };
+    });
   });
 
-  app.get('/queue', pos, async (req) => {
-    const shop = await shopOf(req);
-    const rows = await q("SELECT queue_no, status, label FROM kitchen_orders WHERE shop_id = ? AND status IN ('new','cooking','ready') ORDER BY id", [req.pos.shopId]);
-    return {
-      shop: { name: shop.name, color: shop.color, logo: shop.logo },
-      cooking: rows.filter((r) => r.status !== 'ready').map((r) => r.queue_no),
-      ready: rows.filter((r) => r.status === 'ready').map((r) => r.queue_no),
-    };
-  });
+  app.get('/queue', pos, async (req) => queueBoard(req.pos.shopId));
+
+  // Публичное табло очереди для экрана в зале: без входа, только номера заказов.
+  app.get('/public/queue/:shopId', limited(120), async (req) => queueBoard(int(req.params.shopId, 'магазин')));
 
   // ——— Киоск: выход из режима самообслуживания по PIN сотрудника ———
   app.post('/kiosk/unlock', pos, async (req) => {

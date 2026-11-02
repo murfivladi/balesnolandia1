@@ -9,6 +9,10 @@ import { LoginForm, AuthDisclaimer } from '../shared/auth.jsx';
 import { Register } from './register.jsx';
 import { Manage } from './manage.jsx';
 import { Terminal } from './terminal.jsx';
+import { Tables } from './tables.jsx';
+import { Kitchen } from './kitchen.jsx';
+import { QueueBoard } from './queue.jsx';
+import { Kiosk } from './kiosk.jsx';
 
 export function applyShopColor(color) {
   if (!color) return;
@@ -35,6 +39,11 @@ export default function App() {
   }, []);
 
   if (route.path === '/terminal' || route.path.startsWith('/terminal/')) return <Terminal initialCode={route.path.split('/')[2]} />;
+  // Табло очереди открывается без входа: только номер магазина и номера заказов.
+  if (route.path === '/queue' || route.path.startsWith('/queue/')) {
+    const shopId = route.path.split('/')[2] || route.query.shop || '';
+    return <><QueueBoard shopId={Number(shopId) || null} /><DisclaimerBar /></>;
+  }
   if (me === undefined) return <><Topbar brand={<><PosLogo /> <span>{t('Касса')}</span></>} /><Spinner /></>;
   if (!me.bank) return <BankLogin onDone={loadMe} />;
   if (!me.pos) return <ShopPicker me={me} onDone={loadMe} />;
@@ -176,14 +185,32 @@ function PosShell({ onLogout, route }) {
   if (!session) return <Spinner />;
   const isOwner = session.staff.role === 'owner';
   const manage = route.path.startsWith('/manage');
+  const kiosk = route.path === '/kiosk';
+  const root = route.path === '/';
+  const tables = route.path.startsWith('/tables');
+  const kitchen = route.path.startsWith('/kitchen');
+
+  if (kiosk) {
+    return (
+      <>
+        <Kiosk session={session} onSession={reload} />
+        {offline && <OfflineScreen />}
+        <DisclaimerBar />
+      </>
+    );
+  }
+
   return (
     <>
       <Topbar
         brand={<><PosLogo src={session.shop.logo} color={session.shop.color} /> <span>{session.shop.name}</span></>}
-        nav={isOwner && (
+        nav={(
           <>
-            <a href="#/" className={!manage ? 'active' : ''}>{t('Продажа')}</a>
-            <a href="#/manage" className={manage ? 'active' : ''}>{t('Управление')}</a>
+            <a href="#/" className={root ? 'active' : ''}>{t('Продажа')}</a>
+            {session.shop.type === 'cafe' && <a href="#/tables" className={tables ? 'active' : ''}>{t('Столы')}</a>}
+            {session.shop.kitchen_enabled && <a href="#/kitchen" className={kitchen ? 'active' : ''}>{t('Кухня')}</a>}
+            {session.shop.kitchen_enabled && <a href={`#/queue?shop=${session.shop.id}`}>{t('Очередь')}</a>}
+            {isOwner && <a href="#/manage" className={manage ? 'active' : ''}>{t('Управление')}</a>}
           </>
         )}
         right={(
@@ -193,7 +220,10 @@ function PosShell({ onLogout, route }) {
           </>
         )}
       />
-      {manage && isOwner ? <Manage session={session} route={route} onChange={reload} /> : <Register session={session} onSession={reload} />}
+      {manage && isOwner ? <Manage session={session} route={route} onChange={reload} />
+        : tables ? <Tables session={session} onSession={reload} />
+          : kitchen ? <Kitchen session={session} />
+            : <Register session={session} onSession={reload} />}
       {offline && <OfflineScreen />}
       <DisclaimerBar />
     </>

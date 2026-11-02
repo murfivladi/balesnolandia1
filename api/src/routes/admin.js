@@ -458,17 +458,33 @@ export async function adminRoutes(app) {
     const conn = await pool.getConnection();
     try {
       const known = new Set(await tableNames(conn));
+      // JSON-колонки: при экспорте mysql2 отдаёт их разобранными, а строку — без кавычек.
+      // При импорте такое значение надо снова превратить в JSON-текст, иначе MySQL его не примет.
+      const [meta] = await conn.query("SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND DATA_TYPE = 'json'");
+      const jsonCols = new Map();
+      for (const m of meta) {
+        if (!jsonCols.has(m.t)) jsonCols.set(m.t, new Set());
+        jsonCols.get(m.t).add(m.c);
+      }
       await conn.query('SET FOREIGN_KEY_CHECKS = 0');
       await conn.beginTransaction();
       for (const t of known) await conn.query(`DELETE FROM \`${t}\``);
       for (const [t, rows] of Object.entries(data.tables)) {
         if (!known.has(t) || !Array.isArray(rows) || rows.length === 0) continue;
         const cols = Object.keys(rows[0]);
+        const jsonSet = jsonCols.get(t);
         for (let i = 0; i < rows.length; i += 200) {
           const chunk = rows.slice(i, i + 200);
           const values = chunk.map((r) => cols.map((c) => {
             const v = r[c];
-            if (v && typeof v === 'object') return JSON.stringify(v);
+            if (v === null || v === undefined) return null;
+            if (typeof v === 'object') return JSON.stringify(v);
+            if (jsonSet?.has(c)) {
+              if (typeof v === 'string') {
+                try { JSON.parse(v); return v; } catch { return JSON.stringify(v); }
+              }
+              return JSON.stringify(v);
+            }
             if (typeof v === 'string' && ISO_RE.test(v)) return new Date(v);
             return v;
           }));

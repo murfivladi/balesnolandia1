@@ -1,25 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { get, post, newIdemKey, appUrl } from '../shared/api.js';
+import { get, post, appUrl } from '../shared/api.js';
 import { t, tServer } from '../shared/i18n.js';
 import {
-  Spinner, useAsync, useChannel, Money, MoneyInput, Input, Modal, Empty, Button, ActionButton, Seg, PinPad, Scanner, QR, ErrorBox, useToast, Badge, Field,
+  Spinner, useAsync, useChannel, Money, MoneyInput, Input, Modal, Empty, Button, ActionButton, Scanner, QR, ErrorBox, useToast, Badge,
 } from '../shared/ui.jsx';
-import { parseCardScan } from '../shared/cards.jsx';
 import { sound } from '../shared/sounds.js';
-import { renderThermal, receiptBlocks, reportBlocks, shareCanvas } from '../shared/thermal.js';
-import { changeBreakdown, denominationLabel, formatMoney, NOTES } from '@bln/shared/money.js';
-
-const QTY = 1000;
-const qtyLabel = (unit, q) => (unit === 'kg' ? `${(q / 1000).toFixed(3).replace('.', ',')} ${t('кг')}` : `${q / 1000} ${t('шт')}`);
-const lineSum = (p, q) => Math.round((p.price * q) / QTY);
+import { renderThermal, reportBlocks, shareCanvas } from '../shared/thermal.js';
+import { formatMoney } from '@bln/shared/money.js';
+import { navigate } from '../shared/router.js';
+import { QTY, qtyLabel, lineSum, lineKey, linePrice, lineName, parseWeight } from './lib.js';
+import { ItemOptionsModal } from './options.jsx';
+import { PayModal } from './pay.jsx';
+import { DebtBook } from './debts.jsx';
 
 export function Register({ session, onSession }) {
   const { data, reload: reloadProducts } = useAsync(() => get('/pos/products'), []);
   const [cart, setCart] = useState([]);
   const [discount, setDiscount] = useState(0);
+  const [promoCode, setPromoCode] = useState('');
+  const [loyaltyRef, setLoyaltyRef] = useState('');
+  const [redeem, setRedeem] = useState(0);
+  const [preview, setPreview] = useState(null);
+  const [previewError, setPreviewError] = useState(null);
   const [cat, setCat] = useState('');
   const [search, setSearch] = useState('');
   const [scan, setScan] = useState(false);
+  const [options, setOptions] = useState(null);
   const [weigh, setWeigh] = useState(null);
   const [modal, setModal] = useState(null);
   const [terminal, setTerminal] = useState(null); // { code, paired }
@@ -30,31 +36,82 @@ export function Register({ session, onSession }) {
   const byId = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
   const categories = useMemo(() => [...new Set(products.map((p) => p.category).filter(Boolean))], [products]);
   const shown = products.filter((p) => (!cat || p.category === cat) && (!search || p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode === search));
-  const subtotal = cart.reduce((s, l) => s + lineSum(byId.get(l.product_id) || { price: 0 }, l.qty_milli), 0);
-  const total = Math.max(0, subtotal - discount);
+  const payload = useMemo(() => cart.map((l) => ({
+    product_id: l.product_id,
+    qty_milli: l.qty_milli,
+    variant_id: l.variant_id || undefined,
+    modifier_ids: l.modifier_ids?.length ? l.modifier_ids : undefined,
+  })), [cart]);
+  const subtotal = preview?.subtotal ?? cart.reduce((s, l) => {
+    const p = byId.get(l.product_id);
+    const v = p?.variants?.find((x) => x.id === l.variant_id);
+    const mods = (p?.modifiers || []).filter((m) => l.modifier_ids?.includes(m.id));
+    return s + (p ? lineSum(linePrice(p, v, mods), l.qty_milli) : 0);
+  }, 0);
+  const promoAmount = preview?.promo?.amount || 0;
+  const pointsUsed = preview?.points_used || 0;
+  const total = preview?.total ?? Math.max(0, subtotal - discount);
 
   useChannel(`shop:${session.shop.id}`, (m) => {
     if (m.type === 'sale_paid' || m.type === 'product_restored') reloadProducts();
     if (m.type === 'product_deleted') {
       const next = cart.filter((l) => l.product_id !== m.id);
       setCart(next);
-      if (!next.length) setDiscount(0);
+      if (!next.length) resetDiscounts();
       reloadProducts();
       toast(t('Товар удалён из каталога'), 'err');
     }
   });
+
+  // Сервер считает акции, промокод, баллы и НДС: касса показывает только его расчёт.
+  useEffect(() => {
+    if (!cart.length) { setPreview(null); setPreviewError(null); return undefined; }
+    let alive = true;
+    const h = setTimeout(async () => {
+      try {
+        const r = await post('/pos/preview', {
+          items: payload,
+          discount,
+          promo_code: promoCode.trim() || undefined,
+          loyalty: loyaltyRef.trim() || undefined,
+          redeem_points: redeem || undefined,
+        });
+        if (alive) { setPreview(r); setPreviewError(null); }
+      } catch (e) {
+        if (alive) { setPreview(null); setPreviewError(e); }
+      }
+    }, 220);
+    return () => { alive = false; clearTimeout(h); };
+  }, [payload, discount, promoCode, loyaltyRef, redeem, cart.length]);
 
   // Показ корзины на терминале покупателя.
   useEffect(() => {
     if (!terminal?.paired) return undefined;
     const h = setTimeout(() => {
       post(`/pos/terminals/${terminal.code}/display`, {
-        lines: cart.map((l) => { const p = byId.get(l.product_id); return { name: p?.name, qty: qtyLabel(p?.unit, l.qty_milli), total: lineSum(p, l.qty_milli) }; }),
+        lines: cart.map((l, i) => {
+          const p = byId.get(l.product_id);
+          return { name: lineNameSafe(p, l), qty: qtyLabel(p?.unit, l.qty_milli), total: preview?.items?.[i]?.total ?? 0 };
+        }),
         total,
       }).catch(() => {});
     }, 200);
     return () => clearTimeout(h);
-  }, [cart, total, terminal, byId]);
+  }, [cart, total, terminal, byId, preview]);
+
+  function lineNameSafe(p, l) {
+    if (!p) return '';
+    const v = p.variants?.find((x) => x.id === l.variant_id);
+    const mods = (p.modifiers || []).filter((m) => l.modifier_ids?.includes(m.id));
+    return lineName(p, v, mods);
+  }
+
+  function resetDiscounts() {
+    setDiscount(0);
+    setPromoCode('');
+    setLoyaltyRef('');
+    setRedeem(0);
+  }
 
   function stockLeft(p) {
     if (!p.track_stock) return Infinity;
@@ -62,22 +119,29 @@ export function Register({ session, onSession }) {
     return p.stock_milli - inCart;
   }
 
-  function add(p, qty = QTY) {
-    if (stockLeft(p) < qty) {
+  function pushLine(p, { variant_id = null, modifier_ids = [], qty_milli }) {
+    if (stockLeft(p) < qty_milli) {
       toast(t('Нет в наличии: {name}', { name: p.name }), 'err');
       sound.decline();
-      return;
+      return false;
     }
+    const key = lineKey(p.id, variant_id, modifier_ids);
     sound.beep();
     setCart((c) => {
-      const i = c.findIndex((l) => l.product_id === p.id);
-      if (i >= 0 && p.unit === 'pcs') return c.map((l, j) => (j === i ? { ...l, qty_milli: l.qty_milli + qty } : l));
-      return [...c, { product_id: p.id, qty_milli: qty }];
+      const i = c.findIndex((l) => l.key === key);
+      if (i >= 0) return c.map((l, j) => (j === i ? { ...l, qty_milli: l.qty_milli + qty_milli } : l));
+      return [...c, { key, product_id: p.id, variant_id, modifier_ids, qty_milli }];
     });
+    return true;
+  }
+
+  function add(p, qty = QTY) {
+    pushLine(p, { qty_milli: qty });
   }
 
   function pick(p) {
-    if (p.unit === 'kg') setWeigh({ product: p, grams: '' });
+    if ((p.variants || []).some((v) => v.active !== false) || (p.modifiers || []).some((m) => m.active !== false)) setOptions(p);
+    else if (p.unit === 'kg') setWeigh({ product: p, grams: '' });
     else add(p);
   }
 
@@ -90,37 +154,32 @@ export function Register({ session, onSession }) {
   }
 
   function changeQty(i, delta) {
-    setCart((c) => {
-      const l = c[i];
-      const p = byId.get(l.product_id);
-      const q = l.qty_milli + delta * QTY;
-      if (q <= 0) {
-        post('/pos/log', { action: 'remove_item', data: { name: p?.name, qty_milli: l.qty_milli } }).catch(() => {});
-        return c.filter((_, j) => j !== i);
-      }
-      if (delta > 0 && stockLeft(p) < QTY) return c;
-      return c.map((x, j) => (j === i ? { ...x, qty_milli: q } : x));
-    });
+    const l = cart[i];
+    const p = byId.get(l.product_id);
+    const q = l.qty_milli + delta * QTY;
+    if (q <= 0) { remove(i); return; }
+    if (delta > 0 && stockLeft(p) < QTY) return;
+    setCart((c) => c.map((x, j) => (j === i ? { ...x, qty_milli: q } : x)));
   }
 
   function remove(i) {
     const l = cart[i];
-    post('/pos/log', { action: 'remove_item', data: { name: byId.get(l.product_id)?.name, qty_milli: l.qty_milli } }).catch(() => {});
+    post('/pos/log', { action: 'remove_item', data: { name: lineNameSafe(byId.get(l.product_id), l), qty_milli: l.qty_milli } }).catch(() => {});
     setCart((c) => c.filter((_, j) => j !== i));
   }
 
   function clear() {
     if (cart.length) post('/pos/log', { action: 'clear_cart', data: { lines: cart.length, total } }).catch(() => {});
     setCart([]);
-    setDiscount(0);
+    resetDiscounts();
   }
 
   async function hold() {
     const label = window.prompt(t('Метка отложенного чека (необязательно)')) ?? null;
     if (label === null) return;
-    await post('/pos/held', { items: cart, label });
+    await post('/pos/held', { items: payload, label });
     setCart([]);
-    setDiscount(0);
+    resetDiscounts();
     toast(t('Чек отложен'), 'ok');
     onSession();
   }
@@ -187,9 +246,13 @@ export function Register({ session, onSession }) {
           <Button kind="secondary" size="sm" onClick={() => setModal('held')}>{t('Отложенные')} {session.held > 0 && <Badge kind="warn">{session.held}</Badge>}</Button>
           <Button kind="secondary" size="sm" onClick={() => setModal('refund')}>{t('Возврат')}</Button>
           <Button kind="secondary" size="sm" onClick={() => setModal('invoice')}>{t('Квитанция')}</Button>
+          <Button kind="secondary" size="sm" onClick={() => setModal('debts')}>{t('Долги')}</Button>
           <Button kind="secondary" size="sm" onClick={() => setModal('age')}>{t('Проверка паспорта')}</Button>
           <Button kind="secondary" size="sm" onClick={openDrawer}>{t('Ящик')}</Button>
           <Button kind="secondary" size="sm" onClick={() => setModal('shift')}>{t('Смена')}</Button>
+          {session.shop.type === 'cafe' && <Button kind="secondary" size="sm" onClick={() => navigate('/tables')}>{t('Столы')}</Button>}
+          {session.shop.kitchen_enabled && <Button kind="secondary" size="sm" onClick={() => navigate('/kitchen')}>{t('Кухня')}</Button>}
+          <Button kind="ghost" size="sm" onClick={() => navigate('/kiosk')}>{t('Киоск')}</Button>
         </div>
       </div>
       <div className="pos-right">
@@ -197,10 +260,11 @@ export function Register({ session, onSession }) {
           {!cart.length ? <Empty>{t('Чек пуст. Выберите товар или отсканируйте штрихкод.')}</Empty> : cart.map((l, i) => {
             const p = byId.get(l.product_id);
             if (!p) return null;
+            const pl = preview?.items?.[i];
             return (
-              <div key={i} className="cart-line">
-                <span className="cl-name">{p.name} {p.age_limit > 0 && <Badge kind="err">{p.age_limit}+</Badge>}</span>
-                <span className="cl-sum"><Money value={lineSum(p, l.qty_milli)} /></span>
+              <div key={l.key} className="cart-line">
+                <span className="cl-name">{lineNameSafe(p, l)} {p.age_limit > 0 && <Badge kind="err">{p.age_limit}+</Badge>}</span>
+                <span className="cl-sum"><Money value={pl ? pl.total + pl.discount : lineSum(linePrice(p, p.variants?.find((v) => v.id === l.variant_id), (p.modifiers || []).filter((m) => l.modifier_ids?.includes(m.id))), l.qty_milli)} /></span>
                 <span className="cl-qty">
                   {p.unit === 'pcs' ? (
                     <>
@@ -209,7 +273,7 @@ export function Register({ session, onSession }) {
                       <button className="qty-btn" onClick={() => changeQty(i, 1)}>+</button>
                     </>
                   ) : qtyLabel('kg', l.qty_milli)}
-                  × {formatMoney(p.price)}
+                  × {formatMoney(pl ? pl.price : p.price)}
                 </span>
                 <button className="btn ghost sm" style={{ justifySelf: 'end' }} onClick={() => remove(i)} aria-label={t('Удалить')} title={t('Удалить товар из чека')}>✕ {t('Удалить')}</button>
               </div>
@@ -217,44 +281,80 @@ export function Register({ session, onSession }) {
           })}
         </div>
         <div className="cart-total">
-          {discount > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span>{t('Скидка')}</span><span>−<Money value={discount} /></span></div>}
-          <div className="ct-big"><span>{t('Итого')}</span><Money value={total} /></div>
+          <div className="totals-box">
+            <div className="trow"><span>{t('Подытог')}</span><span>{formatMoney(subtotal)}</span></div>
+            {promoAmount > 0 && <div className="trow"><span>{t('Акции и промокод')} {preview?.promo?.applied?.map((x) => <span key={x.id} className="promo-tag">{x.title}</span>)}</span><span className="neg">−{formatMoney(promoAmount)}</span></div>}
+            {discount > 0 && <div className="trow"><span>{t('Ручная скидка')}</span><span className="neg">−{formatMoney(discount)}</span></div>}
+            {pointsUsed > 0 && <div className="trow"><span>{t('Баллы')}</span><span className="neg">−{formatMoney(pointsUsed)}</span></div>}
+            {preview?.loyalty && <div className="trow small muted"><span>👤 {preview.loyalty.full_name}</span><span>{t('баллов')}: {preview.loyalty.points}</span></div>}
+            <div className="trow big"><span>{t('Итого')}</span><span><Money value={total} /></span></div>
+          </div>
+          {previewError && <div className="form-error small">{tServer(previewError.message)}</div>}
           <div className="row nowrap">
-            <Button kind="ghost" size="sm" disabled={!cart.length} onClick={() => setModal('discount')}>%</Button>
+            <Button kind="ghost" size="sm" disabled={!cart.length} onClick={() => setModal('discounts')}>{t('% и баллы')}</Button>
             <Button kind="ghost" size="sm" disabled={!cart.length} onClick={hold}>{t('Отложить')}</Button>
             <Button kind="ghost" size="sm" disabled={!cart.length} onClick={clear}>{t('Очистить')}</Button>
           </div>
-          <Button size="lg" block disabled={!cart.length} onClick={() => setModal('pay')}>{t('Оплата')} (F9)</Button>
+          <Button size="lg" block disabled={!cart.length || !!previewError} onClick={() => setModal('pay')}>{t('Оплата')} (F9)</Button>
         </div>
       </div>
 
       {scan && <Scanner onScan={onScanText} onClose={() => setScan(false)} />}
+      {options && (
+        <ItemOptionsModal
+          product={options}
+          onClose={() => setOptions(null)}
+          onAdd={(line) => { if (pushLine(options, line)) setOptions(null); }}
+        />
+      )}
       {weigh && (
         <Modal title={weigh.product.name} onClose={() => setWeigh(null)}>
-          <form className="stack" onSubmit={(e) => { e.preventDefault(); const g = Math.round(Number(String(weigh.grams).replace(',', '.')) * (String(weigh.grams).includes(',') || String(weigh.grams).includes('.') ? 1000 : 1)); if (g > 0) { add(weigh.product, g); setWeigh(null); } }}>
+          <form className="stack" onSubmit={(e) => { e.preventDefault(); const g = parseWeight(weigh.grams); if (g > 0 && pushLine(weigh.product, { qty_milli: g })) setWeigh(null); }}>
             <Input label={t('Вес: граммы или кг через запятую')} autoFocus inputMode="decimal" value={weigh.grams} onChange={(e) => setWeigh({ ...weigh, grams: e.target.value })} />
             <p className="muted small">{formatMoney(weigh.product.price)} / {t('кг')}</p>
             <Button type="submit">{t('Добавить')}</Button>
           </form>
         </Modal>
       )}
-      {modal === 'discount' && <DiscountModal subtotal={subtotal} value={discount} onClose={() => setModal(null)} onSet={(v) => { setDiscount(v); setModal(null); }} />}
+      {modal === 'discounts' && (
+        <DiscountsModal
+          preview={preview}
+          subtotal={subtotal}
+          discount={discount}
+          setDiscount={setDiscount}
+          promoCode={promoCode}
+          setPromoCode={setPromoCode}
+          loyaltyRef={loyaltyRef}
+          setLoyaltyRef={setLoyaltyRef}
+          redeem={redeem}
+          setRedeem={setRedeem}
+          onClose={() => setModal(null)}
+        />
+      )}
       {modal === 'pay' && (
         <PayModal
           session={session}
-          cart={cart}
-          discount={discount}
+          draft={{ items: payload, discount, promo_code: promoCode.trim() || undefined, loyalty: loyaltyRef.trim() || undefined, redeem_points: redeem || undefined }}
           terminal={terminal}
           onClose={() => setModal(null)}
-          onDone={() => { setCart([]); setDiscount(0); setModal(null); reloadProducts(); }}
+          onDone={() => { setCart([]); resetDiscounts(); setModal(null); reloadProducts(); onSession(); }}
         />
       )}
       {modal === 'terminal' && <TerminalModal terminal={terminal} setTerminal={setTerminal} onClose={() => setModal(null)} />}
-      {modal === 'held' && <HeldModal onClose={() => setModal(null)} onResume={(items) => { setCart(items); setModal(null); onSession(); }} />}
+      {modal === 'held' && <HeldModal onClose={() => setModal(null)} onResume={(items) => {
+        setCart(items.map((i) => ({ key: lineKey(i.product_id, i.variant_id, i.modifier_ids), product_id: i.product_id, variant_id: i.variant_id || null, modifier_ids: i.modifier_ids || [], qty_milli: Number(i.qty_milli) })));
+        setModal(null);
+        onSession();
+      }} />}
       {modal === 'refund' && <RefundModal onClose={() => setModal(null)} />}
       {modal === 'invoice' && <InvoiceModal onClose={() => setModal(null)} />}
       {modal === 'age' && <AgeLookup onClose={() => setModal(null)} />}
       {modal === 'shift' && <ShiftModal session={session} onClose={() => setModal(null)} onClosed={() => { setModal(null); onSession(); }} />}
+      {modal === 'debts' && (
+        <Modal title={t('Долги')} onClose={() => setModal(null)} wide>
+          <DebtBook session={session} />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -285,336 +385,68 @@ function Form2({ onSubmit, label, children, kind }) {
   );
 }
 
-function DiscountModal({ subtotal, value, onClose, onSet }) {
-  const [mode, setMode] = useState('pct');
-  const [pct, setPct] = useState(10);
-  const [amount, setAmount] = useState(value || null);
-  const result = mode === 'pct' ? Math.round((subtotal * pct) / 100) : Math.min(amount || 0, subtotal);
-  return (
-    <Modal title={t('Скидка')} onClose={onClose}>
-      <div className="stack">
-        <Seg value={mode} onChange={setMode} options={[{ value: 'pct', label: '%' }, { value: 'sum', label: t('Сумма') }]} />
-        {mode === 'pct' ? (
-          <div className="row">{[5, 10, 15, 20, 25, 50].map((p) => <Button key={p} kind={pct === p ? '' : 'secondary'} onClick={() => setPct(p)}>{p}%</Button>)}</div>
-        ) : <MoneyInput label={t('Сумма скидки')} value={amount} onChange={setAmount} />}
-        <div className="row" style={{ justifyContent: 'space-between' }}><span>{t('Скидка')}</span><b><Money value={result} /></b></div>
-        <div className="row">
-          <Button kind="ghost" onClick={() => onSet(0)}>{t('Убрать скидку')}</Button>
-          <Button className="grow" onClick={() => onSet(result)}>{t('Применить')}</Button>
-        </div>
-        <p className="small muted">{t('Скидка записывается в журнал кассы.')}</p>
-      </div>
-    </Modal>
-  );
-}
-
-/** Оплата: чаевые → проверка возраста → способ оплаты (можно несколько раз) → чек. */
-function PayModal({ session, cart, discount, terminal, onClose, onDone }) {
-  const [sale, setSale] = useState(null);
+/** Скидки и лояльность: ручная скидка, промокод, баллы магазина. Всё проверяет сервер. */
+function DiscountsModal({ preview, subtotal, discount, setDiscount, promoCode, setPromoCode, loyaltyRef, setLoyaltyRef, redeem, setRedeem, onClose }) {
+  const [lookup, setLookup] = useState(null);
   const [error, setError] = useState(null);
-  const [method, setMethod] = useState(null);
-  const [part, setPart] = useState(null);
-  const [declined, setDeclined] = useState(null);
-  const created = useRef(false);
-  const toast = useToast();
-
-  useEffect(() => {
-    if (created.current) return;
-    created.current = true;
-    post('/pos/sales', { items: cart, discount }).then((r) => setSale(r.sale)).catch(setError);
-  }, [cart, discount]);
-
-  useChannel(`shop:${session.shop.id}`, async (m) => {
-    if (!sale) return;
-    if ((m.type === 'qr_paid' || m.type === 'sale_paid') && m.sale_id === sale.id) {
-      const r = await get(`/pos/sales/${sale.id}`);
-      setSale(r.sale);
-      if (m.type === 'qr_paid') { sound.approve(); setMethod(null); }
-    }
-    if (m.type === 'pay_declined' && m.sale_id === sale.id) {
-      sound.decline();
-      setDeclined(m.reason);
-    }
-  });
-
-  async function cancel() {
-    if (sale && sale.status === 'open' && sale.paid === 0) {
-      try { await post(`/pos/sales/${sale.id}/cancel`); } catch { /* ignore */ }
-    }
-    if (sale && sale.paid > 0 && sale.status === 'open') {
-      toast(t('По чеку уже есть оплата — доведите оплату до конца'), 'err');
-      return;
-    }
-    onClose();
-  }
-
-  if (error) return <Modal title={t('Оплата')} onClose={onClose}><ErrorBox error={error} /></Modal>;
-  if (!sale) return <Modal title={t('Оплата')} onClose={onClose}><Spinner /></Modal>;
-  if (sale.status === 'paid') return <ReceiptModal saleId={sale.id} onDone={onDone} />;
-
-  const amount = part && part < sale.due ? part : sale.due;
-  const needAge = sale.age_limit > 0 && !sale.age_checked;
-
-  return (
-    <Modal title={`${t('Оплата')} · ${formatMoney(sale.total + sale.tip)}`} onClose={cancel} wide>
-      <div className="grid grid-2">
-        <div className="stack">
-          <div className="list small">
-            {sale.items.map((i) => (
-              <div key={i.id} className="list-item"><div className="li-main">{i.name} <span className="muted">{qtyLabel(i.unit, i.qty_milli)}</span></div><Money value={i.total} /></div>
-            ))}
-          </div>
-          {sale.discount > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span>{t('Скидка')}</span><span>−<Money value={sale.discount} /></span></div>}
-          <div className="row" style={{ justifyContent: 'space-between' }}><span>{t('в т.ч. НДС')}</span><Money value={sale.vat} /></div>
-          {sale.paid === 0 && (
-            <Field label={t('Чаевые кассиру')}>
-              <Seg value={sale.tip_pct} onChange={async (p) => setSale((await post(`/pos/sales/${sale.id}/tip`, { tip_pct: p })).sale)} options={[0, 5, 10, 15].map((p) => ({ value: p, label: `${p}%` }))} />
-            </Field>
-          )}
-          {sale.tip > 0 && <div className="row" style={{ justifyContent: 'space-between' }}><span>{t('Чаевые')}</span><Money value={sale.tip} /></div>}
-          {sale.payments.map((p) => (
-            <div key={p.id} className="row small" style={{ justifyContent: 'space-between' }}><span>✓ {t({ cash: 'Наличные', card: 'Карта', qr: 'QR-оплата' }[p.method])}</span><Money value={p.amount} /></div>
-          ))}
-          <div className="ct-big row" style={{ justifyContent: 'space-between', fontSize: '1.5rem', fontWeight: 800 }}><span>{t('К оплате')}</span><Money value={sale.due} /></div>
-        </div>
-        <div className="stack">
-          {needAge ? <AgeCheck sale={sale} onOk={setSale} /> : !method ? (
-            <>
-              <MoneyInput label={t('Сумма этой оплаты (для раздельной)')} value={part} onChange={setPart} hint={t('Пусто — вся сумма {sum}', { sum: formatMoney(sale.due) })} />
-              <Button size="lg" onClick={() => setMethod('cash')}>💵 {t('Наличные')}</Button>
-              <Button size="lg" onClick={() => setMethod('card')}>💳 {t('Карта — ввод на кассе')}</Button>
-              <Button size="lg" disabled={!terminal?.paired} onClick={() => setMethod('terminal')}>🖥 {t('Карта — на терминале')}</Button>
-              <Button size="lg" onClick={() => setMethod('qr')}>▦ {t('QR из приложения банка')}</Button>
-              <Button kind="ghost" onClick={cancel}>{sale.paid ? t('Закрыть') : t('Отменить чек')}</Button>
-            </>
-          ) : method === 'cash' ? (
-            <CashPay sale={sale} amount={amount} onBack={() => setMethod(null)} onPaid={(s) => { setSale(s); setMethod(null); setPart(null); }} />
-          ) : method === 'card' ? (
-            <CardPay sale={sale} amount={amount} onBack={() => setMethod(null)} onPaid={(s) => { setSale(s); setMethod(null); setPart(null); }} onDecline={setDeclined} />
-          ) : method === 'terminal' ? (
-            <TerminalPay sale={sale} amount={amount} code={terminal.code} onBack={() => setMethod(null)} onPaid={(s) => { setSale(s); setMethod(null); setPart(null); }} />
-          ) : (
-            <QrPay sale={sale} amount={amount} terminal={terminal} onBack={() => setMethod(null)} />
-          )}
-        </div>
-      </div>
-      {declined && <Declined reason={declined} onClose={() => setDeclined(null)} />}
-    </Modal>
-  );
-}
-
-export function Declined({ reason, onClose }) {
-  useEffect(() => {
-    const h = setTimeout(onClose, 4000);
-    return () => clearTimeout(h);
-  }, [onClose]);
-  return (
-    <div className="fullscreen-result declined" onClick={onClose} role="alert">
-      <div className="fr-icon">✕</div>
-      <div className="fr-title">{t('Отказано')}</div>
-      <div style={{ fontSize: '1.2rem' }}>{tServer(reason)}</div>
-    </div>
-  );
-}
-
-function AgeCheck({ sale, onOk }) {
-  const [scan, setScan] = useState(false);
-  const [no, setNo] = useState('');
-  const [error, setError] = useState(null);
-  const [who, setWho] = useState(null);
-  async function check(body) {
-    setError(null);
-    try {
-      const r = await post(`/pos/sales/${sale.id}/age`, body);
-      setWho(r.customer);
-      sound.approve();
-      setTimeout(() => onOk(r.sale), 900);
-    } catch (e) {
-      setError(e);
-      sound.decline();
-    }
-  }
-  return (
-    <div className="stack">
-      <div className="form-warn"><b>{sale.age_limit}+</b> — {t('проверьте паспорт БФ покупателя')}</div>
-      <Button size="lg" onClick={() => setScan(true)}>📷 {t('Сканировать QR паспорта')}</Button>
-      <form className="row nowrap" onSubmit={(e) => { e.preventDefault(); check({ passport_no: no }); }}>
-        <input className="input" placeholder="BLN-0000-0000" value={no} onChange={(e) => setNo(e.target.value.toUpperCase())} />
-        <button className="btn secondary">{t('Проверить')}</button>
-      </form>
-      {who && <div className="form-ok">✓ {who.full_name}, {who.age}</div>}
-      <ErrorBox error={error} />
-      {scan && <Scanner onClose={() => setScan(false)} onScan={(text) => { setScan(false); check({ code: text }); }} />}
-    </div>
-  );
-}
-
-function CashPay({ sale, amount, onBack, onPaid }) {
-  const [given, setGiven] = useState(amount);
-  const [idem] = useState(newIdemKey);
-  const change = (given || 0) - amount;
-  const quick = [amount, ...NOTES.filter((n) => n > amount).slice(0, 4)];
-  return (
-    <div className="stack">
-      <div className="row" style={{ justifyContent: 'space-between' }}><span>{t('К оплате наличными')}</span><b style={{ fontSize: '1.3rem' }}><Money value={amount} /></b></div>
-      <MoneyInput label={t('Получено от покупателя')} value={given} onChange={setGiven} big autoFocus />
-      <div className="row">{quick.map((v) => <Button key={v} size="sm" kind="secondary" onClick={() => setGiven(v)}>{formatMoney(v)}</Button>)}</div>
-      {change >= 0 ? (
-        <div className="card" style={{ background: 'var(--surface-2)', boxShadow: 'none' }}>
-          <div className="row" style={{ justifyContent: 'space-between' }}><b>{t('Сдача')}</b><b style={{ fontSize: '1.4rem' }}><Money value={change} /></b></div>
-          <div className="change-grid" style={{ marginTop: 8 }}>
-            {changeBreakdown(change).map((d) => <span key={d.value} className={`note ${d.kind}`}>{denominationLabel(d.value)} × {d.count}</span>)}
-          </div>
-        </div>
-      ) : <div className="form-error">{t('Получено меньше суммы')}</div>}
-      <div className="row">
-        <Button kind="ghost" onClick={onBack}>{t('Назад')}</Button>
-        <ActionButton className="grow" kind="ok-btn" disabled={change < 0} action={async () => {
-          const r = await post(`/pos/sales/${sale.id}/pay`, { method: 'cash', amount, cash_given: given }, { idem });
-          sound.drawer();
-          onPaid(r.sale);
-        }}>{t('Принять наличные')}</ActionButton>
-      </div>
-    </div>
-  );
-}
-
-/** Оплата картой на экране кассы: экран можно перевернуть к покупателю. */
-function CardPay({ sale, amount, onBack, onPaid, onDecline }) {
-  const [flip, setFlip] = useState(false);
-  const [number, setNumber] = useState('');
-  const [exp, setExp] = useState('');
-  const [step, setStep] = useState('card');
-  const [scan, setScan] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-  const [idem] = useState(newIdemKey);
-  async function pay(pin) {
+  async function findCustomer() {
     setBusy(true);
     setError(null);
     try {
-      const r = await post(`/pos/sales/${sale.id}/pay`, { method: 'card', amount, number, exp, pin }, { idem });
-      sound.approve();
-      onPaid(r.sale);
+      setLookup(await get(`/pos/loyalty/lookup?q=${encodeURIComponent(loyaltyRef.trim())}`));
     } catch (e) {
-      if (e.code === 'pin_wrong') { setError(e); sound.decline(); } else { onDecline(e.message); setStep('card'); }
-    } finally {
-      setBusy(false);
-    }
+      setLookup(null);
+      setError(e);
+    } finally { setBusy(false); }
   }
+  const applied = preview?.promo?.applied || [];
+  const available = preview?.loyalty?.available ?? 0;
   return (
-    <div className={`stack${flip ? ' flip' : ''}`}>
-      <div className="row" style={{ justifyContent: 'space-between' }}>
-        <b style={{ fontSize: '1.3rem' }}><Money value={amount} /></b>
-        <Button size="sm" kind="secondary" onClick={() => setFlip(!flip)}>⟲ {flip ? t('К кассиру') : t('К покупателю')}</Button>
-      </div>
-      {step === 'card' ? (
-        <>
-          <Input label={t('Номер карты')} inputMode="numeric" placeholder="7700 0000 0000" value={number} onChange={(e) => setNumber(e.target.value.replace(/[^\d ]/g, ''))} />
-          <Input label={t('Срок ММ/ГГ')} placeholder="01/04" value={exp} onChange={(e) => setExp(e.target.value)} />
-          <div className="row">
-            <Button kind="secondary" onClick={() => setScan(true)}>📷 {t('QR / штрихкод карты')}</Button>
-            <Button className="grow" disabled={number.replace(/\D/g, '').length !== 12} onClick={() => setStep('pin')}>{t('Далее')}</Button>
+    <Modal title={t('Скидки и баллы')} onClose={onClose} wide>
+      <div className="stack">
+        <div className="grid grid-2">
+          <div className="stack">
+            <h3 style={{ margin: 0 }}>{t('Ручная скидка')}</h3>
+            <MoneyInput label={t('Сумма скидки')} value={discount || null} onChange={(v) => setDiscount(v || 0)} hint={t('Скидка записывается в журнал кассы.')} />
+            <div className="row">{['5%', '10%', '15%', '20%'].map((p, i) => (
+              <Button key={p} size="sm" kind="secondary" onClick={() => setDiscount(Math.round(subtotal * [5, 10, 15, 20][i] / 100))}>{p}</Button>
+            ))}</div>
           </div>
-          <Button kind="ghost" onClick={onBack}>{t('Назад')}</Button>
-        </>
-      ) : (
-        <>
-          <PinPad length={3} title={t('Покупатель вводит PIN')} onComplete={pay} disabled={busy} />
-          <ErrorBox error={error} />
-          <Button kind="ghost" onClick={() => setStep('card')}>{t('Назад')}</Button>
-        </>
-      )}
-      {scan && <Scanner onClose={() => setScan(false)} onScan={(text) => { setScan(false); const n = parseCardScan(text); if (n) { setNumber(n); setStep('pin'); sound.beep(); } }} />}
-    </div>
-  );
-}
-
-function TerminalPay({ sale, amount, code, onBack, onPaid }) {
-  const [state, setState] = useState('sending');
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    post(`/pos/terminals/${code}/request`, { sale_id: sale.id, amount }).then(() => setState('waiting')).catch((e) => { setError(e); setState('error'); });
-  }, [code, sale.id, amount]);
-  useChannel(`terminal:${code}`, async (m) => {
-    if (m.type === 'pay_result') {
-      if (m.ok) {
-        sound.approve();
-        const r = await get(`/pos/sales/${sale.id}`);
-        onPaid(r.sale);
-      } else if (!m.retry) {
-        setError(m.message);
-        setState('declined');
-      }
-    }
-  });
-  return (
-    <div className="stack center" style={{ alignItems: 'center' }}>
-      <div style={{ fontSize: '3rem' }}>🖥</div>
-      <b style={{ fontSize: '1.4rem' }}><Money value={amount} /></b>
-      {state === 'waiting' && <><p>{t('Покупатель оплачивает на терминале…')}</p><Spinner /></>}
-      <ErrorBox error={error} />
-      <Button kind="ghost" onClick={async () => { await post(`/pos/terminals/${code}/cancel`).catch(() => {}); onBack(); }}>{t('Отменить')}</Button>
-    </div>
-  );
-}
-
-function QrPay({ sale, amount, terminal, onBack }) {
-  const [qr, setQr] = useState(null);
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    post(`/pos/sales/${sale.id}/qr`, { amount, terminal_code: terminal?.paired ? terminal.code : undefined }).then(setQr).catch(setError);
-  }, [sale.id, amount, terminal]);
-  return (
-    <div className="stack center" style={{ alignItems: 'center' }}>
-      <ErrorBox error={error} />
-      {qr ? (
-        <>
-          <div style={{ background: '#fff', padding: 10, borderRadius: 12 }}><QR value={qr.url} size={220} /></div>
-          <p>{t('Покупатель сканирует QR камерой телефона и подтверждает оплату во ВлодБанке.')}</p>
-          <b><Money value={qr.amount} /></b>
-          <Spinner />
-        </>
-      ) : !error && <Spinner />}
-      <Button kind="ghost" onClick={onBack}>{t('Назад')}</Button>
-    </div>
-  );
-}
-
-export function ReceiptModal({ saleId, onDone, title }) {
-  const [img, setImg] = useState(null);
-  const [canvas, setCanvas] = useState(null);
-  const [data, setData] = useState(null);
-  const [email, setEmail] = useState('');
-  const toast = useToast();
-  useEffect(() => {
-    (async () => {
-      const r = await get(`/pos/sales/${saleId}/receipt`);
-      setData(r);
-      const c = await renderThermal(receiptBlocks(r, t));
-      setCanvas(c);
-      setImg(c.toDataURL('image/png'));
-    })().catch((e) => toast(e.message, 'err'));
-  }, [saleId, toast]);
-  return (
-    <Modal title={title || t('Оплачено')} onClose={onDone} wide>
-      <div className="grid grid-2">
-        <div>{img ? <div className="receipt-paper"><img src={img} alt={t('Чек')} /></div> : <Spinner />}</div>
-        <div className="stack">
-          {data && <div className="form-ok" style={{ fontSize: '1.1rem' }}>✓ {t('Чек')} №{data.sale.number} · <Money value={data.sale.total + data.sale.tip} /></div>}
-          {data?.sale.payments.filter((p) => p.change_given).map((p) => (
-            <div key={p.id} className="card" style={{ background: 'var(--surface-2)', boxShadow: 'none' }}>
-              <b>{t('Сдача')}: <Money value={p.change_given} /></b>
-              <div className="change-grid" style={{ marginTop: 6 }}>{changeBreakdown(p.change_given).map((d) => <span key={d.value} className={`note ${d.kind}`}>{denominationLabel(d.value)} × {d.count}</span>)}</div>
-            </div>
-          ))}
-          <Button disabled={!canvas} onClick={() => shareCanvas(canvas, `receipt-${data.sale.number}.png`)}>🖨 {t('Печать / поделиться PNG 58 мм')}</Button>
-          <form className="row nowrap" onSubmit={async (e) => { e.preventDefault(); try { await post(`/pos/sales/${saleId}/email`, { email }); toast(t('Чек отправлен'), 'ok'); } catch (err) { toast(tServer(err.message), 'err'); } }}>
-            <input className="input" type="email" placeholder={t('Email покупателя')} value={email} onChange={(e) => setEmail(e.target.value)} />
-            <button className="btn secondary">{t('Отправить')}</button>
-          </form>
-          <Button size="lg" kind="ok-btn" onClick={onDone}>{t('Новый чек')}</Button>
+          <div className="stack">
+            <h3 style={{ margin: 0 }}>{t('Промокод')}</h3>
+            <Input label={t('Код')} value={promoCode} onChange={(e) => setPromoCode(e.target.value.toUpperCase().replace(/\s/g, ''))} placeholder="SALE10" />
+            {applied.length > 0 && (
+              <div className="stack-sm">
+                {applied.map((a) => <div key={a.id} className="row" style={{ justifyContent: 'space-between' }}><span className="promo-tag">🎁 {a.title}</span> <span className="neg">−{formatMoney(a.amount)}</span></div>)}
+              </div>
+            )}
+            {!applied.length && <p className="small muted">{t('Акции магазина применяются автоматически, промокод — по коду.')}</p>}
+          </div>
         </div>
+        <hr className="sep" />
+        <div className="stack">
+          <h3 style={{ margin: 0 }}>{t('Карта лояльности')}</h3>
+          <div className="row nowrap">
+            <input className="input" placeholder={t('Номер карты ВлодБанка или паспорт БФ')} value={loyaltyRef} onChange={(e) => setLoyaltyRef(e.target.value.toUpperCase())} />
+            <button type="button" className="btn secondary" onClick={findCustomer} disabled={busy}>{t('Найти')}</button>
+          </div>
+          <ErrorBox error={error} />
+          {lookup && <div className="form-ok">{lookup.customer.name} · {lookup.customer.points} {t('баллов')}</div>}
+          {!lookup && preview?.loyalty && <div className="form-ok">{preview.loyalty.full_name} · {preview.loyalty.points} {t('баллов')}</div>}
+          {preview?.loyalty && (
+            <div className="row">
+              <Input label={t('Списать баллов')} type="number" min={0} max={available} value={redeem || ''} onChange={(e) => setRedeem(Math.max(0, Math.min(available, Number(e.target.value) || 0)))} hint={t('Можно списать до {n} баллов в этом чеке', { n: available })} />
+              <Button size="sm" kind="secondary" onClick={() => setRedeem(available)}>{t('Списать всё')}</Button>
+            </div>
+          )}
+        </div>
+        <div className="totals-box">
+          <div className="trow"><span>{t('Подытог')}</span><span>{formatMoney(subtotal)}</span></div>
+          <div className="trow"><span>{t('Итого скидок')}</span><span className="neg">−{formatMoney((preview?.discount || 0))}</span></div>
+          <div className="trow big"><span>{t('К оплате')}</span><span>{formatMoney(preview?.total ?? subtotal)}</span></div>
+        </div>
+        <Button onClick={onClose}>{t('Готово')}</Button>
       </div>
     </Modal>
   );
@@ -680,7 +512,7 @@ function RefundModal({ onClose }) {
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
   const [reason, setReason] = useState('');
-  const [idem] = useState(newIdemKey);
+  const [idem] = useState(() => `${Date.now()}-${Math.random()}`.replace(/\D/g, '').slice(0, 12));
   async function find() {
     setError(null);
     setData(null);
@@ -709,7 +541,7 @@ function RefundModal({ onClose }) {
         )}
         {data && !result && (
           <>
-            <div className="small muted">{t('Чек')} №{data.sale.number} · <Money value={data.sale.total} /> · {data.sale.payments.map((p) => t({ cash: 'Наличные', card: 'Карта', qr: 'QR-оплата' }[p.method])).join(' + ')}{data.sale.refunded ? ` · ${t('уже возвращено')} ${formatMoney(data.sale.refunded)}` : ''}</div>
+            <div className="small muted">{t('Чек')} №{data.sale.number} · <Money value={data.sale.total} /> · {data.sale.payments.map((p) => t({ cash: 'Наличные', card: 'Карта', qr: 'QR-оплата', debt: 'В долг' }[p.method])).join(' + ')}{data.sale.refunded ? ` · ${t('уже возвращено')} ${formatMoney(data.sale.refunded)}` : ''}</div>
             <table className="table">
               <thead><tr><th>{t('Товар')}</th><th>{t('Куплено')}</th><th>{t('Вернуть')}</th></tr></thead>
               <tbody>
@@ -750,7 +582,7 @@ function InvoiceModal({ onClose }) {
   const [inv, setInv] = useState(null);
   const [error, setError] = useState(null);
   const [paid, setPaid] = useState(false);
-  const [idem] = useState(newIdemKey);
+  const [idem] = useState(() => `${Date.now()}-${Math.random()}`.replace(/\D/g, '').slice(0, 12));
   return (
     <Modal title={t('Оплата квитанции ВлодУслуг наличными')} onClose={onClose}>
       <div className="stack">

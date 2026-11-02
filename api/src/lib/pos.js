@@ -22,12 +22,12 @@ export async function posLog(conn, { shopId, staffId = null, shiftId = null, act
 }
 
 /** Строки чека → позиции с суммами. Цены, варианты, добавки и наличие берутся только из базы. */
-export async function buildItems(conn, shopId, lines, { checkStock = true, kiosk = false } = {}) {
+export async function buildItems(conn, shopId, lines, { checkStock = true, kiosk = false, lock = true } = {}) {
   if (!Array.isArray(lines) || lines.length === 0) throw bad('empty_sale', 'Чек пуст');
   if (lines.length > 200) throw bad('too_many', 'Слишком много позиций');
   const ids = [...new Set(lines.map((l) => Number(l.product_id)))];
   if (ids.some((id) => !Number.isSafeInteger(id))) throw bad('product_not_found', 'Товар не найден');
-  const rows = await q(`SELECT * FROM products WHERE shop_id = ? AND deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')}) FOR UPDATE`, [shopId, ...ids], conn);
+  const rows = await q(`SELECT * FROM products WHERE shop_id = ? AND deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')})${lock ? ' FOR UPDATE' : ''}`, [shopId, ...ids], conn);
   const byId = new Map(rows.map((p) => [p.id, p]));
   const variants = new Map((await q(`SELECT * FROM product_variants WHERE active = 1 AND product_id IN (${ids.map(() => '?').join(',')})`, ids, conn)).map((v) => [v.id, v]));
   const mods = new Map((await q(`SELECT * FROM modifiers WHERE active = 1 AND product_id IN (${ids.map(() => '?').join(',')})`, ids, conn)).map((m) => [m.id, m]));
@@ -194,6 +194,43 @@ export async function createSale(conn, {
   return sale;
 }
 
+/**
+ * Предварительный расчёт чека для экрана кассы: акции, промокод, баллы и итог
+ * без создания продажи. Клиент показывает только то, что посчитал сервер.
+ */
+export async function previewSale(conn, { shopId, lines, discount = 0, promoCode = null, loyalty = null, redeemPoints = 0 }) {
+  const shop = await one('SELECT * FROM shops WHERE id = ?', [shopId], conn);
+  if (!shop) throw notFound('Магазин не найден');
+  const s = await getSettings();
+  const items = await buildItems(conn, shopId, lines, { lock: false });
+  const subtotal = items.reduce((x, i) => x + i.total, 0);
+  const code = promoCode ? String(promoCode).trim().toUpperCase().slice(0, 32) : null;
+  const promo = await promoDiscount(conn, shopId, items, code);
+  const manual = Math.min(Math.max(0, Math.round(Number(discount) || 0)), subtotal - promo.amount);
+  const customer = loyalty ? (typeof loyalty === 'object' ? loyalty : await loyaltyCustomer(conn, loyalty)) : null;
+  const have = customer ? await pointsOf(conn, shopId, customer.id) : 0;
+  const cap = percentOf(subtotal - promo.amount - manual, Number(shop.loyalty_max_bp || 0));
+  const points = Math.min(Math.max(0, Math.round(Number(redeemPoints) || 0)), have, cap);
+  const totals = priceItems(items, promo.amount + manual + points, Number(s.vat_bp || 0));
+  return {
+    subtotal,
+    promo,
+    manual,
+    points_used: points,
+    discount: totals.discount,
+    total: totals.total,
+    vat: totals.vat,
+    vat_bp: Number(s.vat_bp || 0),
+    loyalty: customer
+      ? { id: customer.id, full_name: customer.full_name, points: have, available: Math.min(have, cap), cap }
+      : null,
+    items: items.map((i) => ({
+      name: i.name, unit: i.unit, qty_milli: i.qty_milli, price: i.price, discount: i.discount, total: i.total, vat: i.vat,
+      variant_id: i.variant_id, modifiers: i.modifiers,
+    })),
+  };
+}
+
 // ——— Столики: открытый счёт стола — отложенный чек с table_id ———
 
 /** Пересчитать отложенный чек без скидок и чаевых (позиции по полной цене). */
@@ -228,7 +265,11 @@ export async function openTab(conn, shopId, tableId) {
 /** Добавить позиции в счёт стола (новый счёт, если стол свободен). */
 export async function addToTab(conn, { shopId, staff, table, lines }) {
   const tab = await openTab(conn, shopId, table.id);
-  if (!tab) return createSale(conn, { shopId, staff, lines, heldLabel: table.name, tableId: table.id, source: 'tab' });
+  if (!tab) {
+    const sale = await createSale(conn, { shopId, staff, lines, heldLabel: table.name, tableId: table.id, source: 'tab' });
+    await posLog(conn, { shopId, staffId: staff.id, action: 'table_open', saleId: sale.id, data: { table: table.name, seats: table.seats } });
+    return sale;
+  }
   const items = await buildItems(conn, shopId, lines, { checkStock: false });
   for (const it of items) {
     await q('INSERT INTO sale_items (sale_id, product_id, name, unit, qty_milli, price, discount, total, vat, age_limit, variant_id, modifiers) VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)', [
@@ -236,6 +277,7 @@ export async function addToTab(conn, { shopId, staff, table, lines }) {
     ], conn);
   }
   await recomputeHeld(conn, tab.id);
+  await posLog(conn, { shopId, staffId: staff.id, action: 'table_item', saleId: tab.id, data: { table: table.name, lines: items.length } });
   return loadSale(conn, tab.id);
 }
 
@@ -261,14 +303,18 @@ export async function sendTabToKitchen(conn, { tab, table }) {
   if (!list.length) throw bad('nothing_to_send', 'Нет новых блюд для кухни');
   const order = await createKitchenOrder(conn, tab.shop_id, { saleId: tab.id, label: table.name, items: list });
   await q(`UPDATE sale_items SET sent_to_kitchen = 1 WHERE id IN (${list.map(() => '?').join(',')})`, list.map((i) => i.id), conn);
+  await posLog(conn, { shopId: tab.shop_id, staffId: tab.staff_id, action: 'kitchen_send', saleId: tab.id, data: { table: table.name, queue_no: order.queue_no, lines: list.length } });
   return order;
 }
 
 /** Закрыть счёт стола: обычный чек со скидками и баллами, дальше — оплата. */
 export async function tabCheckout(conn, { tab, staff, discount = 0, promoCode = null, loyalty = null, redeemPoints = 0, tipPct = 0 }) {
   const lines = tab.items.map((i) => ({ product_id: i.product_id, qty_milli: Number(i.qty_milli), variant_id: i.variant_id, modifier_ids: (json(i.modifiers, []) || []).map((m) => m.id), sent: i.sent_to_kitchen }));
+  const table = tab.table_id ? await one('SELECT name FROM shop_tables WHERE id = ?', [tab.table_id], conn) : null;
   await q("UPDATE sales SET status = 'cancelled' WHERE id = ?", [tab.id], conn);
-  return createSale(conn, { shopId: tab.shop_id, staff, lines, discount, promoCode, loyalty, redeemPoints, tipPct, tableId: tab.table_id, source: 'tab' });
+  const sale = await createSale(conn, { shopId: tab.shop_id, staff, lines, discount, promoCode, loyalty, redeemPoints, tipPct, tableId: tab.table_id, source: 'tab' });
+  await posLog(conn, { shopId: tab.shop_id, staffId: staff.id, action: 'table_checkout', saleId: sale.id, data: { table: table?.name || null, lines: lines.length, total: Number(sale.total) } });
+  return sale;
 }
 
 export async function loadSale(conn, saleId, { lock = false } = {}) {
