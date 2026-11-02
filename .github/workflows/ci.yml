@@ -30,7 +30,7 @@ jobs:
       - run: npm run lint
       - name: Тесты подготовки проекта Cloudflare Pages
         run: node --test .github/scripts/cloudflare-pages/ensure-project.test.mjs
-      - name: Тесты (shared + API на MariaDB)
+      - name: Тесты (shared + web на jsdom, API на MariaDB)
         run: npm test
         env:
           DB_HOST: 127.0.0.1

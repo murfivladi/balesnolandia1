@@ -87,3 +87,8 @@ export function annuitySchedule(amount, months, rateBp) {
   }
   return { payment, total: rows.reduce((s, x) => s + x.principal + x.interest, 0), rows };
 }
+
+/** Базисные пункты → проценты: 2000 → «20%», 1050 → «10,5%». */
+export function pct(bp, maxFractionDigits = 2) {
+  return `${(Number(bp) / 100).toLocaleString('ru-RU', { maximumFractionDigits: maxFractionDigits })}%`;
+}

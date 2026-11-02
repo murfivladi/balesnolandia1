@@ -11,6 +11,9 @@ import { AdminLogo } from '../shared/brand.jsx';
 import { LoginForm, AuthDisclaimer } from '../shared/auth.jsx';
 import { IdCard } from '../shared/passport.jsx';
 import { CreditAdmin, FraudAdmin, CashbackAdmin, InflationCard } from './finance.jsx';
+import {
+  FineArticles, FineAppeals, GovBudget, Sanctions, AdminProperties, CountriesAdmin, ElectionsAdmin, NewsAdmin,
+} from './services.jsx';
 import { TX_KINDS, ACCOUNT_TYPES } from '../bank/pages.jsx';
 import { gameDateLabel } from '@bln/shared/time.js';
 import { formatMoney } from '@bln/shared/money.js';
@@ -37,7 +40,7 @@ export default function App() {
     return onUnauthorized(() => setMe(null));
   }, []);
   useEffect(() => {
-    if (me && !me.forbidden) get('/admin/overview').then((r) => setQueue(r.counts.pending_bank + r.counts.pending_apps + r.counts.pending_credit + r.counts.pending_fraud)).catch(() => {});
+    if (me && !me.forbidden) get('/admin/overview').then((r) => setQueue(r.counts.pending_bank + r.counts.pending_apps + r.counts.pending_credit + r.counts.pending_fraud + r.counts.pending_fine_appeals + r.counts.pending_benefits + r.counts.open_appeals)).catch(() => {});
   }, [me, route.path]);
   useChannel(me && !me.forbidden ? 'admin' : null, (m) => { if (m.type === 'queue') setQueue((n) => n + 1); });
 
@@ -129,6 +132,11 @@ function Overview() {
     <div className="page">
       <h1>{t('Обзор')}</h1>
       {(c.pending_bank > 0 || c.pending_apps > 0 || c.pending_credit > 0 || c.pending_fraud > 0) && <div className="form-warn" style={{ marginBottom: 16 }}>{t('Ждут решения')}: {c.pending_bank} {t('регистраций')}, {c.pending_apps} {t('заявлений')}, {c.pending_credit} {t('кредитных заявок')}, {c.pending_fraud} {t('подозрительных операций')} — <a href="#/bank">{t('очередь')}</a></div>}
+      {(c.pending_fine_appeals > 0 || c.pending_benefits > 0 || c.open_appeals > 0 || c.sanctions > 0) && (
+        <div className="form-warn" style={{ marginBottom: 16 }}>
+          {t('Услуги: {f} жалоб на штрафы, {b} заявок на пособия, {a} обращений, {s} действующих мер', { f: c.pending_fine_appeals, b: c.pending_benefits, a: c.open_appeals, s: c.sanctions })} — <a href="#/services">{t('разобрать')}</a>
+        </div>
+      )}
       <div className="grid grid-4">
         <Stat label={t('Клиенты банка')} value={c.bank_users} />
         <Stat label={t('Граждане с паспортом')} value={c.citizens} />
@@ -138,6 +146,10 @@ function Overview() {
         <Stat label={t('Выпущено эмиссией')} value={e.emitted} money />
         <Stat label={t('Госбюджет БФ')} value={e.budget} money />
         <Stat label={t('Казна ВлодБанка')} value={e.treasury} money />
+        <Stat label={t('Жалоб на штрафы')} value={c.pending_fine_appeals} />
+        <Stat label={t('Заявок на пособия')} value={c.pending_benefits} />
+        <Stat label={t('Обращений без ответа')} value={c.open_appeals} />
+        <Stat label={t('Действующих мер')} value={c.sanctions} />
       </div>
       <div className="grid grid-2" style={{ marginTop: 16 }}>
         <ClockCard clock={data.clock} onChange={reload} />
@@ -420,13 +432,48 @@ const SETTING_LABELS = {
   fee_passport: ['Госпошлина: паспорт', 'money'],
   fee_inn: ['Госпошлина: ИНН', 'money'],
   fee_ip: ['Госпошлина: регистрация ИП', 'money'],
+  fee_driver: ['Госпошлина: водительские права', 'money'],
+  fee_foreign_passport: ['Госпошлина: загранпаспорт', 'money'],
+  fee_marriage: ['Госпошлина: свидетельство о браке', 'money'],
+  fee_birth: ['Госпошлина: свидетельство о рождении', 'money'],
+  driver_valid_months: ['Срок действия прав, игровых месяцев', 'int'],
+  foreign_passport_months: ['Срок действия загранпаспорта, игровых месяцев', 'int'],
   passport_valid_months: ['Срок действия паспорта, игровых месяцев (0 — бессрочно)', 'int'],
+  ndfl_bp: ['НДФЛ с зарплат, %', 'pct'],
+  ip_tax_bp: ['Налог ИП с дохода, %', 'pct'],
+  property_tax_bp: ['Налог на имущество, % в игровой год', 'pct'],
+  declaration_due_months: ['Срок подачи декларации ИП, игровых месяцев', 'int'],
+  fine_due_months: ['Срок оплаты штрафа, игровых месяцев', 'int'],
+  tax_due_months: ['Срок оплаты налога, игровых месяцев', 'int'],
+  penalty_bp: ['Пени за месяц просрочки, %', 'pct'],
+  sanction_months: ['Через сколько месяцев просрочки — арест и запрет выезда', 'int'],
+  ip_close_months: ['Через сколько месяцев просрочки закрыть ИП', 'int'],
+  benefits_approval: ['Пособия только после одобрения чиновником', 'bool'],
+  benefit_child: ['Детское пособие за ребёнка в игровой месяц', 'money'],
+  benefit_pension: ['Пенсия в игровой месяц', 'money'],
+  pension_age: ['Пенсионный возраст', 'int'],
+  benefit_unemployment: ['Пособие по безработице в игровой месяц', 'money'],
+  benefit_unemployment_months: ['Сколько месяцев платить пособие по безработице', 'int'],
+  salary_official: ['Зарплата чиновника в игровой месяц', 'money'],
+  salary_police: ['Зарплата полицейского в игровой месяц', 'money'],
+  salary_tax: ['Зарплата налогового инспектора в игровой месяц', 'money'],
+  salary_doctor: ['Зарплата врача в игровой месяц', 'money'],
+  mortgage_rate_bp: ['Ипотека, % в месяц', 'pct'],
+  auto_loan_rate_bp: ['Автокредит, % в месяц', 'pct'],
+  mortgage_max_months: ['Максимальный срок ипотеки, игровых месяцев', 'int'],
+  mortgage_min_down_bp: ['Минимальный первый взнос, % от цены', 'pct'],
+  insurance_price: ['Медстраховка: цена полиса', 'money'],
+  insurance_months: ['Медстраховка: срок полиса, игровых месяцев', 'int'],
+  vote_age: ['Возраст для выборов', 'int'],
   bank_logo: ['Логотип ВлодБанка', 'image'],
   gov_logo: ['Логотип ВлодУслуг', 'image'],
 };
 const BANK_KEYS = ['start_balance', 'transfer_fee_bp', 'transfer_fee_min', 'acquiring_fee_bp', 'card_valid_months', 'card_issue_fee', 'card_reissue_fee', 'card_monthly_fee', 'gift_card_fee', 'savings_rate_bp', 'term_rate_bp', 'term_early_penalty_bp', 'cashback_max_categories', 'cashback_cap'];
 const CREDIT_KEYS = ['loan_rate_bp', 'loan_max_amount', 'loan_max_months', 'loan_auto_approve_max', 'loan_late_fee_bp', 'credit_rate_bp', 'credit_grace_months', 'credit_min_payment_bp', 'credit_late_fee', 'credit_max_limit', 'fraud_threshold', 'fraud_multiplier', 'fraud_velocity'];
-const LAW_KEYS = ['vat_bp', 'fee_passport', 'fee_inn', 'fee_ip', 'passport_valid_months'];
+const LAW_KEYS = ['vat_bp', 'fee_passport', 'fee_inn', 'fee_ip', 'fee_driver', 'fee_foreign_passport', 'fee_marriage', 'fee_birth', 'passport_valid_months', 'driver_valid_months', 'foreign_passport_months'];
+const TAX_KEYS = ['ndfl_bp', 'ip_tax_bp', 'property_tax_bp', 'declaration_due_months', 'fine_due_months', 'tax_due_months', 'penalty_bp', 'sanction_months', 'ip_close_months'];
+const BENEFIT_KEYS = ['benefits_approval', 'benefit_child', 'benefit_pension', 'pension_age', 'benefit_unemployment', 'benefit_unemployment_months', 'salary_official', 'salary_police', 'salary_tax', 'salary_doctor'];
+const MORTGAGE_KEYS = ['mortgage_rate_bp', 'auto_loan_rate_bp', 'mortgage_max_months', 'mortgage_min_down_bp', 'insurance_price', 'insurance_months', 'vote_age'];
 const SYSTEM_KEYS = ['bank_registration_approval', 'passport_approval', 'idle_minutes', 'game_month_minutes', 'bank_logo', 'gov_logo'];
 
 function SettingsForm({ keys }) {
@@ -700,10 +747,37 @@ function ServicesSection() {
   return (
     <div className="page">
       <h1>{t('Услуги')}</h1>
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'citizens', label: t('Реестр граждан') }, { value: 'queue', label: t('Заявления') }, { value: 'laws', label: t('Законы и ставки') }, { value: 'invoices', label: t('Квитанции') }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[
+        { value: 'citizens', label: t('Реестр граждан') },
+        { value: 'queue', label: t('Заявления') },
+        { value: 'fines', label: t('Штрафы и статьи') },
+        { value: 'appeals', label: t('Жалобы на штрафы') },
+        { value: 'sanctions', label: t('Санкции') },
+        { value: 'properties', label: t('Имущество') },
+        { value: 'countries', label: t('Страны и визы') },
+        { value: 'elections', label: t('Выборы') },
+        { value: 'news', label: t('Новости') },
+        { value: 'budget', label: t('Госбюджет') },
+        { value: 'laws', label: t('Пошлины и НДС') },
+        { value: 'taxes', label: t('Налоги') },
+        { value: 'benefits', label: t('Пособия и зарплаты') },
+        { value: 'mortgage', label: t('Ипотека и страховка') },
+        { value: 'invoices', label: t('Квитанции') },
+      ]} />
       {tab === 'citizens' && <Citizens />}
       {tab === 'queue' && <Queue />}
+      {tab === 'fines' && <FineArticles />}
+      {tab === 'appeals' && <FineAppeals />}
+      {tab === 'sanctions' && <Sanctions />}
+      {tab === 'properties' && <AdminProperties />}
+      {tab === 'countries' && <CountriesAdmin />}
+      {tab === 'elections' && <ElectionsAdmin />}
+      {tab === 'news' && <NewsAdmin />}
+      {tab === 'budget' && <GovBudget />}
       {tab === 'laws' && <SettingsForm keys={LAW_KEYS} />}
+      {tab === 'taxes' && <SettingsForm keys={TAX_KEYS} />}
+      {tab === 'benefits' && <SettingsForm keys={BENEFIT_KEYS} />}
+      {tab === 'mortgage' && <SettingsForm keys={MORTGAGE_KEYS} />}
       {tab === 'invoices' && <Invoices />}
     </div>
   );

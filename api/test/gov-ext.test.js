@@ -277,3 +277,58 @@ test('appeals answered by staff; news by admin; budget overview', async () => {
   assert.ok(b.by_kind.some((k) => k.kind === 'gov_salary'));
   assert.equal(b.balance, await budget());
 });
+
+test('admin: fine articles, countries, sanctions, property registry, news and candidate moderation', async () => {
+  // Статьи штрафов: добавление, правка, выключение; гражданам показываются только активные.
+  const a = await admin.post('/api/admin/fine-articles', { code: '99.9', title: 'Проверка статей', amount: 1234 });
+  let arts = (await admin.get('/api/admin/fine-articles')).articles;
+  assert.equal(arts.find((x) => x.id === a.id).amount, 1234);
+  await admin.patch(`/api/admin/fine-articles/${a.id}`, { amount: 2000, active: false });
+  arts = (await admin.get('/api/admin/fine-articles')).articles;
+  assert.equal(arts.find((x) => x.id === a.id).active, false);
+  assert.ok(!(await anna.gov.get('/api/gov/fine-articles')).articles.some((x) => x.id === a.id));
+
+  // Страны и визы: новая страна, правка сбора, выключение.
+  const c = await admin.post('/api/admin/countries', { name: 'Тестовая страна', code: 'TST', visa_required: true, visa_fee: 500, visa_months: 3 });
+  await admin.patch(`/api/admin/countries/${c.id}`, { visa_fee: 700, active: false });
+  const countries = (await admin.get('/api/admin/countries')).countries;
+  assert.equal(countries.find((x) => x.id === c.id).visa_fee, 700);
+  assert.ok(!(await anna.gov.get('/api/gov/countries')).countries.some((x) => x.id === c.id));
+
+  // Санкции: выдать запрет выезда вручную и снять.
+  await admin.post('/api/admin/sanctions', { kind: 'travel_ban', passport_no: cop.passport, reason: 'Проверка мер' });
+  const san = (await admin.get('/api/admin/sanctions')).sanctions.find((x) => x.passport_no === cop.passport && x.active);
+  assert.ok(san, 'мера выдана');
+  await admin.post(`/api/admin/sanctions/${san.id}/lift`);
+  assert.ok(!(await admin.get('/api/admin/sanctions')).sanctions.some((x) => x.id === san.id && x.active));
+  await assert.rejects(admin.post('/api/admin/sanctions', { kind: 'unknown', passport_no: cop.passport, reason: 'Нет такой меры' }), /Мера/);
+
+  // Реестр имущества: правка цены и арест.
+  const p = await admin.post('/api/admin/properties', { kind: 'car', title: 'Тестовая машина', value: 100000, list_price: 120000 });
+  await admin.patch(`/api/admin/properties/${p.id}`, { list_price: 90000, status: 'arrested' });
+  const props = (await admin.get('/api/admin/properties?q=Тестовая')).properties;
+  assert.equal(props[0].list_price, 90000);
+  assert.equal(props[0].status, 'arrested');
+
+  // Новости: правка, закрепление и удаление.
+  const n = await admin.post('/api/admin/news', { kind: 'law', title: 'Закон о тестах', body: 'Текст закона' });
+  await admin.patch(`/api/admin/news/${n.id}`, { title: 'Закон о тестах (новая редакция)', pinned: true });
+  let news = (await client(app).get('/api/gov/news')).news;
+  assert.equal(news[0].title, 'Закон о тестах (новая редакция)');
+  assert.equal(news[0].pinned, true);
+  await admin.patch(`/api/admin/news/${n.id}`, { delete: true });
+  news = (await client(app).get('/api/gov/news')).news;
+  assert.ok(!news.some((x) => x.id === n.id));
+
+  // Выборы: кандидата можно не допустить, без кандидатов голосование не начинается.
+  const e = await admin.post('/api/admin/elections', { title: 'Тестовые выборы' });
+  await cop.gov.post(`/api/gov/elections/${e.id}/nominate`, { program: 'Программа тестового кандидата' });
+  const el = (await admin.get('/api/admin/elections')).elections.find((x) => x.id === e.id);
+  const cand = el.candidates[0];
+  await admin.post(`/api/admin/candidates/${cand.id}/status`, { status: 'rejected' });
+  await assert.rejects(admin.post(`/api/admin/elections/${e.id}/status`, { status: 'voting' }), /no_candidates/);
+  await admin.post(`/api/admin/candidates/${cand.id}/status`, { status: 'approved' });
+  await admin.post(`/api/admin/elections/${e.id}/status`, { status: 'voting' });
+  assert.equal((await admin.get('/api/admin/elections')).elections.find((x) => x.id === e.id).status, 'voting');
+  await noMoneyFromAir();
+});

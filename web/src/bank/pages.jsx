@@ -54,6 +54,7 @@ export function Dashboard({ tick }) {
         <a className="btn secondary" href="#/open">{t('Открыть счёт')}</a>
         <a className="btn secondary" href="#/cards/new">{t('Выпустить карту')}</a>
         <a className="btn secondary" href="#/autopay">{t('Автоплатежи')}</a>
+        <a className="btn secondary" href="#/state">{t('Госуслуги')}</a>
         <a className="btn ghost" href="#/atm">{t('Банкомат')}</a>
       </div>
       <div className="grid grid-2">
