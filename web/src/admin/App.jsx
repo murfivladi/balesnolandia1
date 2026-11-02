@@ -500,11 +500,31 @@ function Economy() {
 
 // ——— Касса ———
 function PosSection() {
+  const [tab, setTab] = useState('shops');
+  return (
+    <div className="page">
+      <h1>{t('Касса')}</h1>
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: 'shops', label: t('Магазины') },
+          { value: 'wholesale', label: t('Оптовая база') },
+          { value: 'purchases', label: t('Закупки') },
+        ]}
+      />
+      {tab === 'shops' && <AdminShops />}
+      {tab === 'wholesale' && <WholesaleBase />}
+      {tab === 'purchases' && <PurchasesAdmin />}
+    </div>
+  );
+}
+
+function AdminShops() {
   const { data, loading, reload } = useAsync(() => get('/admin/shops'), []);
   if (loading && !data) return <Spinner />;
   return (
-    <div className="page">
-      <h1>{t('Касса: магазины')}</h1>
+    <div className="stack">
       {!data.shops.length ? <Empty>{t('Магазинов пока нет')}</Empty> : (
         <div className="card table-wrap">
           <table className="table">
@@ -522,7 +542,154 @@ function PosSection() {
           </table>
         </div>
       )}
-      <p className="small muted" style={{ marginTop: 12 }}>{t('Оптовая база и цены появятся в расширении кассы (этап 7).')}</p>
+    </div>
+  );
+}
+
+/** Оптовая база: сюда закупаются магазины. Цены растут вместе с индексом инфляции. */
+function WholesaleBase() {
+  const { data, loading, reload } = useAsync(() => get('/admin/wholesale'), []);
+  const [edit, setEdit] = useState(null);
+  const [q, setQ] = useState('');
+  if (loading && !data) return <Spinner />;
+  const needle = q.trim().toLowerCase();
+  const items = data.items.filter((w) => !needle || `${w.name} ${w.category}`.toLowerCase().includes(needle));
+  return (
+    <div className="stack">
+      <div className="grid grid-4">
+        <div className="stat"><span className="label">{t('Индекс цен')}</span><span className="value">×{(data.index / 1e6).toFixed(3)}</span><span className="tiny muted">{data.month}</span></div>
+        <div className="stat"><span className="label">{t('Позиций')}</span><span className="value">{data.items.length}</span></div>
+        <div className="stat"><span className="label">{t('Закуплено')}</span><span className="value"><Money value={data.sales.total} /></span><span className="tiny muted">{t('закупок')}: {data.sales.count}</span></div>
+        <div className="stat"><span className="label">{t('История индекса')}</span><span className="value">{data.history.length}</span><span className="tiny muted">{t('месяцев')}</span></div>
+      </div>
+      <div className="row">
+        <input className="input grow" placeholder={t('Поиск по названию или категории')} value={q} onChange={(e) => setQ(e.target.value)} />
+        <Button onClick={() => setEdit({})}>+ {t('Позиция')}</Button>
+      </div>
+      {!items.length ? <Empty>{t('Позиций нет')}</Empty> : (
+        <div className="card table-wrap">
+          <table className="table">
+            <thead><tr><th>{t('Товар')}</th><th>{t('Категория')}</th><th>{t('Ед.')}</th><th className="right">{t('База')}</th><th className="right">{t('С индексом')}</th><th>{t('Штрихкод')}</th><th>{t('18+')}</th><th>{t('Статус')}</th><th /></tr></thead>
+            <tbody>
+              {items.map((w) => (
+                <tr key={w.id}>
+                  <td><div className="row" style={{ gap: 8 }}>{w.photo && <img src={w.photo} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover' }} />}<span>{w.name}</span></div></td>
+                  <td className="small muted">{w.category || '—'}</td>
+                  <td className="small">{w.unit === 'kg' ? t('кг') : t('шт')}</td>
+                  <td className="num right"><Money value={w.base_price} /></td>
+                  <td className="num right"><b><Money value={w.price} /></b></td>
+                  <td className="mono tiny">{w.barcode || '—'}</td>
+                  <td>{w.age_limit ? `${w.age_limit}+` : '—'}</td>
+                  <td><StatusBadge status={w.active ? 'active' : 'closed'} /></td>
+                  <td className="right"><Button size="sm" kind="ghost" onClick={() => setEdit(w)}>{t('Изменить')}</Button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {data.history.length > 0 && (
+        <div className="card">
+          <h2>{t('Индекс инфляции по месяцам')}</h2>
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>{t('Месяц')}</th><th className="right">{t('Ставка')}</th><th className="right">{t('Индекс')}</th></tr></thead>
+              <tbody>{data.history.map((h) => <tr key={h.month}><td>{h.month}</td><td className="num right">{(h.rate_bp / 100).toLocaleString('ru-RU')}%</td><td className="num right">×{h.index.toFixed(3)}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {edit && (
+        <WholesaleModal
+          item={edit}
+          onClose={() => setEdit(null)}
+          onDone={() => { setEdit(null); reload(); }}
+        />
+      )}
+      <p className="small muted">{t('Магазины закупаются по цене с индексом. Базовая цена меняется здесь, индекс считает экономика города.')}</p>
+    </div>
+  );
+}
+
+function WholesaleModal({ item, onClose, onDone }) {
+  const [f, setF] = useState({
+    name: item.name || '', category: item.category || '', unit: item.unit || 'pcs', base_price: item.base_price || 0,
+    barcode: item.barcode || '', age_limit: item.age_limit || 0, sort: item.sort || 0, photo: item.photo || null, active: item.active !== false,
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <Modal title={item.id ? t('Изменить позицию') : t('Новая позиция оптовой базы')} onClose={onClose} wide>
+      <Form
+        submitLabel={item.id ? t('Сохранить') : t('Добавить')}
+        onSubmit={async () => {
+          const body = {
+            name: f.name, category: f.category, unit: f.unit, base_price: f.base_price, barcode: f.barcode || null,
+            age_limit: Number(f.age_limit) || 0, sort: Number(f.sort) || 0, active: f.active, photo: f.photo,
+          };
+          if (item.id) await patch(`/admin/wholesale/${item.id}`, body);
+          else await post('/admin/wholesale', body);
+          onDone();
+        }}
+      >
+        <div className="grid grid-2">
+          <Input label={t('Название')} required value={f.name} onChange={set('name')} />
+          <Input label={t('Категория')} value={f.category} onChange={set('category')} hint={t('Например: продукты, бытовая химия')} />
+          <Select label={t('Единица')} value={f.unit} onChange={set('unit')} options={[{ value: 'pcs', label: t('шт') }, { value: 'kg', label: t('кг') }]} />
+          <MoneyInput label={t('Базовая цена')} value={f.base_price} onChange={(v) => setF({ ...f, base_price: v })} hint={t('К ней прибавится индекс инфляции')} />
+          <Input label={t('Штрихкод')} value={f.barcode} onChange={set('barcode')} />
+          <Input label={t('Возрастное ограничение')} type="number" min="0" max="21" value={f.age_limit} onChange={set('age_limit')} hint={t('0 — без ограничения')} />
+          <Input label={t('Порядок')} type="number" value={f.sort} onChange={set('sort')} />
+          <label className="row" style={{ alignItems: 'center', gap: 8 }}><input type="checkbox" checked={!!f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} />{t('В продаже')}</label>
+        </div>
+        <PhotoInput label={t('Фото')} value={f.photo} onChange={(photo) => setF({ ...f, photo })} />
+      </Form>
+    </Modal>
+  );
+}
+
+/** Закупки всех магазинов: у оптовой базы и друг у друга. */
+function PurchasesAdmin() {
+  const { data, loading, reload } = useAsync(() => get('/admin/purchases'), []);
+  const [filter, setFilter] = useState('all');
+  if (loading && !data) return <Spinner />;
+  const list = data.purchases.filter((p) => filter === 'all' || p.source === filter);
+  const sum = list.filter((p) => p.status === 'done').reduce((s, p) => s + p.total, 0);
+  const SOURCE = { wholesale: 'Оптовая база', shop: 'Магазин', market: 'Рынок', order: 'Заказ' };
+  return (
+    <div className="stack">
+      <div className="grid grid-3">
+        <div className="stat"><span className="label">{t('Закупок')}</span><span className="value">{list.length}</span></div>
+        <div className="stat"><span className="label">{t('Оборот закупок')}</span><span className="value"><Money value={sum} /></span></div>
+        <div className="stat"><span className="label">{t('Отменено')}</span><span className="value">{list.filter((p) => p.status === 'cancelled').length}</span></div>
+      </div>
+      <div className="row">
+        <Seg
+          value={filter}
+          onChange={setFilter}
+          options={[{ value: 'all', label: t('Все') }, ...Object.entries(SOURCE).map(([value, label]) => ({ value, label: t(label) }))]}
+        />
+        <Button kind="ghost" size="sm" onClick={reload}>{t('Обновить')}</Button>
+      </div>
+      {!list.length ? <Empty>{t('Закупок нет')}</Empty> : (
+        <div className="card table-wrap">
+          <table className="table">
+            <thead><tr><th>#</th><th>{t('Дата')}</th><th>{t('Покупатель')}</th><th>{t('Источник')}</th><th>{t('Продавец')}</th><th className="right">{t('Сумма')}</th><th>{t('Статус')}</th></tr></thead>
+            <tbody>
+              {list.map((p) => (
+                <tr key={p.id}>
+                  <td className="mono">{p.id}</td>
+                  <td className="small">{fmtDate(p.created_at)}</td>
+                  <td>{p.shop_name}</td>
+                  <td className="small">{t(SOURCE[p.source] || p.source)}</td>
+                  <td className="small muted">{p.seller_name || '—'}</td>
+                  <td className="num right"><Money value={p.total} /></td>
+                  <td><StatusBadge status={p.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

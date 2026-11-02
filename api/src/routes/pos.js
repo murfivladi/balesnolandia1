@@ -8,7 +8,7 @@ import { sendMail } from '../lib/mail.js';
 import { ipOf, innOf, authorizeCard, requireVerified, ownAccount } from '../lib/bank.js';
 import { payInvoice, publicInvoice } from '../lib/gov.js';
 import {
-  openShift, posLog, createSale, loadSale, saleView, payByCard, payByCash, payByDebt, createQr, refundSale, shiftReport, settleCashVat, terminalBySale, receiptData, receiptText,
+  openShift, posLog, createSale, previewSale, loadSale, saleView, payByCard, payByCash, payByDebt, createQr, refundSale, shiftReport, settleCashVat, terminalBySale, receiptData, receiptText,
   loyaltyCustomer, restorePoints, revertTab,
 } from '../lib/pos.js';
 import { newTerminalCode, withUnique } from '../lib/ids.js';
@@ -369,6 +369,19 @@ export async function posRoutes(app) {
       source: b.source === 'kiosk' ? 'kiosk' : 'pos',
     }));
     return { sale: saleView(sale) };
+  });
+
+  // Расчёт чека до создания продажи: акции, промокод, баллы и НДС считает сервер.
+  app.post('/preview', pos, async (req) => {
+    const b = req.body || {};
+    return previewSale(null, {
+      shopId: req.pos.shopId,
+      lines: b.items,
+      discount: b.discount ? int(b.discount, 'скидка', { min: 0, max: 1e12 }) : 0,
+      promoCode: b.promo_code || null,
+      loyalty: b.loyalty || null,
+      redeemPoints: b.redeem_points ? int(b.redeem_points, 'баллы', { min: 0, max: 1e12 }) : 0,
+    });
   });
 
   app.get('/sales/:id', pos, async (req) => {
