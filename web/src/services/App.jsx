@@ -5,15 +5,24 @@ import { t, useLang, fmtDate, fmtBirth } from '../shared/i18n.js';
 import { useRoute, pick, navigate } from '../shared/router.js';
 import {
   Topbar, NavLink, DisclaimerBar, Spinner, useAsync, useChannel, useIdle, useToast, Bell, Input, Form, Select, PhotoInput,
-  Money, StatusBadge, Empty, ActionButton, Badge, QR, ErrorBox, Modal, Tabs,
+  Money, StatusBadge, Empty, ActionButton, Badge, ErrorBox, Modal, Tabs,
 } from '../shared/ui.jsx';
 import { ServicesLogo, CoatOfArms, Flag } from '../shared/brand.jsx';
 import { LoginForm, AuthDisclaimer, NotificationsModal } from '../shared/auth.jsx';
 import { IdCard, passportBlocks, MARITAL, DOC_DISCLAIMER } from '../shared/passport.jsx';
 import { renderThermal, shareCanvas } from '../shared/thermal.js';
 import { gameDateLabel, mmYY } from '@bln/shared/time.js';
-
-const DOC_TITLES = { inn: 'ИНН', ip: 'Свидетельство ИП', driver: 'Водительские права', marriage: 'Свидетельство о браке', birth: 'Свидетельство о рождении', foreign_passport: 'Загранпаспорт', visa: 'Виза' };
+import { TaxesPage } from './taxes.jsx';
+import { FinesPage } from './fines.jsx';
+import { BenefitsPage } from './benefits.jsx';
+import { PropertyPage } from './property.jsx';
+import { DoctorPage } from './doctor.jsx';
+import { ElectionsPage } from './elections.jsx';
+import { AppealsPage } from './appeals.jsx';
+import { NewsPage } from './news.jsx';
+import { WorkPage } from './work.jsx';
+import { DocumentsPage } from './documents.jsx';
+import { useGovMe, DOC_TITLES } from './lib.js';
 
 export default function App() {
   useLang();
@@ -65,6 +74,7 @@ export default function App() {
   }
 
   const isOfficial = me?.roles?.some((r) => ['admin', 'official'].includes(r));
+  const isStaff = me?.roles?.some((r) => ['admin', 'official', 'police', 'tax', 'doctor'].includes(r));
   const publicPage = pick([
     ['/verify/passport/:code', (p) => <VerifyPassport code={p.code} />],
     ['/verify/receipt/:code', (p) => <VerifyReceipt code={p.code} />],
@@ -86,6 +96,8 @@ export default function App() {
             <NavLink href="#/documents" path={route.path}>{t('Документы')}</NavLink>
             <NavLink href="#/invoices" path={route.path}>{t('Квитанции')}</NavLink>
             <NavLink href="#/applications" path={route.path}>{t('Заявления')}</NavLink>
+            <NavLink href="#/news" path={route.path}>{t('Новости')}</NavLink>
+            {isStaff && <NavLink href="#/work" path={route.path}>{t('Работа')}</NavLink>}
             {isOfficial && <NavLink href="#/queue" path={route.path}>{t('Рассмотрение')}</NavLink>}
           </>
         )}
@@ -105,7 +117,17 @@ export default function App() {
           ['/documents', () => <DocumentsPage />],
           ['/invoices', () => <InvoicesPage />],
           ['/applications', () => <ApplicationsPage />],
+          ['/taxes', () => <TaxesPage />],
+          ['/fines', () => <FinesPage />],
+          ['/benefits', () => <BenefitsPage />],
+          ['/property', () => <PropertyPage />],
+          ['/doctor', () => <DoctorPage />],
+          ['/elections', () => <ElectionsPage />],
+          ['/appeals', () => <AppealsPage />],
+          ['/news', () => <NewsPage />],
           ['/links', () => <LinksPage />],
+          ['/work', () => (isStaff ? <WorkPage me={me} route={route} /> : <Empty>{t('Нет доступа')}</Empty>)],
+          ['/work/:tab', () => (isStaff ? <WorkPage me={me} route={route} /> : <Empty>{t('Нет доступа')}</Empty>)],
           ['/queue', () => (isOfficial ? <QueuePage /> : <Empty>{t('Нет доступа')}</Empty>)],
           ['*', () => <Empty>{t('Страница не найдена')}</Empty>],
         ], route.path)
@@ -145,18 +167,16 @@ function RegisterGov({ onDone }) {
   );
 }
 
-function useGovMe() {
-  const r = useAsync(() => get('/gov/me'), []);
-  return r;
-}
-
 function Home({ me }) {
   const lang = useLang();
   const { data, loading, reload } = useGovMe();
-  useChannel(`user:g${me.id}`, (m) => m.type === 'notification' && reload());
+  const taxes = useAsync(() => get('/gov/taxes'), []);
+  useChannel(`user:g${me.id}`, (m) => { if (m.type === 'notification') { reload(); taxes.reload(); } });
   if (loading && !data) return <Spinner />;
   const p = data.passport;
   const unpaid = data.invoices.filter((i) => i.status === 'unpaid');
+  const sanctions = taxes.data?.sanctions || [];
+  const overdue = taxes.data?.overdue || 0;
   return (
     <div className="page">
       <div className="page-head">
@@ -171,6 +191,16 @@ function Home({ me }) {
       {unpaid.length > 0 && (
         <div className="form-warn" style={{ marginBottom: 16 }}>
           {t('Неоплаченных квитанций: {n}', { n: unpaid.length })} — <a href="#/invoices">{t('оплатить')}</a>
+        </div>
+      )}
+      {overdue > 0 && (
+        <div className="form-warn" style={{ marginBottom: 16 }}>
+          {t('Просрочены налоги и штрафы — растут пени, счета могут арестовать')} — <a href="#/taxes">{t('разобраться')}</a>
+        </div>
+      )}
+      {sanctions.length > 0 && (
+        <div className="form-warn" style={{ marginBottom: 16 }}>
+          {t('Действуют меры за неуплату: {list}', { list: sanctions.map((x) => t({ arrest: 'арест счетов', travel_ban: 'запрет выезда', ip_closed: 'закрытие ИП' }[x.kind])).join(', ') })} — <a href="#/taxes">{t('подробнее')}</a>
         </div>
       )}
       <div className="grid grid-2">
@@ -194,10 +224,16 @@ function Home({ me }) {
           <div className="card">
             <h2>{t('Услуги')}</h2>
             <div className="grid grid-2">
-              <ServiceTile href="#/documents" icon="🪪" title={t('ИНН и ИП')} sub={t('Регистрация бизнеса')} />
-              <ServiceTile href="#/invoices" icon="🧾" title={t('Квитанции')} sub={t('Пошлины, штрафы, налоги')} />
+              <ServiceTile href="#/taxes" icon="🧾" title={t('Налоги')} sub={t('Декларации и пени')} />
+              <ServiceTile href="#/fines" icon="🚨" title={t('Штрафы')} sub={t('Оплата и обжалование')} />
+              <ServiceTile href="#/benefits" icon="🧒" title={t('Пособия')} sub={t('Детские, пенсия, безработица')} />
+              <ServiceTile href="#/property" icon="🏠" title={t('Имущество')} sub={t('Авто, недвижимость, ипотека')} />
+              <ServiceTile href="#/doctor" icon="🩺" title={t('Врач')} sub={t('Запись и страховка')} />
+              <ServiceTile href="#/elections" icon="🗳" title={t('Выборы')} sub={t('Голосование')} />
+              <ServiceTile href="#/appeals" icon="✉️" title={t('Обращения')} sub={t('Жалобы и письма властям')} />
+              <ServiceTile href="#/documents" icon="🪪" title={t('ИНН, ИП, права')} sub={t('Документы и визы')} />
+              <ServiceTile href="#/invoices" icon="💳" title={t('Квитанции')} sub={t('Пошлины, штрафы, налоги')} />
               <ServiceTile href="#/links" icon="🏦" title={t('ВлодБанк')} sub={t('Связка с паспортом')} />
-              <ServiceTile href={appUrl('bank')} icon="💳" title={t('Открыть ВлодБанк')} sub={t('Счета и карты')} />
             </div>
           </div>
           <div className="card">
@@ -343,106 +379,6 @@ function PassportForm() {
         </Form>
       </div>
     </div>
-  );
-}
-
-function DocumentsPage() {
-  const { data, loading, reload } = useGovMe();
-  const [ipForm, setIpForm] = useState(null);
-  const [show, setShow] = useState(null);
-  if (loading && !data) return <Spinner />;
-  const docs = data.documents;
-  const inn = docs.find((d) => d.type === 'inn' && d.status === 'active');
-  const ip = docs.find((d) => d.type === 'ip' && d.status === 'active');
-  const pending = (type) => data.applications.find((a) => a.type === type && ['pending', 'awaiting_payment'].includes(a.status));
-  return (
-    <div className="page">
-      <h1>{t('Документы')}</h1>
-      {!data.passport && <div className="form-warn" style={{ marginBottom: 16 }}>{t('Сначала оформите паспорт БФ')} — <a href="#/passport/edit">{t('оформить')}</a></div>}
-      <div className="grid grid-2">
-        <div className="card stack">
-          <div className="card-head"><h2>{t('ИНН')}</h2>{inn && <StatusBadge status="active" />}</div>
-          {inn ? <p>{t('Номер')}: <b className="mono">{inn.number}</b></p> : pending('inn') ? <StatusBadge status={pending('inn').status} /> : (
-            <>
-              <p className="muted">{t('Идентификационный номер налогоплательщика. Нужен для ИП.')}</p>
-              <ActionButton disabled={!data.passport} action={async () => { await post('/gov/documents/inn'); reload(); }} okMessage={t('Заявление подано')}>{t('Получить ИНН')}</ActionButton>
-            </>
-          )}
-        </div>
-        <div className="card stack">
-          <div className="card-head"><h2>{t('Индивидуальный предприниматель')}</h2>{ip && <StatusBadge status="active" />}</div>
-          {ip ? (
-            <>
-              <p>{t('Свидетельство')}: <b className="mono">{ip.number}</b></p>
-              <p className="small">{ip.data.trade_name}{ip.data.activity ? ` — ${ip.data.activity}` : ''}</p>
-              <p className="small muted">{t('Дальше: откройте бизнес-счёт во ВлодБанке и создайте магазин в кассе.')}</p>
-              <div className="row">
-                <a className="btn secondary" href={appUrl('bank', '/open')}>{t('Бизнес-счёт')}</a>
-                <a className="btn secondary" href={appUrl('pos')}>{t('Касса')}</a>
-              </div>
-            </>
-          ) : pending('ip') ? (
-            <>
-              <StatusBadge status={pending('ip').status} />
-              {pending('ip').status === 'awaiting_payment' && <a className="btn" href="#/invoices">{t('Оплатить госпошлину')}</a>}
-            </>
-          ) : (
-            <>
-              <p className="muted">{t('Регистрация ИП даёт право открыть бизнес-счёт и магазин.')}</p>
-              <button className="btn" disabled={!inn} onClick={() => setIpForm({ trade_name: '', activity: '' })}>{t('Зарегистрировать ИП')}</button>
-              {!inn && <p className="small muted">{t('Сначала получите ИНН')}</p>}
-            </>
-          )}
-        </div>
-      </div>
-      {docs.length > 0 && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <h2>{t('Все документы')}</h2>
-          <div className="table-wrap">
-            <table className="table">
-              <thead><tr><th>{t('Документ')}</th><th>{t('Номер')}</th><th>{t('Выдан')}</th><th>{t('Статус')}</th><th /></tr></thead>
-              <tbody>
-                {docs.map((d) => (
-                  <tr key={d.id}>
-                    <td>{t(DOC_TITLES[d.type] || d.type)}</td>
-                    <td className="mono">{d.number}</td>
-                    <td>{mmYY(d.issued_month)}</td>
-                    <td><StatusBadge status={d.status} /></td>
-                    <td className="right"><button className="btn ghost sm" onClick={() => setShow(d)}>QR</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-      {ipForm && (
-        <Modal title={t('Регистрация ИП')} onClose={() => setIpForm(null)}>
-          <IpForm onDone={() => { setIpForm(null); reload(); }} />
-        </Modal>
-      )}
-      {show && (
-        <Modal title={t(DOC_TITLES[show.type])} onClose={() => setShow(null)}>
-          <div className="stack center" style={{ alignItems: 'center' }}>
-            <b className="mono">{show.number}</b>
-            <QR value={appUrl('services', `/verify/document/${show.verify_code}`)} size={200} />
-            <p className="small muted">{t(DOC_DISCLAIMER)}</p>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-function IpForm({ onDone }) {
-  const { data: s } = useAsync(() => get('/public/settings'), []);
-  const [f, setF] = useState({ trade_name: '', activity: '' });
-  return (
-    <Form submitLabel={t('Подать заявление')} onSubmit={async () => { await post('/gov/documents/ip', f); onDone(); }}>
-      <Input label={t('Название (вывеска)')} required value={f.trade_name} onChange={(e) => setF({ ...f, trade_name: e.target.value })} />
-      <Input label={t('Вид деятельности')} placeholder={t('Например: продажа продуктов')} value={f.activity} onChange={(e) => setF({ ...f, activity: e.target.value })} />
-      {s && <p className="small muted">{t('Госпошлина')}: <Money value={s.fee_ip} /></p>}
-    </Form>
   );
 }
 

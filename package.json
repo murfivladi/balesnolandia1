@@ -11,9 +11,10 @@
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",
     "build": "npm run build -w web",
-    "test": "npm test -w shared && npm test -w api",
+    "test": "npm test -w shared && npm test -w web && npm test -w api",
     "migrate": "npm run migrate -w api",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:web": "npm test -w web"
   },
   "engines": {
     "node": ">=20.19"
