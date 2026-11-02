@@ -28,6 +28,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      - name: Тесты подготовки проекта Cloudflare Pages
+        run: node --test .github/scripts/cloudflare-pages/ensure-project.test.mjs
       - name: Тесты (shared + API на MariaDB)
         run: npm test
         env:
