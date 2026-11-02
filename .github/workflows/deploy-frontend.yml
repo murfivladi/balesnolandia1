@@ -78,7 +78,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    environment: cloudflare-pages
+    environment: production
     steps:
       - name: Проверка настроек Cloudflare
         env:
@@ -87,7 +87,7 @@ jobs:
           API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           if [ -z "$PAGES_PROJECT" ] || [ -z "$ACCOUNT_ID" ] || [ -z "$API_TOKEN" ]; then
-            echo '::error::В окружении cloudflare-pages задайте переменную CLOUDFLARE_PAGES_PROJECT и секреты CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN.'
+            echo '::error::В окружении production задайте переменную CLOUDFLARE_PAGES_PROJECT и секреты CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN.'
             exit 1
           fi
           if [[ ! "$PAGES_PROJECT" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
