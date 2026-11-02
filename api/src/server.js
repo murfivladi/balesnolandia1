@@ -4,9 +4,17 @@ import { migrate } from './migrate.js';
 import { startClock } from './lib/clock.js';
 import { ensureJwtSecret } from './lib/secrets.js';
 import { VERSION, watchForNewVersion } from './lib/version.js';
+import { patchNetworkInterfaces } from './lib/netinfo.js';
 import { pool } from './db.js';
 
 const app = await buildApp();
+
+// Fastify печатает адреса при listen на 0.0.0.0 и для этого читает os.networkInterfaces().
+// Там, где хостинг не отдаёт список интерфейсов, вызов падает уже после bind и убивает
+// процесс; подмена делает лог адресов необязательным (lib/netinfo.js).
+if (!patchNetworkInterfaces((err) => app.log.warn({ err }, 'Сетевые интерфейсы недоступны — адреса в логе не печатаются'))) {
+  app.log.warn('Не удалось обезопасить os.networkInterfaces()');
+}
 
 // Всё, что раньше делали скрипты на сервере: схема базы и секрет — при запуске.
 if (config.migrateOnStart) await migrate({ log: (m) => app.log.info(m) });
