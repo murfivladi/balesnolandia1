@@ -1,11 +1,14 @@
-name: Deploy
+name: Deploy API
 
-# push в main → тесты → сборка → FTP: сайт и API на хостинг (Vladhost).
-# На сервере ничего не запускается: API при старте сам применяет миграции,
-# а после загрузки новой версии сам перезапускается.
+# Существующий FTP-деплой API. Фронтенд публикуется отдельно в deploy-frontend.yml.
+# Обновление только сайта не должно загружать или перезапускать API.
+# При изменении только корневого package-lock.json обновление API запускается вручную.
 on:
   push:
     branches: [main]
+    paths:
+      - 'api/**'
+      - 'shared/**'
   workflow_dispatch:
 
 concurrency:
@@ -47,12 +50,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     env:
-      SITE_DOMAIN: ${{ vars.SITE_DOMAIN || 'balesnolandia.vladislavb.ru' }}
-      API_DOMAIN: ${{ vars.API_DOMAIN || 'api.balesnolandia.vladislavb.ru' }}
-      # Vladhost: FTPS (явный TLS). Если сертификат FTP-сервера не проходит проверку — переменная FTP_SECURITY=loose.
+      SITE_DOMAIN: ${{ vars.SITE_DOMAIN || 'bln.vladislavb.qzz.io' }}
+      API_DOMAIN: ${{ vars.API_DOMAIN || 'vps.vladislavb.qzz.io' }}
+      # Сохраняем существующие настройки FTP и БД API.
       FTP_PROTOCOL: ${{ vars.FTP_PROTOCOL || 'ftps' }}
       FTP_SECURITY: ${{ vars.FTP_SECURITY || 'strict' }}
-      # FTP Vladhost — порт 2121 (и для сайта, и для API).
       FTP_PORT: 2121
       DB_HOST: db.vladinc.ru
     steps:
@@ -65,9 +67,6 @@ jobs:
 
       - name: Проверка секретов
         env:
-          FTP_HOST: ${{ secrets.FTP_HOST }}
-          FTP_USER: ${{ secrets.FTP_USER }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           FTP_API_HOST: ${{ secrets.FTP_API_HOST }}
           FTP_API_USER: ${{ secrets.FTP_API_USER }}
           FTP_API_PASSWORD: ${{ secrets.FTP_API_PASSWORD }}
@@ -75,19 +74,13 @@ jobs:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           missing=""
-          for k in FTP_HOST FTP_USER FTP_PASSWORD FTP_API_HOST FTP_API_USER FTP_API_PASSWORD DB_NAME DB_PASSWORD; do
+          for k in FTP_API_HOST FTP_API_USER FTP_API_PASSWORD DB_NAME DB_PASSWORD; do
             [ -n "${!k}" ] || missing="$missing $k"
           done
           if [ -n "$missing" ]; then
             echo "::error::Не заданы секреты:$missing (Settings → Secrets and variables → Actions)"
             exit 1
           fi
-
-      - name: Сборка сайта
-        run: npm run build -w web
-        env:
-          VITE_API_URL: https://${{ env.API_DOMAIN }}
-          VITE_WS_URL: wss://${{ env.API_DOMAIN }}/ws
 
       - name: Сборка API (один файл server.mjs + миграции + bln.env)
         env:
@@ -115,18 +108,6 @@ jobs:
           mkdir -p release-version
           echo "$GITHUB_SHA" > release-version/VERSION
 
-      - name: Сайт → FTP
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_HOST }}
-          port: ${{ env.FTP_PORT }}
-          username: ${{ secrets.FTP_USER }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ${{ env.FTP_PROTOCOL }}
-          security: ${{ env.FTP_SECURITY }}
-          local-dir: ./web/dist/
-          server-dir: ${{ secrets.FTP_DIR || './' }}
-
       - name: API → FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
@@ -152,7 +133,7 @@ jobs:
           server-dir: ${{ secrets.FTP_API_DIR || './' }}
           state-name: .ftp-deploy-version.json
 
-      - name: Проверка API и сайта
+      - name: Проверка API
         run: |
           for i in $(seq 1 24); do
             v=$(curl -fsS "https://$API_DOMAIN/api/health" 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
@@ -161,7 +142,6 @@ jobs:
           done
           if [ "$v" != "$GITHUB_SHA" ]; then
             echo "::error::API на https://$API_DOMAIN не отвечает новой версией (сейчас: ${v:-нет ответа})."
-            echo "Проверьте в панели сайта $API_DOMAIN вкладку «Среда»: Node.js, команда запуска «node server.mjs», журнал приложения."
+            echo "Проверьте среду запуска и журнал приложения API на VPS."
             exit 1
           fi
-          curl -fsS -o /dev/null "https://$SITE_DOMAIN/" && echo "Сайт открывается: https://$SITE_DOMAIN"
