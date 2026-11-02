@@ -3,8 +3,8 @@ import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 
 // Четыре приложения — multi-page сборка: / (выбор), /bank/, /pos/, /services/, /admin/.
-// Сайт живёт в корне домена balesnolandia.vladislavb.ru; другой путь — через BASE_PATH.
-// Маршрутизация внутри приложений по hash (#/...), поэтому shared hosting не нужен .htaccess.
+// Cloudflare Pages: сайт в корне bln.vladislavb.qzz.io; другой путь — через BASE_PATH.
+// Маршрутизация внутри приложений по hash (#/...), поэтому перенаправления не нужны.
 export default defineConfig({
   base: process.env.BASE_PATH || '/',
   plugins: [react()],
