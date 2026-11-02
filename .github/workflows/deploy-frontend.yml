@@ -11,6 +11,7 @@ on:
       - 'package-lock.json'
       - '.nvmrc'
       - '.github/workflows/deploy-frontend.yml'
+      - '.github/scripts/cloudflare-pages/**'
   workflow_dispatch:
 
 permissions:
@@ -49,6 +50,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      - name: Тесты подготовки проекта Cloudflare Pages
+        run: node --test .github/scripts/cloudflare-pages/ensure-project.test.mjs
       - name: Тесты shared и API на отдельной тестовой базе
         run: npm test
         env:
@@ -114,6 +117,12 @@ jobs:
         with:
           name: cloudflare-pages-web
           path: web/dist
+      - name: Проверить или создать проект Cloudflare Pages
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ secrets.CLOUDFLARE_PAGES_PROJECT }}
+        run: node .github/scripts/cloudflare-pages/ensure-project.mjs
       - name: Публикация только собранного фронтенда
         # cloudflare/wrangler-action v4.1.3, закреплённый на конкретном коммите.
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0

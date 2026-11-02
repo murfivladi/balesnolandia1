@@ -12,18 +12,20 @@
 
 Это разные **origin**, поэтому API должен разрешать `https://bln.vladislavb.qzz.io` через CORS. Но при HTTPS они относятся к одному сайту `vladislavb.qzz.io`: существующие сессионные cookie `SameSite=Lax` должны работать без изменения кода API или прокси. После настройки это всё равно нужно проверить в браузере, включая WebSocket.
 
-## 1. Создайте пустой проект Pages
+## 1. Выберите имя проекта Pages
 
-Нужен доступ к аккаунту Cloudflare и DNS зоны `vladislavb.qzz.io`. Для GitHub Actions создаётся проект **Cloudflare Pages с Direct Upload**, а не Worker. У существующего проекта убедитесь, что он предназначен для этого сайта, а его production-ветка — `main`.
+Нужен доступ к аккаунту Cloudflare и DNS зоны `vladislavb.qzz.io`. Выберите имя проекта **Cloudflare Pages с Direct Upload** (не Worker) и укажите его в секрете `CLOUDFLARE_PAGES_PROJECT` на следующем шаге.
 
-Один из способов создать пустой проект — на своём компьютере с Node.js **22** выполнить:
+Создавать проект вручную необязательно: после успешной сборки workflow проверит указанный аккаунт и при отсутствии проекта создаст его с production-веткой `main`, затем загрузит сайт. Если проект уже есть, он будет использован без изменения его настроек. Существующий проект должен быть предназначен для этого сайта, поддерживать Direct Upload и иметь production-ветку `main`; иначе публикация остановится с ошибкой. Ошибки доступа не считаются отсутствием проекта.
+
+При желании пустой проект можно создать заранее на своём компьютере с Node.js **22**:
 
 ```bash
 npx --yes wrangler@4.156.1 login
 npx --yes wrangler@4.156.1 pages project create balesnolandia-frontend --production-branch=main
 ```
 
-Вход подтверждается в открывшемся браузере Cloudflare. Вторая команда создаёт пустой проект, но не загружает сайт. Если имя занято или выбрано другое — запомните фактическое имя. На первом запуске GitHub Actions проект уже должен существовать.
+Вход подтверждается в браузере Cloudflare. Вторая команда создаёт пустой проект, но не загружает сайт. Если Cloudflare сообщает, что имя занято, выберите другое и задайте его в секрете.
 
 Проект Direct Upload не переключается на Git-интеграцию Pages; для другого способа понадобится новый проект. В этой инструкции сборку и загрузку выполняет **GitHub Actions**, поэтому подключать Git в панели Pages не требуется. Подробнее: [Direct Upload](https://developers.cloudflare.com/pages/get-started/direct-upload/).
 
@@ -33,13 +35,15 @@ npx --yes wrangler@4.156.1 pages project create balesnolandia-frontend --product
 
 | Тип | Имя | Что указать |
 | --- | --- | --- |
-| Environment secret | `CLOUDFLARE_PAGES_PROJECT` | точное имя созданного проекта Pages, например `balesnolandia-frontend` |
+| Environment secret | `CLOUDFLARE_PAGES_PROJECT` | точное имя существующего или нового проекта Pages, например `balesnolandia-frontend` |
 | Environment secret | `CLOUDFLARE_ACCOUNT_ID` | ID аккаунта Cloudflare, где находится проект |
 | Environment secret | `CLOUDFLARE_API_TOKEN` | отдельный ограниченный токен для публикации Pages |
 
 В GitHub **Environment secrets** и **Environment variables** — разные списки. Все три настройки должны быть добавлены в **Environment secrets** окружения `production`; переменная `CLOUDFLARE_PAGES_PROJECT` больше не используется. Проверка workflow сообщает имя каждого отсутствующего или недоступного секрета, но не выводит его значение.
 
-Токен создаётся в Cloudflare с правом **Account → Cloudflare Pages → Edit**, ограниченным нужным аккаунтом. Доступ к DNS для этого токена не нужен: домен подключается отдельно в панели. Официальная инструкция: [Cloudflare Pages + GitHub Actions](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/).
+Токен создаётся в Cloudflare с правом **Account → Cloudflare Pages → Edit**, ограниченным нужным аккаунтом. Этого права достаточно для проверки, создания проекта и публикации; доступ к DNS для этого токена не нужен: домен подключается отдельно в панели. Официальная инструкция: [Cloudflare Pages + GitHub Actions](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/).
+
+Если Cloudflare отвечает `Authentication error [code: 10000]`, проверьте срок действия и права токена, область действия аккаунта и правильность `CLOUDFLARE_ACCOUNT_ID`. При необходимости обновите секрет в GitHub. Пока ошибка авторизации не исправлена, проект создан не будет.
 
 **Не присылайте токен в чат и не сохраняйте его в репозитории.** Вставьте значения секретов непосредственно в настройки GitHub. Секреты из прежнего окружения `cloudflare-pages` не используются: при необходимости задайте их в `production` вручную. Если у окружения есть правила подтверждения или ограничения веток, разрешите публикацию из `main` и подтвердите запуск, когда GitHub попросит.
 
@@ -52,7 +56,8 @@ npx --yes wrangler@4.156.1 pages project create balesnolandia-frontend --product
 1. выполняет lint и тесты на отдельной тестовой MariaDB;
 2. собирает сайт в `web/dist` с `BASE_PATH=/`, `VITE_API_URL=https://vps.vladislavb.qzz.io` и `VITE_WS_URL=wss://vps.vladislavb.qzz.io/ws`;
 3. проверяет страницы, PWA-файлы и адреса в сборке;
-4. загружает в Pages только проверенное содержимое `web/dist`.
+4. проверяет проект Pages и создаёт его при отсутствии;
+5. загружает в Pages только проверенное содержимое `web/dist`.
 
 Ветка `main` должна быть production-веткой проекта Pages. Ручной запуск workflow также допускает публикацию **только из `main`**. Если первый запуск завершился ошибкой из-за отсутствующих настроек, внесите их и в GitHub Actions нажмите **Re-run failed jobs** у этого запуска. Повтор использует workflow из того же коммита: если менялся сам workflow, запустите новую версию из `main` после переноса туда изменений.
 
