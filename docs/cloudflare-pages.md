@@ -33,9 +33,11 @@ npx --yes wrangler@4.156.1 pages project create balesnolandia-frontend --product
 
 | Тип | Имя | Что указать |
 | --- | --- | --- |
-| Environment variable | `CLOUDFLARE_PAGES_PROJECT` | точное имя созданного проекта Pages, например `balesnolandia-frontend` |
+| Environment secret | `CLOUDFLARE_PAGES_PROJECT` | точное имя созданного проекта Pages, например `balesnolandia-frontend` |
 | Environment secret | `CLOUDFLARE_ACCOUNT_ID` | ID аккаунта Cloudflare, где находится проект |
 | Environment secret | `CLOUDFLARE_API_TOKEN` | отдельный ограниченный токен для публикации Pages |
+
+В GitHub **Environment secrets** и **Environment variables** — разные списки. Все три настройки должны быть добавлены в **Environment secrets** окружения `production`; переменная `CLOUDFLARE_PAGES_PROJECT` больше не используется. Проверка workflow сообщает имя каждого отсутствующего или недоступного секрета, но не выводит его значение.
 
 Токен создаётся в Cloudflare с правом **Account → Cloudflare Pages → Edit**, ограниченным нужным аккаунтом. Доступ к DNS для этого токена не нужен: домен подключается отдельно в панели. Официальная инструкция: [Cloudflare Pages + GitHub Actions](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/).
 
@@ -52,7 +54,7 @@ npx --yes wrangler@4.156.1 pages project create balesnolandia-frontend --product
 3. проверяет страницы, PWA-файлы и адреса в сборке;
 4. загружает в Pages только проверенное содержимое `web/dist`.
 
-Ветка `main` должна быть production-веткой проекта Pages. Ручной запуск workflow также допускает публикацию **только из `main`**. Если первый запуск завершился ошибкой из-за отсутствующих настроек, внесите их и в GitHub Actions нажмите **Re-run failed jobs** у этого запуска.
+Ветка `main` должна быть production-веткой проекта Pages. Ручной запуск workflow также допускает публикацию **только из `main`**. Если первый запуск завершился ошибкой из-за отсутствующих настроек, внесите их и в GitHub Actions нажмите **Re-run failed jobs** у этого запуска. Повтор использует workflow из того же коммита: если менялся сам workflow, запустите новую версию из `main` после переноса туда изменений.
 
 Кнопка **Run workflow** доступна, только когда файл workflow присутствует в default-ветке GitHub. На момент подготовки default-ветка этого репозитория — `claude/stoic-mccarthy-xllyfx`, а производственная ветка настроена как `main`. Это не мешает автоматическому запуску при push в `main`; для ручного запуска убедитесь, что workflow также находится в default-ветке и выберите `main`.
 
