@@ -95,6 +95,7 @@ export async function api(path, { method = 'GET', body, idem, signal, timeout = 
 export const get = (p, o) => api(p, o);
 export const post = (p, body, o = {}) => api(p, { ...o, method: 'POST', body: body ?? {} });
 export const patch = (p, body, o = {}) => api(p, { ...o, method: 'PATCH', body: body ?? {} });
+export const del = (p, o = {}) => api(p, { ...o, method: 'DELETE' });
 
 export function wsUrl() {
   const explicit = import.meta.env.VITE_WS_URL;

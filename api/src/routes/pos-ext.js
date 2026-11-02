@@ -32,7 +32,7 @@ export async function posExtRoutes(app) {
 
   // ——— Варианты и добавки (владелец) ———
   async function ownProduct(req, id, conn) {
-    const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ?', [int(id, 'товар'), req.pos.shopId], conn);
+    const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ? AND deleted_at IS NULL', [int(id, 'товар'), req.pos.shopId], conn);
     if (!p) throw notFound('Товар не найден');
     return p;
   }
@@ -53,7 +53,7 @@ export async function posExtRoutes(app) {
 
   for (const [path, table] of [['variants', 'product_variants'], ['modifiers', 'modifiers']]) {
     app.patch(`/${path}/:id`, owner, async (req) => {
-      const row = await one(`SELECT x.* FROM ${table} x JOIN products p ON p.id = x.product_id AND p.shop_id = ? WHERE x.id = ?`, [req.pos.shopId, int(req.params.id, 'id')]);
+      const row = await one(`SELECT x.* FROM ${table} x JOIN products p ON p.id = x.product_id AND p.shop_id = ? AND p.deleted_at IS NULL WHERE x.id = ?`, [req.pos.shopId, int(req.params.id, 'id')]);
       if (!row) throw notFound();
       const b = req.body || {};
       const priceCol = table === 'modifiers' ? 'price' : 'price_delta';
@@ -85,7 +85,7 @@ export async function posExtRoutes(app) {
     const term = `%${String(req.query.q || '').trim()}%`;
     const rows = await q(`SELECT p.id, p.name, p.category, p.unit, p.b2b_price, p.stock_milli, p.track_stock, p.photo, s.id AS shop_id, s.name AS shop_name, s.color
       FROM products p JOIN shops s ON s.id = p.shop_id AND s.status = 'active'
-      WHERE p.shop_id <> ? AND p.active = 1 AND p.b2b_price IS NOT NULL AND (p.name LIKE ? OR s.name LIKE ?) ORDER BY s.name, p.name LIMIT 300`, [req.pos.shopId, term, term]);
+      WHERE p.shop_id <> ? AND p.active = 1 AND p.deleted_at IS NULL AND p.b2b_price IS NOT NULL AND (p.name LIKE ? OR s.name LIKE ?) ORDER BY s.name, p.name LIMIT 300`, [req.pos.shopId, term, term]);
     return { offers: rows.map((r) => ({ ...r, b2b_price: Number(r.b2b_price), stock_milli: r.track_stock ? Number(r.stock_milli) : null, track_stock: !!r.track_stock })) };
   });
 
@@ -364,8 +364,8 @@ export async function posExtRoutes(app) {
     const bySource = await q(`SELECT s.source, COUNT(*) AS n, SUM(s.total) AS total FROM sales s WHERE ${where} GROUP BY s.source`, [id, days]);
     const purchases = await one("SELECT COALESCE(SUM(total),0) AS s FROM purchases WHERE shop_id = ? AND status = 'done' AND decided_at >= NOW() - INTERVAL ? DAY", [id, days]);
     const debts = await one("SELECT COALESCE(SUM(amount - paid),0) AS s FROM debts WHERE shop_id = ? AND status = 'open'", [id]);
-    const stockValue = await one('SELECT COALESCE(SUM(ROUND(cost * GREATEST(stock_milli,0) / 1000)),0) AS s FROM products WHERE shop_id = ? AND track_stock = 1', [id]);
-    const low = await q('SELECT id, name, unit, stock_milli FROM products WHERE shop_id = ? AND active = 1 AND track_stock = 1 AND stock_milli <= 5000 ORDER BY stock_milli LIMIT 20', [id]);
+    const stockValue = await one('SELECT COALESCE(SUM(ROUND(cost * GREATEST(stock_milli,0) / 1000)),0) AS s FROM products WHERE shop_id = ? AND deleted_at IS NULL AND track_stock = 1', [id]);
+    const low = await q('SELECT id, name, unit, stock_milli FROM products WHERE shop_id = ? AND deleted_at IS NULL AND active = 1 AND track_stock = 1 AND stock_milli <= 5000 ORDER BY stock_milli LIMIT 20', [id]);
     const balance = await one('SELECT a.balance FROM shops s JOIN accounts a ON a.id = s.account_id WHERE s.id = ?', [id]);
     const revenue = Number(totals.revenue) - Number(totals.refunded);
     const n = (v) => Number(v || 0);

@@ -35,7 +35,7 @@ function shopView(s) {
 export function productView(p, extras = {}) {
   return {
     id: p.id, name: p.name, category: p.category, barcode: p.barcode, price: Number(p.price), cost: Number(p.cost), b2b_price: p.b2b_price === null || p.b2b_price === undefined ? null : Number(p.b2b_price),
-    unit: p.unit, age_limit: p.age_limit, photo: p.photo, track_stock: !!p.track_stock, to_kitchen: !!p.to_kitchen, stock_milli: Number(p.stock_milli), active: !!p.active, sort: p.sort,
+    unit: p.unit, age_limit: p.age_limit, photo: p.photo, track_stock: !!p.track_stock, to_kitchen: !!p.to_kitchen, stock_milli: Number(p.stock_milli), active: !!p.active, sort: p.sort, deleted_at: p.deleted_at || null,
     variants: extras.variants?.get(p.id) || [], modifiers: extras.modifiers?.get(p.id) || [],
   };
 }
@@ -43,8 +43,8 @@ export function productView(p, extras = {}) {
 /** Варианты и добавки товаров магазина, сгруппированные по товару. */
 async function productExtras(shopId, { all = false } = {}) {
   const act = all ? '' : ' AND x.active = 1';
-  const vs = await q(`SELECT x.* FROM product_variants x JOIN products p ON p.id = x.product_id AND p.shop_id = ?${act} ORDER BY x.sort, x.id`, [shopId]);
-  const ms = await q(`SELECT x.* FROM modifiers x JOIN products p ON p.id = x.product_id AND p.shop_id = ?${act} ORDER BY x.sort, x.id`, [shopId]);
+  const vs = await q(`SELECT x.* FROM product_variants x JOIN products p ON p.id = x.product_id AND p.shop_id = ? AND p.deleted_at IS NULL${act} ORDER BY x.sort, x.id`, [shopId]);
+  const ms = await q(`SELECT x.* FROM modifiers x JOIN products p ON p.id = x.product_id AND p.shop_id = ? AND p.deleted_at IS NULL${act} ORDER BY x.sort, x.id`, [shopId]);
   const group = (rows, f) => {
     const m = new Map();
     for (const r of rows) m.set(r.product_id, [...(m.get(r.product_id) || []), f(r)]);
@@ -57,8 +57,8 @@ async function productExtras(shopId, { all = false } = {}) {
 }
 
 async function oneProduct(id) {
-  const p = await one('SELECT * FROM products WHERE id = ?', [id]);
-  return productView(p, await productExtras(p.shop_id, { all: true }));
+  const p = await one('SELECT * FROM products WHERE id = ? AND deleted_at IS NULL', [id]);
+  return p ? productView(p, await productExtras(p.shop_id, { all: true })) : null;
 }
 
 /** Категория кешбэка магазина: выбранная владельцем или по умолчанию по типу (кафе / магазин). */
@@ -209,8 +209,13 @@ export async function posRoutes(app) {
 
   // ——— Товары ———
   app.get('/products', pos, async (req) => {
-    const all = req.query.all === '1' && req.pos.staff.role === 'owner';
-    const rows = await q(`SELECT * FROM products WHERE shop_id = ?${all ? '' : ' AND active = 1'} ORDER BY category, sort, name`, [req.pos.shopId]);
+    const isOwner = req.pos.staff.role === 'owner';
+    const all = req.query.all === '1' && isOwner;
+    const deleted = req.query.deleted === '1' && isOwner;
+    const rows = await q(
+      `SELECT * FROM products WHERE shop_id = ? AND deleted_at ${deleted ? 'IS NOT NULL' : 'IS NULL'}${all || deleted ? '' : ' AND active = 1'} ORDER BY category, sort, name, id`,
+      [req.pos.shopId],
+    );
     const extras = await productExtras(req.pos.shopId, { all });
     return { products: rows.map((p) => productView(p, extras)) };
   });
@@ -247,16 +252,46 @@ export async function posRoutes(app) {
   });
 
   app.patch('/products/:id', owner, async (req) => {
-    const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ?', [int(req.params.id, 'id'), req.pos.shopId]);
+    const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ? AND deleted_at IS NULL', [int(req.params.id, 'id'), req.pos.shopId]);
     if (!p) throw notFound('Товар не найден');
     const f = productFields(req.body || {}, { ...p, price: Number(p.price), cost: Number(p.cost), b2b_price: p.b2b_price === null ? null : Number(p.b2b_price) });
     await q('UPDATE products SET name = ?, category = ?, barcode = ?, price = ?, cost = ?, b2b_price = ?, unit = ?, age_limit = ?, photo = ?, track_stock = ?, to_kitchen = ?, sort = ?, active = ? WHERE id = ?', [f.name, f.category, f.barcode, f.price, f.cost, f.b2b_price, f.unit, f.age_limit, f.photo, f.track_stock, f.to_kitchen, f.sort, f.active, p.id]);
     return { product: await oneProduct(p.id) };
   });
 
+  // Удаление товара владельцем: мягкое, чтобы история чеков, возвратов и склада осталась цела.
+  app.delete('/products/:id', owner, async (req) => {
+    const id = int(req.params.id, 'id');
+    await tx(async (conn) => {
+      const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ? AND deleted_at IS NULL FOR UPDATE', [id, req.pos.shopId], conn);
+      if (!p) throw notFound('Товар не найден');
+      await q('UPDATE products SET active = 0, deleted_at = NOW(3) WHERE id = ?', [p.id], conn);
+      const shift = await openShift(conn, req.pos.staff.id);
+      await posLog(conn, { shopId: req.pos.shopId, staffId: req.pos.staff.id, shiftId: shift?.id, action: 'product_delete', data: { name: p.name, barcode: p.barcode } });
+      await audit(conn, staffActor(req), 'pos.product_delete', 'product', p.id, { name: p.name });
+      afterCommit(conn, () => publish(`shop:${req.pos.shopId}`, { type: 'product_deleted', id: p.id }));
+    });
+    return { ok: true };
+  });
+
+  // Отмена удаления: вариант, добавка, остаток и оптовая цена сохраняются за товаром.
+  app.post('/products/:id/restore', owner, async (req) => {
+    const id = int(req.params.id, 'id');
+    await tx(async (conn) => {
+      const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ? AND deleted_at IS NOT NULL FOR UPDATE', [id, req.pos.shopId], conn);
+      if (!p) throw notFound('Удалённый товар не найден');
+      await q('UPDATE products SET active = 1, deleted_at = NULL WHERE id = ?', [p.id], conn);
+      const shift = await openShift(conn, req.pos.staff.id);
+      await posLog(conn, { shopId: req.pos.shopId, staffId: req.pos.staff.id, shiftId: shift?.id, action: 'product_restore', data: { name: p.name } });
+      await audit(conn, staffActor(req), 'pos.product_restore', 'product', p.id, { name: p.name });
+      afterCommit(conn, () => publish(`shop:${req.pos.shopId}`, { type: 'product_restored', id: p.id }));
+    });
+    return { product: await oneProduct(id) };
+  });
+
   // Ручная корректировка остатка (полный склад и закупки — этап 7).
   app.post('/stock', owner, async (req) => {
-    const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ?', [int(req.body?.product_id, 'товар'), req.pos.shopId]);
+    const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ? AND deleted_at IS NULL', [int(req.body?.product_id, 'товар'), req.pos.shopId]);
     if (!p) throw notFound('Товар не найден');
     const delta = int(Math.round(Number(req.body?.qty_milli)), 'количество', { min: -1e9, max: 1e9 });
     await tx(async (conn) => {

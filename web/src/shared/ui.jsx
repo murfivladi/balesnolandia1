@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, createContext, useContext } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, createContext, useContext } from 'react';
 import QRCode from 'qrcode';
 import JsBarcode from 'jsbarcode';
 import { t, tServer, useLang, setLang } from './i18n.js';
@@ -429,10 +429,10 @@ export function LangThemeSwitch() {
   const [theme, toggle] = useTheme();
   return (
     <>
-      <button className="tb-btn" onClick={() => setLang(lang === 'ru' ? 'it' : 'ru')} title={t('Язык')} aria-label={t('Язык')}>
+      <button className="tb-btn" data-menu-keep onClick={() => setLang(lang === 'ru' ? 'it' : 'ru')} title={t('Язык')} aria-label={t('Язык')}>
         {lang === 'ru' ? 'IT' : 'RU'}
       </button>
-      <button className="tb-btn" onClick={toggle} title={t('Тема')} aria-label={t('Тема')}>
+      <button className="tb-btn" data-menu-keep onClick={toggle} title={t('Тема')} aria-label={t('Тема')}>
         {theme === 'dark' ? '☀' : '☾'}
       </button>
     </>
@@ -444,17 +444,104 @@ export function DisclaimerBar() {
   return <footer className="disclaimer">{t(DISCLAIMER)}</footer>;
 }
 
+/** Шапка всех приложений. На телефоне навигация и действия прячутся в бургер-меню. */
 export function Topbar({ brand, nav, right, homeHref = '#/' }) {
+  const [open, setOpen] = useState(false);
+  const menuId = useId();
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = () => setOpen(false);
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    const desktop = window.matchMedia('(min-width: 721px)');
+    const onResize = () => { if (desktop.matches) close(); };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('hashchange', close);
+    if (desktop.addEventListener) desktop.addEventListener('change', onResize);
+    else desktop.addListener(onResize);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('hashchange', close);
+      if (desktop.removeEventListener) desktop.removeEventListener('change', onResize);
+      else desktop.removeListener(onResize);
+    };
+  }, [open]);
+
+  const closeOnAction = (e) => {
+    const target = e.target;
+    const el = target instanceof Element ? target : target?.parentElement;
+    if (!el || el.closest('[data-menu-keep]')) return;
+    if (el.closest('a, button')) setOpen(false);
+  };
+
   return (
-    <header className="topbar">
-      <div className="topbar-inner">
-        <a className="brand" href={homeHref}>{brand}</a>
-        {nav && <nav className="nav">{nav}</nav>}
-        <div className="spacer" />
-        {right}
-        <LangThemeSwitch />
+    <>
+      <header className={`topbar${open ? ' menu-open' : ''}`}>
+        <div className="topbar-inner">
+          <a className="brand" href={homeHref} onClick={() => setOpen(false)}>{brand}</a>
+          {nav && <nav className="nav topbar-nav">{nav}</nav>}
+          <div className="spacer" />
+          <div className="topbar-actions">
+            {right}
+            <LangThemeSwitch />
+          </div>
+          <button
+            className="tb-btn burger"
+            onClick={() => setOpen((v) => !v)}
+            aria-label={t(open ? 'Закрыть меню' : 'Меню')}
+            aria-expanded={open}
+            aria-controls={menuId}
+          >
+            <span className="burger-lines" aria-hidden="true"><i /><i /><i /></span>
+          </button>
+        </div>
+        <div className="topbar-menu" id={menuId} hidden={!open} onClick={closeOnAction}>
+          {nav && <nav className="nav">{nav}</nav>}
+          <div className="topbar-menu-actions">
+            {right}
+            <LangThemeSwitch />
+          </div>
+        </div>
+      </header>
+      {open && <button className="topbar-backdrop" aria-label={t('Закрыть меню')} onClick={() => setOpen(false)} />}
+    </>
+  );
+}
+
+/** Вторая строка навигации: на телефоне тоже сворачивается в бургер. */
+export function Subnav({ items }) {
+  const [open, setOpen] = useState(false);
+  const menuId = useId();
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = () => setOpen(false);
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('hashchange', close);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('hashchange', close);
+    };
+  }, [open]);
+  return (
+    <div className={`subnav${open ? ' menu-open' : ''}`}>
+      <div className="subnav-inner">
+        <button
+          className="subnav-burger"
+          onClick={() => setOpen((v) => !v)}
+          aria-label={t(open ? 'Закрыть меню' : 'Меню')}
+          aria-expanded={open}
+          aria-controls={menuId}
+        >
+          <span className="burger-lines" aria-hidden="true"><i /><i /><i /></span>
+          {t('Разделы')}
+        </button>
+        <nav className="nav" id={menuId}>
+          {items.map(([href, label, active]) => (
+            <a key={href} href={href} className={active ? 'active' : ''} onClick={() => setOpen(false)}>{label}</a>
+          ))}
+        </nav>
       </div>
-    </header>
+    </div>
   );
 }
 

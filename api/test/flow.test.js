@@ -134,6 +134,20 @@ test('ledger, gov, bank, pos — full chain', async () => {
   assert.equal(Number((await one('SELECT balance FROM accounts WHERE id = ?', [bacc.id])).balance), 100000 - 600 + 250);
   assert.equal(await totalBalance(), 0);
 
+  // Удаление товара из каталога кассы: мягкое, история чеков не страдает, товар можно вернуть.
+  const doomed = (await bank.post('/api/pos/products', { name: 'Йогурт', price: 150, stock_milli: 3000 })).product;
+  await bank.delete(`/api/pos/products/${doomed.id}`);
+  assert.ok(!(await bank.get('/api/pos/products')).products.some((p) => p.id === doomed.id), 'удалённого товара нет на кассе');
+  assert.ok(!(await bank.get('/api/pos/products?all=1')).products.some((p) => p.id === doomed.id), 'удалённого товара нет и в каталоге владельца');
+  assert.ok((await bank.get('/api/pos/products?deleted=1')).products.some((p) => p.id === doomed.id), 'удалённый товар виден в архиве');
+  assert.ok((await one('SELECT deleted_at FROM products WHERE id = ?', [doomed.id])).deleted_at, 'строка сохранена для истории');
+  assert.equal((await bank.get(`/api/pos/sales/${sale.id}/receipt`)).sale.total, 1100, 'старый чек не изменился');
+  await assert.rejects(bank.post('/api/pos/sales', { items: [{ product_id: doomed.id, qty_milli: 1000 }] }), /product_not_found/);
+  await bank.post(`/api/pos/products/${doomed.id}/restore`);
+  assert.equal((await bank.get('/api/pos/products')).products.find((p) => p.id === doomed.id).stock_milli, 3000, 'остаток сохранился');
+  const restoredSale = (await bank.post('/api/pos/sales', { items: [{ product_id: doomed.id, qty_milli: 1000 }] })).sale;
+  await bank.post(`/api/pos/sales/${restoredSale.id}/cancel`);
+
   // Z-отчёт: НДС с наличных списывается с бизнес-счёта
   const z = await bank.post('/api/pos/shifts/z', { closing_cash: 10000 + 610 + 300 });
   assert.equal(z.report.sales_count, 2);
