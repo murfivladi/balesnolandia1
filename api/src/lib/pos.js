@@ -27,7 +27,7 @@ export async function buildItems(conn, shopId, lines, { checkStock = true, kiosk
   if (lines.length > 200) throw bad('too_many', 'Слишком много позиций');
   const ids = [...new Set(lines.map((l) => Number(l.product_id)))];
   if (ids.some((id) => !Number.isSafeInteger(id))) throw bad('product_not_found', 'Товар не найден');
-  const rows = await q(`SELECT * FROM products WHERE shop_id = ? AND id IN (${ids.map(() => '?').join(',')}) FOR UPDATE`, [shopId, ...ids], conn);
+  const rows = await q(`SELECT * FROM products WHERE shop_id = ? AND deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')}) FOR UPDATE`, [shopId, ...ids], conn);
   const byId = new Map(rows.map((p) => [p.id, p]));
   const variants = new Map((await q(`SELECT * FROM product_variants WHERE active = 1 AND product_id IN (${ids.map(() => '?').join(',')})`, ids, conn)).map((v) => [v.id, v]));
   const mods = new Map((await q(`SELECT * FROM modifiers WHERE active = 1 AND product_id IN (${ids.map(() => '?').join(',')})`, ids, conn)).map((m) => [m.id, m]));
