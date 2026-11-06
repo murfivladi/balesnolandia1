@@ -4,6 +4,7 @@ import { formatRR } from '@bln/shared/balnet-dns.js';
 import { isIP } from '@bln/shared/balnet-ip.js';
 import { netCall, lease, resolverOf } from './net.js';
 import { get } from '../shared/api.js';
+import { gameDateLabel } from '@bln/shared/time.js';
 
 const HELP = [
   'Команды:',
@@ -212,7 +213,17 @@ export function TerminalPage({ ctx }) {
     if (r.kind === 'ip') {
       print(`inetnum:   ${r.cidr}`, `netname:   ${r.holder}`, `purpose:   ${r.purpose}`, ...(r.provider ? [`provider:  ${r.provider}`] : []), `source:    BALNET`, '');
     } else if (r.kind === 'domain') {
-      print(`domain:    ${r.name.toUpperCase()}`, ...r.ns.map((n) => `nserver:   ${strip(n)}`), `registrar: ${r.registrar}`, `created:   ${String(r.created_at).slice(0, 10)}`, `source:    BALNET`, '');
+      const when = (m) => (m == null ? null : gameDateLabel(m, 'ru'));
+      print(
+        `domain:    ${r.name.toUpperCase()}`,
+        ...(r.status ? [`status:    ${r.status}`] : []),
+        ...(r.owner ? [`registrant: ${r.owner}`] : []),
+        ...r.ns.map((n) => `nserver:   ${strip(n)}`),
+        `registrar: ${r.registrar}`,
+        ...(r.created_month != null ? [`created:   ${when(r.created_month)}`, `paid-till: ${when(r.expires_month)}`] : r.created_at ? [`created:   ${String(r.created_at).slice(0, 10)}`] : []),
+        'source:    BALNET',
+        '',
+      );
     } else {
       print(`No match for "${q}".`, 'Регистрация доменов игроками появится на этапе Н3.', '');
     }

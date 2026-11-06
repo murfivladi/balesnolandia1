@@ -5,6 +5,7 @@ import {
   Spinner, useAsync, Input, Select, Form, Modal, Empty, Badge, ActionButton, Tabs, ErrorBox, Button, useToast,
 } from '../shared/ui.jsx';
 import { relativeName, humanTtl } from '@bln/shared/balnet-dns.js';
+import { RegistryAdmin } from './registry.jsx';
 
 const KIND_LABEL = { router: 'маршрутизатор', auth: 'DNS-сервер зон', resolver: 'резолвер', web: 'веб-сервер' };
 const PURPOSE_LABEL = { infra: 'инфраструктура', datacenter: 'дата-центр', provider: 'провайдер', ix: 'точка обмена', hosting: 'хостинг' };
@@ -12,14 +13,15 @@ const TARGET_LABEL = { 'app:bank': 'ВлодБанк', 'app:services': 'Влод
 const strip = (n) => String(n || '').replace(/\.$/, '');
 
 export function NetSection() {
-  const [tab, setTab] = useState('zones');
+  const [tab, setTab] = useState('registry');
   const ov = useAsync(() => get('/admin/net/overview'), []);
   return (
     <div className="page">
       <h1>БалНет</h1>
       <p className="muted">Сеть ВлодБраузера: провайдеры выдают игрокам IP-адреса, DNS идёт по цепочке корень → зона верхнего уровня → серверы имён домена. TTL считается в игровых секундах (в игровом месяце 30 игровых суток).</p>
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'zones', label: 'Зоны DNS' }, { value: 'hosts', label: 'Адреса и серверы' }, { value: 'providers', label: 'Провайдеры' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'registry', label: 'Домены и организации' }, { value: 'zones', label: 'Зоны DNS' }, { value: 'hosts', label: 'Адреса и серверы' }, { value: 'providers', label: 'Провайдеры' }]} />
       <ErrorBox error={ov.error} />
+      {tab === 'registry' && <RegistryAdmin />}
       {!ov.data ? <Spinner /> : (
         <>
           {tab === 'zones' && <Zones ov={ov.data} reload={ov.reload} />}
