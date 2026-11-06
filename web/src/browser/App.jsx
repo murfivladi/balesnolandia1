@@ -5,8 +5,11 @@ import { get } from '../shared/api.js';
 import { useTheme } from '../shared/ui.jsx';
 import { CoatOfArms } from '../shared/brand.jsx';
 import {
-  NEW_TAB, INTERNAL_PAGES, GOV_SITES, SEARCH_HOST, parseInput, resolveTarget, govAppPath, govUrlFromApp, displayUrl,
+  NEW_TAB, INTERNAL_PAGES, GOV_SITES, SEARCH_HOST, parseInput, resolveTarget, appPath, govUrlFromApp, displayUrl, searchQuery,
 } from '@bln/shared/balnet-url.js';
+import { DEFAULT_NET, newClientId, openUrl } from './net.js';
+import { DevTools } from './devtools.jsx';
+import { TerminalPage } from './terminal.jsx';
 import {
   profileStore, loadProfiles, saveProfiles, loadActiveProfile, saveActiveProfile, removeItem, PROFILE_COLORS, HISTORY_LIMIT,
 } from './store.js';
@@ -15,7 +18,8 @@ import {
 } from './pages.jsx';
 
 const BASE = import.meta.env.BASE_URL;
-const DEFAULT_SETTINGS = { home: NEW_TAB, bookmarksBar: true, restoreSession: true };
+const DEFAULT_SETTINGS = { home: NEW_TAB, bookmarksBar: true, restoreSession: true, net: DEFAULT_NET };
+const NET_LOG_LIMIT = 200;
 const MAX_BACK = 50;
 
 let seq = 0;
@@ -24,8 +28,11 @@ const newId = () => `t${Date.now().toString(36)}${(seq++).toString(36)}`;
 function titleFor(url) {
   const t = resolveTarget(url);
   if (t.kind === 'internal') return INTERNAL_PAGES[t.page];
-  if (t.kind === 'gov') return t.site.title;
-  if (t.kind === 'search') return t.query ? `${t.query} — ВлодПоиск` : 'ВлодПоиск';
+  if (t.kind === 'web' && t.host === SEARCH_HOST) {
+    const q = searchQuery(t.path);
+    return q ? `${q} — ВлодПоиск` : 'ВлодПоиск';
+  }
+  if (t.kind === 'web' && GOV_SITES[t.host]) return GOV_SITES[t.host].title;
   return displayUrl(url);
 }
 
@@ -39,28 +46,40 @@ function takeUrlFromHash() {
   return parseInput(raw);
 }
 
-/** Что показать в «замке» слева от адреса. */
-function securityOf(url) {
-  const t = resolveTarget(url);
-  if (t.kind === 'gov') return { kind: 'gov', label: 'Госсайт БФ', owner: t.site.owner, host: t.host };
-  if (t.kind === 'search') return { kind: 'gov', label: 'Госсайт БФ', owner: 'Правительство БФ', host: SEARCH_HOST };
+/**
+ * Что показать в «замке» слева от адреса. Значок госсайта ставится только по ответу сервера:
+ * сайт открыт с госсервера (vhost — приложение проекта или ВлодПоиск). Подменённый DNS его не даст.
+ */
+function securityOf(tab) {
+  const t = resolveTarget(tab.url);
   if (t.kind === 'internal') return { kind: 'internal', label: 'ВлодБраузер' };
-  return { kind: 'none', label: '' };
+  const c = tab.conn;
+  if (t.kind === 'web' && c?.gov && c.host === t.host) {
+    return { kind: 'gov', label: 'Госсайт БФ', owner: GOV_SITES[t.host]?.owner || 'Правительство БФ', host: t.host, ip: c.ip };
+  }
+  if (t.kind === 'web' && t.scheme === 'http') return { kind: 'insecure', label: 'Не защищено', host: t.host, ip: c?.ip };
+  return { kind: 'none', label: '', host: t.host, ip: c?.ip };
 }
 
-/** Адрес фрейма → адрес БалНета: /bank/#/cards → https://bank.bln/cards */
-function frameUrl(loc) {
+/** Адрес фрейма → адрес БалНета: /bank/#/cards на хосте bank.bln → https://bank.bln/cards */
+function frameUrl(loc, app, host) {
   const rel = loc.pathname.startsWith(BASE) ? loc.pathname.slice(BASE.length) : loc.pathname.replace(/^\//, '');
-  return govUrlFromApp(rel.split('/')[0], loc.hash);
+  const frameApp = rel.split('/')[0];
+  if (frameApp === app) {
+    let route = loc.hash.replace(/^#/, '') || '/';
+    if (!route.startsWith('/')) route = `/${route}`;
+    return `https://${host}${route}`;
+  }
+  return govUrlFromApp(frameApp, loc.hash); // ссылка в другое приложение — его госадрес
 }
 
 // ——— Госсайт во фрейме ———
 
-function GovFrame({ tab, target, theme, onFrameNav, onTitle }) {
+function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle }) {
   const ref = useRef(null);
   const cb = useRef({ onFrameNav, onTitle });
   useEffect(() => { cb.current = { onFrameNav, onTitle }; });
-  const src = BASE + govAppPath(target.host, target.path);
+  const src = BASE + appPath(app, path);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -81,7 +100,7 @@ function GovFrame({ tab, target, theme, onFrameNav, onTitle }) {
       const w = ref.current.contentWindow;
       w.document.documentElement.dataset.theme = theme;
       const sync = () => {
-        const url = frameUrl(w.location);
+        const url = frameUrl(w.location, app, host);
         if (url) cb.current.onFrameNav(url);
         if (w.document.title) cb.current.onTitle(w.document.title);
       };
@@ -93,14 +112,70 @@ function GovFrame({ tab, target, theme, onFrameNav, onTitle }) {
   return <iframe key={tab.reloadKey} ref={ref} className="bb-frame" src={src} title={tab.title} onLoad={onLoad} />;
 }
 
+// ——— Сайт БалНета: DNS → подключение к серверу → содержимое ———
+
+function WebTab({ tab, target, ctx }) {
+  const [st, setSt] = useState({ phase: 'loading' });
+  const latest = useRef(null);
+  latest.current = { tab, ctx };
+  // Новый запрос — только при смене хоста или перезагрузке: переходы внутри сайта DNS не трогают.
+  const key = `${target.host}|${tab.reloadKey}`;
+  useEffect(() => {
+    let alive = true;
+    const { tab: tb, ctx: c } = latest.current;
+    setSt({ phase: 'loading' });
+    const t0 = performance.now();
+    openUrl(tb.url, c.net).then((r) => {
+      if (!alive) return;
+      const total = Math.round(performance.now() - t0);
+      if (r.failed) {
+        const code = r.failed === 'maintenance' ? 'maintenance' : r.failed === 'error' ? 'ERR_BALNET_UNREACHABLE' : r.failed;
+        setSt({ phase: 'failed', code });
+        c.setConn(tb.id, null);
+        c.logNet(tb.id, { url: tb.url, host: target.host, failed: code, message: r.message, total });
+        return;
+      }
+      const d = r.data;
+      setSt({ phase: 'done', d });
+      c.setConn(tb.id, { ok: d.ok, gov: !!d.gov, ip: d.ip, host: target.host });
+      c.logNet(tb.id, { ...d, lease: r.lease, total });
+    });
+    return () => { alive = false; };
+  }, [key, target.host]);
+
+  const reload = () => ctx.reload(tab.id);
+  if (!ctx.online) return <ErrorPage code="ERR_INTERNET_DISCONNECTED" onReload={reload} ctx={ctx} />;
+  if (st.phase === 'loading') {
+    return <div className="bp-page bp-connecting"><span className="bp-spinner" aria-hidden /> Подключение к {target.host}…</div>;
+  }
+  if (st.phase === 'failed') {
+    if (st.code === 'maintenance') return <MaintenancePage onReload={() => { ctx.refreshClock(); reload(); }} />;
+    return <ErrorPage code={st.code} host={target.host} onReload={reload} ctx={ctx} />;
+  }
+  const d = st.d;
+  if (!d.ok) return <ErrorPage code={d.code} host={target.host} onReload={reload} ctx={ctx} ip={d.ip} />;
+  if (d.target === 'poisk') return <SearchPage ctx={ctx} query={searchQuery(target.path)} />;
+  if (d.target?.startsWith('app:')) {
+    return (
+      <GovFrame
+        tab={tab}
+        app={d.target.slice(4)}
+        host={target.host}
+        path={target.path}
+        theme={ctx.theme}
+        onFrameNav={(url) => ctx.navigate(url, { tabId: tab.id })}
+        onTitle={(title) => ctx.setTitle(tab.id, title)}
+      />
+    );
+  }
+  return <ErrorPage code="HTTP_404_NO_VHOST" host={target.host} onReload={reload} ctx={ctx} />;
+}
+
 // ——— Содержимое вкладки ———
 
 function TabContent({ tab, ctx }) {
   const t = resolveTarget(tab.url);
   const reload = () => ctx.reload(tab.id);
-  const net = t.kind === 'gov' || t.kind === 'search';
-  if (net && ctx.clock?.paused) return <MaintenancePage onReload={() => { ctx.refreshClock(); reload(); }} />;
-  if (net && !ctx.online) return <ErrorPage key={tab.reloadKey} code="ERR_INTERNET_DISCONNECTED" onReload={reload} ctx={ctx} />;
   switch (t.kind) {
     case 'internal':
       if (t.page === 'newtab') return <NewTabPage key={tab.reloadKey} ctx={ctx} />;
@@ -108,19 +183,10 @@ function TabContent({ tab, ctx }) {
       if (t.page === 'bookmarks') return <BookmarksPage key={tab.reloadKey} ctx={ctx} />;
       if (t.page === 'settings') return <SettingsPage key={tab.reloadKey} ctx={ctx} />;
       if (t.page === 'about') return <AboutPage key={tab.reloadKey} />;
+      if (t.page === 'terminal') return <TerminalPage key={tab.reloadKey} ctx={ctx} />;
       return <GamePage key={tab.reloadKey} />;
-    case 'search':
-      return <SearchPage key={tab.reloadKey} ctx={ctx} query={t.query} />;
-    case 'gov':
-      return (
-        <GovFrame
-          tab={tab}
-          target={t}
-          theme={ctx.theme}
-          onFrameNav={(url) => ctx.navigate(url, { tabId: tab.id })}
-          onTitle={(title) => ctx.setTitle(tab.id, title)}
-        />
-      );
+    case 'web':
+      return <WebTab tab={tab} target={t} ctx={ctx} />;
     default:
       return <ErrorPage key={tab.reloadKey} code={t.code} host={t.host} onReload={reload} ctx={ctx} />;
   }
@@ -133,7 +199,7 @@ function AddressBar({ tab, inputRef, ctx }) {
   const [focus, setFocus] = useState(false);
   const [sel, setSel] = useState(0);
   const [info, setInfo] = useState(false);
-  const sec = securityOf(tab.url);
+  const sec = securityOf(tab);
 
   useEffect(() => { if (!focus) setText(displayUrl(tab.url)); }, [tab.url, focus]);
 
@@ -180,7 +246,7 @@ function AddressBar({ tab, inputRef, ctx }) {
         title={sec.kind === 'gov' ? 'Сведения о сайте' : 'Сведения'}
         aria-label="Сведения о сайте"
       >
-        {sec.kind === 'gov' ? <>🛡<span className="bb-chip-text">{sec.label}</span></> : sec.kind === 'internal' ? <CoatOfArms size={14} /> : 'ⓘ'}
+        {sec.kind === 'gov' ? <>🛡<span className="bb-chip-text">{sec.label}</span></> : sec.kind === 'internal' ? <CoatOfArms size={14} /> : sec.kind === 'insecure' ? <>⚠<span className="bb-chip-text">{sec.label}</span></> : 'ⓘ'}
       </button>
       {info && (
         <>
@@ -190,11 +256,13 @@ function AddressBar({ tab, inputRef, ctx }) {
               <>
                 <b className="bb-ok">🛡 Проверенный госсайт БФ</b>
                 <p>{sec.host} — официальный сайт. Владелец: {sec.owner}.</p>
-                <p className="bp-muted">Этот значок рисует ВлодБраузер, а не сайт. Копия сайта по другому адресу значка не получит.</p>
+                <p>Сервер: {sec.ip} (госдата-центр).</p>
+                <p className="bp-muted">Этот значок рисует ВлодБраузер по ответу госсервера, а не сайт. Копия сайта по другому адресу или подменённый DNS значка не получат.</p>
               </>
             )}
             {sec.kind === 'internal' && <p>Это страница ВлодБраузера.</p>}
-            {sec.kind === 'none' && <p>Сайт не открыт: {displayUrl(tab.url) || 'пустая вкладка'}.</p>}
+            {sec.kind === 'insecure' && <p><b>Соединение не защищено.</b> Сайт {sec.host} открыт по http. Не вводите здесь пароли.</p>}
+            {sec.kind === 'none' && <p>{sec.host ? `Сайт ${sec.host}${sec.ip ? `, сервер ${sec.ip}` : ''}. Сертификатов HTTPS в БалНете пока нет — они появятся на этапе Н5.` : `Сайт не открыт: ${displayUrl(tab.url) || 'пустая вкладка'}.`}</p>}
           </div>
         </>
       )}
@@ -253,6 +321,8 @@ export default function App() {
   const [online, setOnline] = useState(() => navigator.onLine !== false);
   const [menu, setMenu] = useState(null); // 'main' | 'profile' | null
   const [grid, setGrid] = useState(false);
+  const [devtools, setDevtools] = useState(false);
+  const [netLog, setNetLog] = useState({}); // id вкладки → записи журнала сети
   const inputRef = useRef(null);
 
   const storeKey = profileId ? `${profileId}:${incognito ? 'incognito' : 'main'}` : null;
@@ -277,7 +347,8 @@ export default function App() {
       const [history, bookmarks, settings, session] = await Promise.all([
         store.get('history', []), store.get('bookmarks', []), store.get('settings', {}), store.get('session', null),
       ]);
-      const s = { ...DEFAULT_SETTINGS, ...settings };
+      const s = { ...DEFAULT_SETTINGS, ...settings, net: { ...DEFAULT_NET, ...(settings.net || {}) } };
+      if (!s.net.clientId) s.net.clientId = newClientId(); // «устройство» профиля: ему провайдер выдаёт IP
       let tabs;
       let activeId;
       if (!incognito && s.restoreSession && session?.tabs?.length) {
@@ -361,6 +432,11 @@ export default function App() {
     return { ...d, tabs, history };
   }), [update]);
 
+  const setConn = useCallback((tabId, conn) => update((d) => ({ ...d, tabs: d.tabs.map((t) => (t.id === tabId ? { ...t, conn } : t)) })), [update]);
+  const logNet = useCallback((tabId, entry) => setNetLog((m) => ({
+    ...m, [tabId]: [...(m[tabId] || []), { id: `${Date.now()}-${Math.random()}`, ts: Date.now(), ...entry }].slice(-NET_LOG_LIMIT),
+  })), []);
+
   const step = (tabId, dir) => update((d) => ({
     ...d,
     tabs: d.tabs.map((t) => {
@@ -439,6 +515,7 @@ export default function App() {
     else if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); step(active.id, 1); }
     else if (e.altKey && k === 't') { e.preventDefault(); openTab(); }
     else if (e.altKey && k === 'w') { e.preventDefault(); closeTab(active.id); }
+    else if (e.key === 'F12' || (mod && e.shiftKey && k === 'i')) { e.preventDefault(); setDevtools((v) => !v); }
   };
   useEffect(() => {
     const on = (e) => keys.current(e);
@@ -463,6 +540,10 @@ export default function App() {
     bookmarks: data.bookmarks,
     settings: data.settings,
     setSettings: (s) => update((d) => ({ ...d, settings: s })),
+    net: data.settings.net,
+    setNet: (n) => update((d) => ({ ...d, settings: { ...d.settings, net: { ...d.settings.net, ...n } } })),
+    setConn,
+    logNet,
     clearHistory: () => update((d) => ({ ...d, history: [] })),
     removeHistory: (h) => update((d) => ({ ...d, history: d.history.filter((x) => x !== h && !(x.ts === h.ts && x.url === h.url)) })),
     toggleBookmark,
@@ -495,6 +576,8 @@ export default function App() {
     null,
     ['История', 'Ctrl+H', () => navigate('balnet://history/', { newTab: true })],
     ['Закладки', '', () => navigate('balnet://bookmarks/', { newTab: true })],
+    ['Терминал', '', () => navigate('balnet://terminal/', { newTab: true })],
+    [devtools ? 'Закрыть инструменты разработчика' : 'Инструменты разработчика', 'F12', () => { setDevtools((v) => !v); setMenu(null); }],
     ['Курьер БалНета', '', () => navigate('balnet://game/', { newTab: true })],
     null,
     [theme === 'dark' ? 'Светлая тема' : 'Тёмная тема', '', () => { toggleTheme(); setMenu(null); }],
@@ -547,12 +630,15 @@ export default function App() {
         </div>
       )}
 
-      <div className="bb-views">
-        {data.tabs.map((t) => (
-          <div key={t.id} className="bb-view" hidden={t.id !== active.id}>
-            <TabContent tab={t} ctx={ctx} />
-          </div>
-        ))}
+      <div className={`bb-main ${devtools ? 'with-devtools' : ''}`}>
+        <div className="bb-views">
+          {data.tabs.map((t) => (
+            <div key={t.id} className="bb-view" hidden={t.id !== active.id}>
+              <TabContent tab={t} ctx={ctx} />
+            </div>
+          ))}
+        </div>
+        {devtools && <DevTools log={netLog[active.id] || []} tab={active} onClear={() => setNetLog((m) => ({ ...m, [active.id]: [] }))} onClose={() => setDevtools(false)} />}
       </div>
 
       <nav className="bb-bottombar" aria-label="Навигация">

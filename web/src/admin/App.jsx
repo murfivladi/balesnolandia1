@@ -11,12 +11,13 @@ import { AdminLogo } from '../shared/brand.jsx';
 import { LoginForm, AuthDisclaimer } from '../shared/auth.jsx';
 import { IdCard } from '../shared/passport.jsx';
 import { CreditAdmin, FraudAdmin, CashbackAdmin, InflationCard } from './finance.jsx';
+import { NetSection } from './net.jsx';
 import { TX_KINDS, ACCOUNT_TYPES } from '../bank/pages.jsx';
 import { gameDateLabel } from '@bln/shared/time.js';
 import { formatMoney } from '@bln/shared/money.js';
 
 const SECTIONS = [
-  ['/', 'Обзор'], ['/bank', 'Банк'], ['/economy', 'Экономика'], ['/pos', 'Касса'], ['/services', 'Услуги'], ['/people', 'Люди'], ['/system', 'Система'],
+  ['/', 'Обзор'], ['/bank', 'Банк'], ['/economy', 'Экономика'], ['/pos', 'Касса'], ['/services', 'Услуги'], ['/people', 'Люди'], ['/net', 'БалНет'], ['/system', 'Система'],
 ];
 
 export default function App() {
@@ -69,6 +70,7 @@ export default function App() {
         ['/pos', () => <PosSection />],
         ['/services', () => <ServicesSection />],
         ['/people', () => <People me={me} />],
+        ['/net', () => <NetSection />],
         ['/system', () => <SystemSection />],
         ['*', () => <Empty>{t('Страница не найдена')}</Empty>],
       ], section)}

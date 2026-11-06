@@ -12,6 +12,7 @@ export const INTERNAL_PAGES = {
   settings: 'Настройки',
   about: 'О ВлодБраузере',
   game: 'Курьер БалНета',
+  terminal: 'Терминал',
 };
 
 /**
@@ -89,11 +90,18 @@ export function splitUrl(url) {
   return { scheme, host, path };
 }
 
+/** Хосты в списке HSTS preload: браузер сам открывает их по https. */
+export const HSTS_PRELOAD = new Set([...Object.keys(GOV_SITES), SEARCH_HOST]);
+
+/** Параметр q из пути ВлодПоиска. */
+export function searchQuery(path = '/') {
+  return new URLSearchParams(path.split('?')[1]?.split('#')[0] || '').get('q') || '';
+}
+
 /**
  * Куда ведёт адрес:
- *  internal — страница браузера; search — ВлодПоиск; gov — встроенный госсайт;
- *  upgrade — http госсайта (HSTS: браузер сам переходит на https); error — код ошибки.
- * Этап Н1: DNS ещё нет, поэтому любой другой домен — NXDOMAIN.
+ *  internal — страница браузера; web — сайт в БалНете (дальше DNS и подключение к серверу);
+ *  upgrade — http для хоста из HSTS preload (браузер сам переходит на https); error — адрес не открыть.
  */
 export function resolveTarget(url) {
   const p = splitUrl(url);
@@ -102,25 +110,21 @@ export function resolveTarget(url) {
     if (!INTERNAL_PAGES[p.host]) return { kind: 'error', code: 'ERR_INVALID_URL' };
     return { kind: 'internal', page: p.host, path: p.path };
   }
-  if (p.host === SEARCH_HOST) {
-    if (p.scheme !== 'https') return { kind: 'upgrade', url: `https://${p.host}${p.path}` };
-    const q = new URLSearchParams(p.path.split('?')[1]?.split('#')[0] || '').get('q') || '';
-    return { kind: 'search', query: q };
-  }
-  const site = GOV_SITES[p.host];
-  if (site) {
-    if (p.scheme !== 'https') return { kind: 'upgrade', url: `https://${p.host}${p.path}` };
-    return { kind: 'gov', host: p.host, site, path: p.path };
-  }
-  return { kind: 'error', code: 'DNS_PROBE_FINISHED_NXDOMAIN', host: p.host };
+  if (p.scheme !== 'https' && p.scheme !== 'http') return { kind: 'error', code: 'ERR_INVALID_URL' };
+  if (p.scheme === 'http' && HSTS_PRELOAD.has(p.host)) return { kind: 'upgrade', url: `https://${p.host}${p.path}` };
+  return { kind: 'web', scheme: p.scheme, host: p.host, path: p.path };
+}
+
+/** Путь приложения проекта: «bank», «/cards?x=1» → «bank/#/cards?x=1». */
+export function appPath(app, path = '/') {
+  const route = path.split('#')[0] || '/';
+  return `${app}/#${route.startsWith('/') ? route : `/${route}`}`;
 }
 
 /** https://bank.bln/cards?x=1 → «bank/#/cards?x=1» (путь приложения от корня реального сайта). */
 export function govAppPath(host, path = '/') {
   const site = GOV_SITES[host];
-  if (!site) return null;
-  const route = path.split('#')[0] || '/';
-  return `${site.app}/#${route.startsWith('/') ? route : `/${route}`}`;
+  return site ? appPath(site.app, path) : null;
 }
 
 /** Обратно: приложение и его hash → адрес БалНета. «bank», «#/cards» → https://bank.bln/cards */
@@ -161,7 +165,42 @@ export const NET_ERRORS = {
   },
   ERR_CONNECTION_REFUSED: {
     title: 'Сайт не позволяет установить соединение',
-    text: (host) => `Сервер ${host} отклонил подключение.`,
-    tips: ['Попробуйте позже.'],
+    text: (host) => `Сервер ${host} отклонил подключение: по этому адресу работает не веб-сервер.`,
+    tips: ['Проверьте A-запись домена.', 'Попробуйте позже.'],
+  },
+  ERR_NAME_NOT_RESOLVED: {
+    title: 'Не удаётся найти сайт',
+    text: (host) => `Домен ${host} существует, но у него нет IP-адреса (записей A и AAAA).`,
+    tips: ['Владельцу сайта: добавьте A-запись.'],
+  },
+  DNS_PROBE_FINISHED_BAD_CONFIG: {
+    title: 'DNS-сервер не отвечает',
+    text: () => 'DNS-сервер, указанный в настройках, не ответил. Возможно, по этому адресу нет резолвера.',
+    tips: ['Проверьте DNS-сервер в настройках ВлодБраузера.', 'Выберите «DNS провайдера» или ВлодDNS 50.0.0.53.'],
+  },
+  ERR_NAME_RESOLUTION_FAILED: {
+    title: 'Ошибка DNS',
+    text: (host) => `DNS-сервер не смог найти адрес ${host}: он отказал в запросе или серверы домена не отвечают.`,
+    tips: ['Резолвер провайдера обслуживает только своих абонентов — проверьте настройки DNS.', 'Посмотрите путь запроса в DevTools → Network.'],
+  },
+  ERR_CONNECTION_TIMED_OUT: {
+    title: 'Превышено время ожидания',
+    text: (host) => `Сервер ${host} слишком долго не отвечает: по этому IP-адресу никого нет или сервер выключен.`,
+    tips: ['Попробуйте позже.', 'Проверьте связь командой ping в терминале.'],
+  },
+  ERR_ADDRESS_UNREACHABLE: {
+    title: 'Сайт недоступен',
+    text: (host) => `До адреса сервера ${host} нет маршрута: такой сети в БалНете нет.`,
+    tips: ['Проверьте A-запись домена.', 'Посмотрите маршрут командой traceroute.'],
+  },
+  HTTP_404_NO_VHOST: {
+    title: '404 — сайт не найден на сервере',
+    text: (host) => `Сервер ответил, но сайта ${host} на нём нет: хостинг не настроен для этого имени.`,
+    tips: ['Владельцу сайта: проверьте настройки хостинга.'],
+  },
+  ERR_BALNET_UNREACHABLE: {
+    title: 'Нет связи с БалНетом',
+    text: () => 'Сервер БалНета не отвечает. Возможно, он перезапускается.',
+    tips: ['Проверьте подключение к интернету.', 'Попробуйте через минуту.'],
   },
 };

@@ -1,10 +1,12 @@
 // Внутренние страницы ВлодБраузера: новая вкладка, история, закладки, настройки, о браузере,
 // временный ВлодПоиск, страницы ошибок и «БалНет на обслуживании».
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CoatOfArms } from '../shared/brand.jsx';
 import { DISCLAIMER } from '../shared/ui.jsx';
 import { GOV_SITES, NET_ERRORS, displayUrl, searchUrl, parseInput } from '@bln/shared/balnet-url.js';
 import { CourierGame } from './game.jsx';
+import { providers, lease, PUBLIC_DNS } from './net.js';
+import { isIP } from '@bln/shared/balnet-ip.js';
 
 export function Disclaimer() {
   return <p className="bp-disclaimer">{DISCLAIMER}</p>;
@@ -201,6 +203,7 @@ export function SettingsPage({ ctx }) {
         )}
         <label className="bp-check"><input type="checkbox" checked={s.restoreSession} onChange={(e) => ctx.setSettings({ ...s, restoreSession: e.target.checked })} /> Восстанавливать вкладки при запуске</label>
       </section>
+      <NetworkSettings ctx={ctx} />
       <section className="bp-card">
         <h2>Поисковая система</h2>
         <p>ВлодПоиск (poisk.bln) — официальный поисковик БФ.</p>
@@ -235,7 +238,7 @@ export function AboutPage() {
       <header className="bp-page-head"><CoatOfArms size={40} /><h1>О ВлодБраузере</h1></header>
       <section className="bp-card">
         <p><b>ВлодБраузер</b> — браузер БалНета, вымышленного интернета Балесноландской Федерации.</p>
-        <p>Версия Н1: вкладки, история, закладки, профили, инкогнито, госсайты bank.bln, gosuslugi.gov.bln и kassa.bln.</p>
+        <p>Версия Н2: вкладки, история, закладки, профили, инкогнито; настоящий DNS БалНета (корень → TLD → серверы имён), выбор провайдера и DNS-сервера, терминал и DevTools → Network.</p>
         <p>Значок «Госсайт БФ» в адресной строке рисует сам браузер. Сайт не может его подделать: если значка нет — это не госсайт, даже если страница выглядит так же.</p>
         <p>Горячие клавиши: Ctrl+L — адресная строка, Ctrl+D — закладка, Ctrl+H — история, Alt+← и Alt+→ — назад и вперёд, Alt+T — новая вкладка, Ctrl+R — перезагрузить, Alt+W — закрыть вкладку.</p>
       </section>
@@ -289,7 +292,7 @@ export function SearchPage({ ctx, query }) {
   );
 }
 
-export function ErrorPage({ code, host, onReload, ctx }) {
+export function ErrorPage({ code, host, onReload, ctx, ip }) {
   const e = NET_ERRORS[code] || NET_ERRORS.ERR_INVALID_URL;
   const [game, setGame] = useState(code === 'ERR_INTERNET_DISCONNECTED');
   return (
@@ -298,6 +301,7 @@ export function ErrorPage({ code, host, onReload, ctx }) {
       <h1>{e.title}</h1>
       <p>{e.text(host || '')}</p>
       <ul>{e.tips.map((t) => <li key={t}>{t}</li>)}</ul>
+      {ip && <p className="bp-muted">IP-адрес сервера: {ip}</p>}
       <p className="bp-code">{code}</p>
       <div className="bp-error-actions">
         <button className="bp-btn bp-btn-primary" onClick={onReload}>Перезагрузить</button>
@@ -328,5 +332,53 @@ export function GamePage() {
       <h1>Курьер БалНета</h1>
       <CourierGame />
     </div>
+  );
+}
+
+/** Настройки → Сеть: провайдер, полученный адрес, DNS-сервер. */
+function NetworkSettings({ ctx }) {
+  const net = ctx.net;
+  const [list, setList] = useState(null);
+  const [info, setInfo] = useState(null);
+  const [error, setError] = useState('');
+  const [custom, setCustom] = useState(net.dns || '');
+  useEffect(() => { providers().then(setList).catch(() => setError('Нет связи с сервером БалНета')); }, []);
+  useEffect(() => {
+    let alive = true;
+    setInfo(null);
+    lease(net.clientId, net.provider).then((l) => { if (alive) { setInfo(l); setError(''); } }).catch((e) => { if (alive) setError(e.message); });
+    return () => { alive = false; };
+  }, [net.clientId, net.provider]);
+  return (
+    <section className="bp-card">
+      <h2>Сеть</h2>
+      <label className="bp-field">
+        <span>Интернет-провайдер</span>
+        <select value={net.provider} onChange={(e) => ctx.setNet({ provider: e.target.value })}>
+          {(list?.providers || [{ code: net.provider, name: net.provider }]).map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
+        </select>
+      </label>
+      {info && (
+        <dl className="bp-dl">
+          <dt>IP-адрес</dt><dd className="mono">{info.ip}</dd>
+          <dt>Сеть</dt><dd className="mono">{info.netmask}</dd>
+          <dt>Шлюз</dt><dd className="mono">{info.gateway}</dd>
+          <dt>DNS провайдера</dt><dd className="mono">{info.resolver_ip}</dd>
+        </dl>
+      )}
+      {error && <p className="bp-err">{error}</p>}
+      <h3>DNS-сервер</h3>
+      <label className="bp-check"><input type="radio" name="dns" checked={net.dnsMode === 'provider'} onChange={() => ctx.setNet({ dnsMode: 'provider' })} /> DNS провайдера{info ? ` (${info.resolver_ip})` : ''}</label>
+      <label className="bp-check"><input type="radio" name="dns" checked={net.dnsMode === 'public'} onChange={() => ctx.setNet({ dnsMode: 'public' })} /> ВлодDNS — публичный резолвер ({PUBLIC_DNS})</label>
+      <label className="bp-check"><input type="radio" name="dns" checked={net.dnsMode === 'custom'} onChange={() => ctx.setNet({ dnsMode: 'custom' })} /> Свой DNS-сервер:</label>
+      {net.dnsMode === 'custom' && (
+        <form className="bp-inline-form" onSubmit={(e) => { e.preventDefault(); if (isIP(custom.trim())) ctx.setNet({ dns: custom.trim() }); }}>
+          <input value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="например 60.1.0.53" aria-label="Адрес DNS-сервера" className="mono" />
+          <button className="bp-btn" disabled={!isIP(custom.trim())}>Сохранить</button>
+        </form>
+      )}
+      {net.dnsMode === 'custom' && net.dns && <p className="bp-muted">Сейчас: {net.dns}. Резолвер провайдера отвечает только своим абонентам; неверный адрес — сайты не откроются.</p>}
+      <p className="bp-muted">Новые настройки действуют для следующих переходов. Открытые вкладки обновите кнопкой ↻.</p>
+    </section>
   );
 }

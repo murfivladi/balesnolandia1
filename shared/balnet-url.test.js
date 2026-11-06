@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseInput, normalizeUrl, splitUrl, resolveTarget, govAppPath, govUrlFromApp, displayUrl, searchUrl, NEW_TAB,
+  parseInput, normalizeUrl, splitUrl, resolveTarget, govAppPath, govUrlFromApp, displayUrl, searchUrl, NEW_TAB, searchQuery, appPath,
 } from './balnet-url.js';
 
 test('parseInput: домены, схемы, поиск', () => {
@@ -33,16 +33,14 @@ test('resolveTarget', () => {
   assert.deepEqual(resolveTarget('balnet://history/'), { kind: 'internal', page: 'history', path: '/' });
   assert.equal(resolveTarget('balnet://nope/').code, 'ERR_INVALID_URL');
   assert.equal(resolveTarget(NEW_TAB).page, 'newtab');
-  assert.deepEqual(resolveTarget(searchUrl('a b')), { kind: 'search', query: 'a b' });
-  assert.equal(resolveTarget('http://poisk.bln/?q=1').kind, 'upgrade');
-  const gov = resolveTarget('https://bank.bln/cards');
-  assert.equal(gov.kind, 'gov');
-  assert.equal(gov.site.app, 'bank');
-  assert.equal(gov.path, '/cards');
+  assert.equal(resolveTarget('balnet://terminal/').page, 'terminal');
+  assert.deepEqual(resolveTarget('https://bank.bln/cards'), { kind: 'web', scheme: 'https', host: 'bank.bln', path: '/cards' });
   assert.deepEqual(resolveTarget('http://bank.bln/x'), { kind: 'upgrade', url: 'https://bank.bln/x' });
-  const nx = resolveTarget('https://vasya.bln/');
-  assert.equal(nx.code, 'DNS_PROBE_FINISHED_NXDOMAIN');
-  assert.equal(nx.host, 'vasya.bln');
+  assert.equal(resolveTarget('http://poisk.bln/?q=1').kind, 'upgrade');
+  assert.deepEqual(resolveTarget('http://vasya.bln/'), { kind: 'web', scheme: 'http', host: 'vasya.bln', path: '/' });
+  assert.equal(searchQuery('/?q=a%20b'), 'a b');
+  assert.equal(searchQuery(new URL(searchUrl('купить хлеб')).pathname + new URL(searchUrl('купить хлеб')).search), 'купить хлеб');
+  assert.equal(appPath('bank', '/cards?id=1#x'), 'bank/#/cards?id=1');
 });
 
 test('госсайты ↔ пути приложений', () => {
