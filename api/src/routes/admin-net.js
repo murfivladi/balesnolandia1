@@ -1,85 +1,18 @@
 // Админка → БалНет: провайдеры, IP-блоки, хосты и сайты на них, DNS-зоны и записи, кэш резолверов.
 import { tx, q, one } from '../db.js';
-import { bad, notFound, conflict, int, str, need } from '../lib/errors.js';
+import { notFound, conflict, int, str, need } from '../lib/errors.js';
 import { needAdmin, actorOf } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { netSnapshot, invalidateNet } from '../lib/net.js';
 import { flushResolverCache, resolverCacheSize } from '../lib/dns.js';
-import { parseCidr, isIP, normalizeIP, longestMatch, nthIp, reverseName, isIPv4 } from '@bln/shared/balnet-ip.js';
-import { fqdn, absoluteName, normalizeRdata, inZone, DnsInputError, RR_TYPES } from '@bln/shared/balnet-dns.js';
+import { parseCidr, longestMatch, nthIp, isIPv4 } from '@bln/shared/balnet-ip.js';
+import { fqdn, inZone, RR_TYPES } from '@bln/shared/balnet-dns.js';
+import { ipArg, bumpSerial, zoneFor, setPtr, checkRecord, recordArgs } from '../lib/zones.js';
 
 const BLOCK_PURPOSES = ['infra', 'datacenter', 'provider', 'ix', 'hosting'];
 const HOST_KINDS = ['router', 'auth', 'resolver', 'web'];
 /** Цели vhost, которые может назначить админ: приложения проекта и ВлодПоиск. Сайты игроков — этап Н4. */
 export const VHOST_TARGETS = ['app:bank', 'app:services', 'app:pos', 'poisk'];
-const MAX_TTL = 2 ** 31 - 1;
-
-function rdata(type, data) {
-  try {
-    return normalizeRdata(type, data);
-  } catch (e) {
-    if (e instanceof DnsInputError) throw bad('invalid_record', e.message);
-    throw e;
-  }
-}
-
-function ipArg(v, what = 'IP-адрес') {
-  need(isIP(String(v ?? '')), `${what}: неверный адрес`);
-  return normalizeIP(String(v));
-}
-
-async function bumpSerial(conn, zoneId) {
-  const z = await one('SELECT serial FROM dns_zones WHERE id = ? FOR UPDATE', [zoneId], conn);
-  const serial = (Number(z.serial) + 1) % 4294967296;
-  await q('UPDATE dns_zones SET serial = ? WHERE id = ?', [serial, zoneId], conn);
-  const soa = await one("SELECT id, data FROM dns_records WHERE zone_id = ? AND type = 'SOA' LIMIT 1", [zoneId], conn);
-  if (soa) {
-    const p = soa.data.split(' ');
-    p[2] = String(serial);
-    await q('UPDATE dns_records SET data = ? WHERE id = ?', [p.join(' '), soa.id], conn);
-  }
-}
-
-/** Зона, внутри которой лежит имя (самая глубокая). */
-async function zoneFor(conn, name) {
-  const zones = await q('SELECT * FROM dns_zones', [], conn);
-  let best = null;
-  for (const z of zones) if (inZone(name, z.name) && (!best || z.name.length > best.name.length)) best = z;
-  return best;
-}
-
-async function setPtr(conn, ip, name) {
-  if (!isIPv4(ip)) return;
-  const arpa = await one("SELECT id FROM dns_zones WHERE name = 'in-addr.arpa.'", [], conn);
-  if (!arpa) return;
-  const owner = reverseName(ip);
-  await q("DELETE FROM dns_records WHERE zone_id = ? AND name = ? AND type = 'PTR'", [arpa.id, owner], conn);
-  if (name) await q("INSERT INTO dns_records (zone_id, name, type, ttl, data) VALUES (?, ?, 'PTR', 3600, ?)", [arpa.id, owner, name], conn);
-  await bumpSerial(conn, arpa.id);
-}
-
-async function checkRecord(conn, zone, rec, exceptId = null) {
-  const others = await q('SELECT id, type FROM dns_records WHERE zone_id = ? AND name = ? AND id <> ?', [zone.id, rec.name, exceptId || 0], conn);
-  if (rec.type === 'CNAME') need(!others.length, 'CNAME не может стоять рядом с другими записями этого имени');
-  else need(!others.some((o) => o.type === 'CNAME'), 'У этого имени уже есть CNAME — другие записи рядом с ним нельзя');
-  if (rec.type === 'SOA') {
-    need(rec.name === zone.name, 'SOA бывает только на вершине зоны (@)');
-    need(!others.some((o) => o.type === 'SOA'), 'SOA в зоне уже есть');
-  }
-  if (rec.type === 'CNAME') need(rec.name !== zone.name, 'CNAME на вершине зоны запрещён (там SOA и NS)');
-  // Имя не должно уходить в дочернюю зону, у которой свои серверы.
-  const child = await zoneFor(conn, rec.name);
-  need(child.id === zone.id, `Имя ${rec.name} относится к зоне ${child.name} — правьте её`);
-}
-
-function recordArgs(zone, b) {
-  const type = String(b.type || '').toUpperCase();
-  need(RR_TYPES.includes(type), `Тип записи: ${RR_TYPES.join(', ')}`);
-  const name = absoluteName(b.name, zone.name);
-  need(name, 'Неверное имя записи');
-  const ttl = int(b.ttl ?? 3600, 'TTL', { min: 0, max: MAX_TTL });
-  return { name, type, ttl, data: rdata(type, b.data) };
-}
 
 export async function adminNetRoutes(app) {
   app.addHook('preHandler', needAdmin());

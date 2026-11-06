@@ -6,6 +6,8 @@ import { resolve, queryServer } from '../lib/dns.js';
 import { isPaused } from '../lib/clock.js';
 import { isIP, normalizeIP } from '@bln/shared/balnet-ip.js';
 import { splitUrl } from '@bln/shared/balnet-url.js';
+import { fqdn } from '@bln/shared/balnet-dns.js';
+import { whoisDomain } from '../lib/domains.js';
 
 const limited = (max) => ({ config: { rateLimit: { max, timeWindow: '1 minute' } } });
 
@@ -119,6 +121,8 @@ export async function netRoutes(app) {
 
   app.get('/whois', limited(60), async (req) => {
     await online();
-    return whois(req.query.q);
+    const name = fqdn(String(req.query.q || ''));
+    const dom = name ? await whoisDomain(null, name) : null;
+    return dom || whois(req.query.q);
   });
 }

@@ -51,7 +51,21 @@ export function authoritative(snap, ip, qname, qtype) {
     const m = list.filter((r) => qtype === 'ANY' || r.type === qtype).map((r) => ({ ...r, name }));
     if (m.length) return { rcode: 'NOERROR', aa: true, answer: m, authority: [], additional: [] };
     const cname = list.find((r) => r.type === 'CNAME');
-    if (cname) return { rcode: 'NOERROR', aa: true, answer: [{ ...cname, name }], authority: [], additional: [] };
+    if (cname) {
+      // Как настоящие серверы: цепочку CNAME внутри своей зоны сразу дописываем в ответ.
+      const answer = [{ ...cname, name }];
+      let target = cname.data;
+      for (let i = 0; i < 8 && inZone(target, zone.name); i++) {
+        const next = zone.names.get(target) || [];
+        const hit = next.filter((r) => qtype === 'ANY' || r.type === qtype);
+        if (hit.length) { answer.push(...hit); break; }
+        const c2 = next.find((r) => r.type === 'CNAME');
+        if (!c2) break;
+        answer.push(c2);
+        target = c2.data;
+      }
+      return { rcode: 'NOERROR', aa: true, answer, authority: [], additional: [] };
+    }
     return { rcode: 'NOERROR', aa: true, answer: [], authority: soa ? [soa] : [], additional: [] };
   };
   if (rrs) return pick(rrs, qname);
@@ -194,10 +208,20 @@ async function iterate(ctx, qname, qtype, depth = 0) {
       cacheRRset(ctx, resp.answer);
       const direct = resp.answer.filter((r) => r.name === qname && (qtype === 'ANY' || r.type === qtype));
       if (direct.length) return { rcode: 'NOERROR', answer: resp.answer, authority: [] };
-      const cname = resp.answer.find((r) => r.name === qname && r.type === 'CNAME');
-      if (cname) {
-        const sub = await iterate(ctx, cname.data, qtype, depth + 1);
-        return { ...sub, answer: [cname, ...sub.answer] };
+      // Цепочка CNAME: если сервер дописал цель — готово, иначе спрашиваем цель отдельно.
+      let name = qname;
+      const chain = [];
+      for (;;) {
+        const c = resp.answer.find((r) => r.name === name && r.type === 'CNAME');
+        if (!c) break;
+        chain.push(c);
+        name = c.data;
+      }
+      if (chain.length) {
+        const fin = resp.answer.filter((r) => r.name === name && (qtype === 'ANY' || r.type === qtype));
+        if (fin.length) return { rcode: 'NOERROR', answer: [...chain, ...fin], authority: [] };
+        const sub = await iterate(ctx, name, qtype, depth + 1);
+        return { ...sub, answer: [...chain, ...sub.answer] };
       }
       return { rcode: 'NOERROR', answer: resp.answer, authority: [] };
     }

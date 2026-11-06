@@ -87,6 +87,17 @@ export const DEFAULTS = {
   insurance_price: 5000,
   insurance_months: 12,
   vote_age: 18,
+  // БалНет (этап Н3): организации, лицензии, домены. Сроки — в игровых месяцах.
+  fee_org: 10000,
+  fee_license: 20000,
+  license_months: 24,
+  domain_max_years: 10,
+  domain_reserve_months: 1,
+  domain_grace_months: 1,
+  domain_redemption_months: 1,
+  domain_redemption_fee: 2000,
+  auction_months: 1,
+  auction_pay_months: 1,
   // Адреса и почта — задаются в админке (раздел «Система»), .env для них не нужен
   public_web_url: '',
   cors_origins: '',
