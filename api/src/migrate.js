@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { pool, q } from './db.js';
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
@@ -22,13 +22,19 @@ export async function migrate({ log = console.log } = {}) {
     applied_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
   ) ENGINE=InnoDB`);
   const done = new Set((await q('SELECT name FROM schema_migrations')).map((r) => r.name));
-  const files = (await fs.readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
+  const files = (await fs.readdir(dir)).filter((f) => f.endsWith('.sql') || f.endsWith('.js')).sort();
   for (const f of files) {
     if (done.has(f)) continue;
-    const sql = await fs.readFile(path.join(dir, f), 'utf8');
     log(`migrate: ${f}`);
-    // DDL в MySQL неявно коммитит, поэтому миграции пишем так, чтобы их было просто повторить вручную.
-    for (const stmt of splitSql(sql)) await q(stmt);
+    if (f.endsWith('.js')) {
+      // Миграции-данные (например, начальная сеть БалНета): модуль экспортирует up({ q }).
+      const mod = await import(pathToFileURL(path.join(dir, f)).href);
+      await mod.up({ q });
+    } else {
+      const sql = await fs.readFile(path.join(dir, f), 'utf8');
+      // DDL в MySQL неявно коммитит, поэтому миграции пишем так, чтобы их было просто повторить вручную.
+      for (const stmt of splitSql(sql)) await q(stmt);
+    }
     await q('INSERT INTO schema_migrations (name) VALUES (?)', [f]);
   }
 }

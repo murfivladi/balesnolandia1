@@ -21,6 +21,8 @@ import { adminPosRoutes } from './routes/admin-pos.js';
 import { govExtRoutes } from './routes/gov-ext.js';
 import { adminGovRoutes } from './routes/admin-gov.js';
 import { bankGovRoutes } from './routes/bank-gov.js';
+import { netRoutes } from './routes/net.js';
+import { adminNetRoutes } from './routes/admin-net.js';
 
 export async function buildApp({ logger = config.env !== 'test' } = {}) {
   const app = Fastify({
@@ -77,6 +79,8 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
   await app.register(adminFinanceRoutes, { prefix: '/api/admin' });
   await app.register(adminPosRoutes, { prefix: '/api/admin' });
   await app.register(adminGovRoutes, { prefix: '/api/admin' });
+  await app.register(netRoutes, { prefix: '/api/net' });
+  await app.register(adminNetRoutes, { prefix: '/api/admin/net' });
 
   return app;
 }

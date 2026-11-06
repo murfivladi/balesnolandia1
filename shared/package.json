@@ -7,7 +7,9 @@
     "./money.js": "./money.js",
     "./time.js": "./time.js",
     "./format.js": "./format.js",
-    "./balnet-url.js": "./balnet-url.js"
+    "./balnet-url.js": "./balnet-url.js",
+    "./balnet-ip.js": "./balnet-ip.js",
+    "./balnet-dns.js": "./balnet-dns.js"
   },
   "scripts": { "test": "node --test" }
 }

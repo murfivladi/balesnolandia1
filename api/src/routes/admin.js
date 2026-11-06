@@ -57,7 +57,9 @@ function cleanSettings(body) {
 }
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories', 'wholesale_items', 'fine_articles', 'countries']);
+const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories', 'wholesale_items', 'fine_articles', 'countries',
+  // Инфраструктура БалНета — настройка админа, а не игровые данные. Аренды адресов (net_leases) сбрасываются.
+  'net_providers', 'net_ip_blocks', 'net_hosts', 'net_vhosts', 'dns_zones', 'dns_zone_servers', 'dns_records']);
 
 async function tableNames(conn) {
   const rows = await q('SHOW TABLES', [], conn);
