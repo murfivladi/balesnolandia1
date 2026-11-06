@@ -6,7 +6,8 @@
   "exports": {
     "./money.js": "./money.js",
     "./time.js": "./time.js",
-    "./format.js": "./format.js"
+    "./format.js": "./format.js",
+    "./balnet-url.js": "./balnet-url.js"
   },
   "scripts": { "test": "node --test" }
 }

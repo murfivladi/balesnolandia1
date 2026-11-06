@@ -7,10 +7,11 @@ import { t, useLang } from '../shared/i18n.js';
 function Landing() {
   useLang();
   const apps = [
-    { href: './services/', logo: <ServicesLogo size={44} />, title: 'ВлодУслуги', text: t('Паспорт БФ, документы, ИП, квитанции') },
-    { href: './bank/', logo: <BankLogo size={44} />, title: 'ВлодБанк', text: t('Счета, карты, переводы, банкомат') },
-    { href: './pos/', logo: <PosLogo size={44} />, title: t('Касса'), text: t('Продажи, терминал покупателя, чеки 58 мм') },
-    { href: './admin/', logo: <AdminLogo size={44} />, title: t('Админка'), text: t('Управление игрой') },
+    { href: '../', logo: <CoatOfArms size={44} />, title: 'ВлодБраузер', text: t('БалНет: bank.bln, gosuslugi.gov.bln, kassa.bln') },
+    { href: '../services/', logo: <ServicesLogo size={44} />, title: 'ВлодУслуги', text: t('Паспорт БФ, документы, ИП, квитанции') },
+    { href: '../bank/', logo: <BankLogo size={44} />, title: 'ВлодБанк', text: t('Счета, карты, переводы, банкомат') },
+    { href: '../pos/', logo: <PosLogo size={44} />, title: t('Касса'), text: t('Продажи, терминал покупателя, чеки 58 мм') },
+    { href: '../admin/', logo: <AdminLogo size={44} />, title: t('Админка'), text: t('Управление игрой') },
   ];
   return (
     <>
