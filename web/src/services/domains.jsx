@@ -213,11 +213,21 @@ function DomainSearch({ data, onDone }) {
     try {
       const q = name.includes('.') ? name : `${name}.bln`;
       const r = await get(`/gov/domains/check?name=${encodeURIComponent(q)}`);
+      // Список организаций свежий: вас могли назначить директором уже после открытия страницы.
+      await orgs.reload();
       setRes(r);
       setReg(r.offers[0] ? String(r.offers[0].registrar_org_id ?? '') : '');
+      setOwner('');
     } catch (ex) { setErr(ex); }
   };
   const offer = res?.offers.find((o) => String(o.registrar_org_id ?? '') === reg);
+  // В зонах госучреждений (.gov.bln, .edu.bln) владелец — только госучреждение, где вы работаете.
+  const myOrgs = orgs.data?.orgs || [];
+  const govOnly = res?.restricted === 'gov';
+  const ownerOptions = govOnly
+    ? myOrgs.filter((o) => o.kind === 'gov').map((o) => ({ value: String(o.id), label: `${o.kind_title} «${o.name}»` }))
+    : [{ value: '', label: 'Я сам' }, ...myOrgs.map((o) => ({ value: String(o.id), label: `${o.kind_title} «${o.name}»` }))];
+  const ownerValue = govOnly && !ownerOptions.some((o) => o.value === owner) ? (ownerOptions[0]?.value || '') : owner;
   return (
     <div className="card">
       <h2>Найти и зарегистрировать домен</h2>
@@ -228,17 +238,23 @@ function DomainSearch({ data, onDone }) {
       <p className="small muted">Зоны: {data.tlds.map((t) => `.${t.name}${t.restricted ? ' (госучреждения)' : ''}`).join(', ')}</p>
       <ErrorBox error={err} />
       {res && !res.free && <div className="form-warn">{res.name}: {res.reason}{res.auction_id ? ' — смотрите аукционы ниже' : ''}</div>}
-      {res?.free && !order && (
+      {res?.free && !order && govOnly && !ownerOptions.length && (
+        <div className="form-warn">
+          {res.name} свободен, но в зоне .{res.tld} домены регистрируют только госучреждения. Вы не состоите ни в одном госучреждении:
+          его создаёт администрация и назначает директора. Если вас уже назначили — обновите страницу.
+        </div>
+      )}
+      {res?.free && !order && (!govOnly || ownerOptions.length > 0) && (
         <Form submitLabel={offer ? `Заказать за ${((offer.price * years) / 100).toLocaleString('ru-RU')} В` : 'Заказать'} onSubmit={async () => {
-          const r = await post('/gov/domains', { name: res.name, registrar_org_id: reg ? Number(reg) : null, years: Number(years), owner_org_id: owner ? Number(owner) : null });
+          const r = await post('/gov/domains', { name: res.name, registrar_org_id: reg ? Number(reg) : null, years: Number(years), owner_org_id: ownerValue ? Number(ownerValue) : null });
           setOrder(r);
           onDone();
         }}>
           <div className="form-ok"><b>{res.name}</b> свободен</div>
           <Select label="Регистратор" value={reg} onChange={(e) => setReg(e.target.value)} options={res.offers.map((o) => ({ value: String(o.registrar_org_id ?? ''), label: `${o.name} — ${(o.price / 100).toLocaleString('ru-RU')} В/год` }))} />
           <Select label="Срок" value={years} onChange={(e) => setYears(Number(e.target.value))} options={Array.from({ length: data.max_years }, (_, i) => ({ value: i + 1, label: `${i + 1} г. (${(i + 1) * 12} игровых мес.)` }))} />
-          {(orgs.data?.orgs || []).length > 0 && (
-            <Select label="Владелец" value={owner} onChange={(e) => setOwner(e.target.value)} options={[{ value: '', label: 'Я сам' }, ...orgs.data.orgs.map((o) => ({ value: String(o.id), label: `${o.kind_title} «${o.name}»` }))]} />
+          {(govOnly || myOrgs.length > 0) && (
+            <Select label="Владелец" value={ownerValue} onChange={(e) => setOwner(e.target.value)} options={ownerOptions} hint={govOnly ? 'В этой зоне владельцем может быть только госучреждение' : undefined} />
           )}
         </Form>
       )}

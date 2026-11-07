@@ -178,7 +178,7 @@ export async function registerDomain(conn, { govUserId, name: input, registrarOr
   if (ownerOrgId && !(await orgRole(conn, ownerOrgId, govUserId))) throw forbidden('Вы не сотрудник этой организации');
   if (tld.restricted === 'gov') {
     const org = ownerOrgId ? await one('SELECT kind FROM organizations WHERE id = ?', [ownerOrgId], conn) : null;
-    if (org?.kind !== 'gov') throw bad('restricted', `Домены в зоне ${disp(tld.name)} регистрируют только госучреждения`);
+    if (org?.kind !== 'gov') throw bad('restricted', `Домены в зоне ${disp(tld.name)} регистрируют только госучреждения: выберите владельцем госучреждение, где вы работаете`);
   }
   const av = await availability(conn, name, tld);
   if (!av.free) throw bad('taken', av.reason);
