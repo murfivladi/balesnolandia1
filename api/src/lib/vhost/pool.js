@@ -46,7 +46,12 @@ function fail(slot, err) {
 function next(kind) {
   if (!queues[kind].length) {
     for (const s of pools[kind]) {
-      if (!s.busy && !s.idleTimer) s.idleTimer = setTimeout(() => { s.dead = true; pools[kind] = pools[kind].filter((x) => x !== s); s.w.terminate(); }, IDLE_MS);
+      if (!s.busy && !s.idleTimer) {
+        // Простаивающий поток не должен держать процесс (тесты, остановка сервера).
+        s.w.unref();
+        s.idleTimer = setTimeout(() => { s.dead = true; pools[kind] = pools[kind].filter((x) => x !== s); s.w.terminate(); }, IDLE_MS);
+        s.idleTimer.unref?.();
+      }
     }
     return;
   }
@@ -55,6 +60,7 @@ function next(kind) {
   if (!slot) return;
   clearTimeout(slot.idleTimer);
   slot.idleTimer = null;
+  slot.w.ref();
   const job = queues[kind].shift();
   slot.busy = job;
   // Время считается с начала выполнения; первый запуск ещё и загружает интерпретатор.
@@ -84,6 +90,6 @@ export function runInPool(kind, payload, { timeoutMs, onFetch }) {
 }
 
 export async function stopPools() {
-  for (const kind of Object.keys(pools)) for (const s of pools[kind]) { s.dead = true; await s.w.terminate(); }
+  for (const kind of Object.keys(pools)) for (const s of pools[kind]) { s.dead = true; clearTimeout(s.idleTimer); await s.w.terminate(); }
   pools.php = []; pools.python = [];
 }

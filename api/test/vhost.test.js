@@ -16,6 +16,8 @@ before(async () => {
   (await import('../src/lib/dns.js')).flushResolverCache();
 });
 after(async () => {
+  // Потоки PHP и Python и таймеры не должны держать процесс тестов.
+  await (await import('../src/lib/vhost/pool.js')).stopPools();
   clock.setGameTimeOverride(null);
   await fs.rm(process.env.BALNET_SITES_DIR, { recursive: true, force: true });
   await app.close();
