@@ -131,7 +131,7 @@ test('открытие сайта: DNS → подключение → госса
   assert.equal(o.gov, true);
   assert.equal(o.server, 'web1.dc.gov.bln.');
   const s = await dev.post('/api/net/open', { client_id: C1, url: 'https://poisk.bln/?q=1' });
-  assert.equal(s.target, 'poisk');
+  assert.equal(s.target, 'app:poisk');
   const nx = await dev.post('/api/net/open', { client_id: C1, url: 'https://vasya.bln/' });
   assert.equal(nx.ok, false);
   assert.equal(nx.code, 'DNS_PROBE_FINISHED_NXDOMAIN');
@@ -176,12 +176,12 @@ test('админ: зона, записи, проверки, делегирова
 test('подключение: нет сайта, нет сервера, нет сети; vhost от админа', async () => {
   const noVhost = await dev.post('/api/net/open', { client_id: C1, url: 'https://test.shop/' });
   assert.equal(noVhost.code, 'HTTP_404_NO_VHOST');
-  await assert.rejects(admin.post('/api/admin/net/vhosts', { ip: '50.0.3.10', host: 'test.shop', target: 'poisk' }), /веб-серверах/);
+  await assert.rejects(admin.post('/api/admin/net/vhosts', { ip: '50.0.3.10', host: 'test.shop', target: 'app:poisk' }), /веб-серверах/);
   await assert.rejects(admin.post('/api/admin/net/vhosts', { ip: '50.1.0.10', host: 'test.shop', target: 'evil' }), /Сайт/);
-  await admin.post('/api/admin/net/vhosts', { ip: '50.1.0.10', host: 'test.shop', target: 'poisk' });
+  await admin.post('/api/admin/net/vhosts', { ip: '50.1.0.10', host: 'test.shop', target: 'app:poisk' });
   const ok = await dev.post('/api/net/open', { client_id: C1, url: 'https://test.shop/' });
   assert.equal(ok.ok, true);
-  assert.equal(ok.target, 'poisk');
+  assert.equal(ok.target, 'app:poisk');
   const timedOut = await dev.post('/api/net/open', { client_id: C1, url: 'https://x.test.shop/' });
   assert.equal(timedOut.code, 'ERR_CONNECTION_TIMED_OUT', 'по 50.1.0.99 никого нет');
   await admin.post(`/api/admin/net/zones/${zoneId}/records`, { name: 'ns', type: 'A', data: '50.0.3.10' });

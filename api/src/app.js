@@ -28,6 +28,7 @@ import { adminDomainRoutes } from './routes/admin-domains.js';
 import { webRoutes } from './routes/web.js';
 import { hostingRoutes, adminHostingRoutes } from './routes/hosting.js';
 import { certRoutes, adminPkiRoutes } from './routes/certs.js';
+import { searchRoutes, adminSearchRoutes } from './routes/search.js';
 
 export async function buildApp({ logger = config.env !== 'test' } = {}) {
   const app = Fastify({
@@ -69,7 +70,7 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
 
   // Сайты игроков работают в песочнице (Origin: null). Им открыт только шлюз БалНета —
   // остальной API (банк, услуги, касса) на такие запросы не отвечает.
-  const SANDBOX_OK = ['/api/net/web/', '/api/net/xfetch', '/api/net/shim.js'];
+  const SANDBOX_OK = ['/api/net/web/', '/api/net/xfetch', '/api/net/shim.js', '/api/search/adnet/'];
   app.addHook('onRequest', async (req, reply) => {
     if (req.headers.origin === 'null' && !SANDBOX_OK.some((p) => req.url.startsWith(p))) {
       return reply.code(403).send({ error: 'sandbox_origin', message: 'Запросы со страниц сайтов БалНета к этому API запрещены' });
@@ -103,6 +104,8 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
   await app.register(adminHostingRoutes, { prefix: '/api/admin/net' });
   await app.register(certRoutes, { prefix: '/api/gov' });
   await app.register(adminPkiRoutes, { prefix: '/api/admin/pki' });
+  await app.register(searchRoutes, { prefix: '/api/search' });
+  await app.register(adminSearchRoutes, { prefix: '/api/admin/search' });
 
   return app;
 }

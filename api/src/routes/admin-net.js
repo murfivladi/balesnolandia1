@@ -12,7 +12,7 @@ import { ipArg, bumpSerial, zoneFor, setPtr, checkRecord, recordArgs } from '../
 const BLOCK_PURPOSES = ['infra', 'datacenter', 'provider', 'ix', 'hosting'];
 const HOST_KINDS = ['router', 'auth', 'resolver', 'web'];
 /** Цели vhost, которые может назначить админ: приложения проекта и ВлодПоиск. Сайты игроков — этап Н4. */
-export const VHOST_TARGETS = ['app:bank', 'app:services', 'app:pos', 'app:reg', 'app:hosting', 'app:nalog', 'app:ca', 'poisk'];
+export const VHOST_TARGETS = ['app:bank', 'app:services', 'app:pos', 'app:reg', 'app:hosting', 'app:nalog', 'app:ca', 'app:poisk'];
 
 export async function adminNetRoutes(app) {
   app.addHook('preHandler', needAdmin());

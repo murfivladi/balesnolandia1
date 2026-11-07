@@ -180,7 +180,7 @@ export async function clientOf(clientId) {
 
 /**
  * Что ответит сервер на ip для имени host:
- *  ok — сайт найден (target: app:bank | app:services | app:pos | poisk);
+ *  ok — сайт найден (target: app:bank | app:services | app:poisk … | site:N);
  *  иначе code — ошибка как в Chrome.
  */
 export function connect(snap, src, ip, host) {
@@ -194,7 +194,7 @@ export function connect(snap, src, ip, host) {
   const ms = round(jitter(route.hops[route.hops.length - 1].rtt));
   if (!target) return { ok: false, code: 'HTTP_404_NO_VHOST', ip, server: h.name, status: 404, ms };
   // Встроенные цели (приложения проекта и ВлодПоиск) настраивает только админ — это и есть госсайты.
-  const gov = target.startsWith('app:') || target === 'poisk';
+  const gov = target.startsWith('app:');
   return { ok: true, ip, server: h.name, target, gov, status: 200, ms };
 }
 

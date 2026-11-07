@@ -10,7 +10,8 @@
     "./balnet-url.js": "./balnet-url.js",
     "./balnet-ip.js": "./balnet-ip.js",
     "./balnet-dns.js": "./balnet-dns.js",
-    "./balnet-pki.js": "./balnet-pki.js"
+    "./balnet-pki.js": "./balnet-pki.js",
+    "./balnet-safe.js": "./balnet-safe.js"
   },
   "scripts": { "test": "node --test" }
 }

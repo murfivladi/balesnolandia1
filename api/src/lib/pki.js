@@ -494,7 +494,7 @@ export async function tlsFor({ target, host }) {
 // ——— Госсайты и продление ———
 
 const GOV_CERTS = () => {
-  const hosts = [...Object.keys(GOV_SITES), SEARCH_HOST];
+  const hosts = [...new Set([...Object.keys(GOV_SITES), SEARCH_HOST])];
   return hosts.map((h) => ({ names: [h, `www.${h}`], policy: h === 'bank.bln' ? 'EV' : 'OV', o: h === 'bank.bln' ? 'ВлодБанк' : GOV_SITES[h]?.owner || 'Координационный центр БалНета' }));
 };
 

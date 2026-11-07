@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { resetPkiCache } from '../lib/pki.js';
+import { resetSearch } from './search.js';
 import { tx, q, one, pool, json } from '../db.js';
 import { bad, notFound, int, str, need } from '../lib/errors.js';
 import { needAdmin, actorOf, rolesOf } from '../lib/auth.js';
@@ -537,7 +538,7 @@ export async function adminRoutes(app) {
           await conn.query(`DELETE FROM \`${t}\``);
         }
       }
-      await conn.query("INSERT INTO accounts (number, owner_kind, type, name, allow_negative, system_code) VALUES ('BF00000000000001','system','system','Эмиссия',1,'EMISSION'),('BF00000000000002','system','system','Казна ВлодБанка',1,'TREASURY'),('BF00000000000003','system','system','Госбюджет БФ',1,'BUDGET'),('BF00000000000004','system','system','Наличные в обороте',1,'CASH'),('BF00000000000005','system','system','Оптовая база БФ',1,'WHOLESALE')");
+      await conn.query("INSERT INTO accounts (number, owner_kind, type, name, allow_negative, system_code) VALUES ('BF00000000000001','system','system','Эмиссия',1,'EMISSION'),('BF00000000000002','system','system','Казна ВлодБанка',1,'TREASURY'),('BF00000000000003','system','system','Госбюджет БФ',1,'BUDGET'),('BF00000000000004','system','system','Наличные в обороте',1,'CASH'),('BF00000000000005','system','system','Оптовая база БФ',1,'WHOLESALE'),('BF00000000000006','system','system','Рекламные балансы ВлодПоиска',1,'ADS')");
       // Хостинг игроков: арендованные серверы и их адреса, сайты на серверах, тарифы хостеров.
       const rented = (await q('SELECT ip FROM hosting_servers WHERE org_id IS NOT NULL', [], conn)).map((r) => r.ip);
       await conn.query("DELETE FROM net_vhosts WHERE target LIKE 'site:%'");
@@ -557,6 +558,7 @@ export async function adminRoutes(app) {
       invalidateNet();
       flushResolverCache();
       resetPkiCache();
+      resetSearch();
       await fs.rm(config.sitesDir, { recursive: true, force: true }).catch(() => {});
     } catch (err) {
       await conn.rollback().catch(() => {});

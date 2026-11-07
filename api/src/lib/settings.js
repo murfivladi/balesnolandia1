@@ -109,6 +109,12 @@ export const DEFAULTS = {
   cert_paid_months: 12,
   cert_ov_price: 5000,
   cert_ev_price: 20000,
+  // ВлодПоиск (этап Н6): краулер, вебмастер, реклама (цены в влодинках)
+  search_crawl_batch: 12,
+  search_recrawl_daily: 10,
+  ad_min_bid: 50,
+  ad_min_topup: 1000,
+  ad_network_share_bp: 6800,
   // Адреса и почта — задаются в админке (раздел «Система»), .env для них не нужен
   public_web_url: '',
   cors_origins: '',
@@ -161,6 +167,10 @@ export function publicSettings(s) {
     cert_ov_price: s.cert_ov_price,
     cert_ev_price: s.cert_ev_price,
     cert_dv_months: s.cert_dv_months,
+    search_recrawl_daily: s.search_recrawl_daily,
+    ad_min_bid: s.ad_min_bid,
+    ad_min_topup: s.ad_min_topup,
+    ad_network_share_bp: s.ad_network_share_bp,
     bank_logo: s.bank_logo,
     gov_logo: s.gov_logo,
     transfer_fee_bp: s.transfer_fee_bp,
