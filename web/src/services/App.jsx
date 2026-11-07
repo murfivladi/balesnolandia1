@@ -12,6 +12,7 @@ import { LoginForm, AuthDisclaimer, NotificationsModal } from '../shared/auth.js
 import { IdCard, passportBlocks, MARITAL, DOC_DISCLAIMER } from '../shared/passport.jsx';
 import { renderThermal, shareCanvas } from '../shared/thermal.js';
 import { gameDateLabel, mmYY } from '@bln/shared/time.js';
+import { OrgsPage, OrgPage, DomainsPage, DomainPage } from './domains.jsx';
 
 const DOC_TITLES = { inn: 'ИНН', ip: 'Свидетельство ИП', driver: 'Водительские права', marriage: 'Свидетельство о браке', birth: 'Свидетельство о рождении', foreign_passport: 'Загранпаспорт', visa: 'Виза' };
 
@@ -86,6 +87,8 @@ export default function App() {
             <NavLink href="#/documents" path={route.path}>{t('Документы')}</NavLink>
             <NavLink href="#/invoices" path={route.path}>{t('Квитанции')}</NavLink>
             <NavLink href="#/applications" path={route.path}>{t('Заявления')}</NavLink>
+            <NavLink href="#/orgs" path={route.path}>Организации</NavLink>
+            <NavLink href="#/domains" path={route.path}>Домены</NavLink>
             {isOfficial && <NavLink href="#/queue" path={route.path}>{t('Рассмотрение')}</NavLink>}
           </>
         )}
@@ -106,6 +109,10 @@ export default function App() {
           ['/invoices', () => <InvoicesPage />],
           ['/applications', () => <ApplicationsPage />],
           ['/links', () => <LinksPage />],
+          ['/orgs', () => <OrgsPage />],
+          ['/orgs/:id', (p) => <OrgPage id={p.id} />],
+          ['/domains', () => <DomainsPage />],
+          ['/domains/:id', (p) => <DomainPage id={p.id} />],
           ['/queue', () => (isOfficial ? <QueuePage /> : <Empty>{t('Нет доступа')}</Empty>)],
           ['*', () => <Empty>{t('Страница не найдена')}</Empty>],
         ], route.path)
@@ -197,6 +204,8 @@ function Home({ me }) {
               <ServiceTile href="#/documents" icon="🪪" title={t('ИНН и ИП')} sub={t('Регистрация бизнеса')} />
               <ServiceTile href="#/invoices" icon="🧾" title={t('Квитанции')} sub={t('Пошлины, штрафы, налоги')} />
               <ServiceTile href="#/links" icon="🏦" title={t('ВлодБанк')} sub={t('Связка с паспортом')} />
+              <ServiceTile href="#/orgs" icon="🏢" title="Организации" sub="ООО, АО, лицензии" />
+              <ServiceTile href="#/domains" icon="🌐" title="Домены" sub="Сайты в БалНете" />
               <ServiceTile href={appUrl('bank')} icon="💳" title={t('Открыть ВлодБанк')} sub={t('Счета и карты')} />
             </div>
           </div>

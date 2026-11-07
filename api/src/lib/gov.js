@@ -17,9 +17,17 @@ export const APP_TITLES = {
   visa: 'Виза',
   marriage: 'Свидетельство о браке',
   birth: 'Свидетельство о рождении',
+  org: 'Регистрация организации',
+  license: 'Лицензия',
 };
 
-const FEE_KEY = { passport: 'fee_passport', inn: 'fee_inn', ip: 'fee_ip', driver: 'fee_driver', foreign_passport: 'fee_foreign_passport', marriage: 'fee_marriage', birth: 'fee_birth' };
+/** Выдача по заявлению для типов из других модулей (организации, лицензии): fn(conn, app, citizen, month) → номер. */
+const issuers = new Map();
+export function onIssue(type, fn) {
+  issuers.set(type, fn);
+}
+
+const FEE_KEY = { passport: 'fee_passport', inn: 'fee_inn', ip: 'fee_ip', driver: 'fee_driver', foreign_passport: 'fee_foreign_passport', marriage: 'fee_marriage', birth: 'fee_birth', org: 'fee_org', license: 'fee_license' };
 
 // Что делать, когда оплачена квитанция определённого вида (штраф, налог, страховка…).
 const invoiceHooks = new Map();
@@ -40,12 +48,19 @@ export async function activePassport(citizenId, conn) {
   return one("SELECT * FROM passports WHERE citizen_id = ? AND status = 'active'", [citizenId], conn);
 }
 
-export async function createInvoice(conn, { citizenId = null, govUserId = null, kind, purpose, amount, ref, dueMonth = null }) {
+/**
+ * splits — кому уходят деньги: [{ account, amount }] с суммой = amount. Без splits всё уходит в госбюджет.
+ */
+export async function createInvoice(conn, { citizenId = null, govUserId = null, kind, purpose, amount, ref, dueMonth = null, splits = null }) {
+  if (splits) {
+    const sum = splits.reduce((s, x) => s + Number(x.amount), 0);
+    if (sum !== Number(amount) || splits.some((x) => !Number.isSafeInteger(Number(x.amount)) || Number(x.amount) < 0)) throw new Error('invoice: splits must add up to amount');
+  }
   return withUnique(async () => {
     const number = newInvoiceNumber();
     const res = await q(
-      'INSERT INTO invoices (number, citizen_id, gov_user_id, kind, purpose, amount, ref_type, ref_id, due_month) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [number, citizenId, govUserId, kind, purpose, amount, ref?.type || null, ref?.id || null, dueMonth],
+      'INSERT INTO invoices (number, citizen_id, gov_user_id, kind, purpose, amount, ref_type, ref_id, due_month, splits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [number, citizenId, govUserId, kind, purpose, amount, ref?.type || null, ref?.id || null, dueMonth, splits ? JSON.stringify(splits) : null],
       conn,
     );
     return { id: res.insertId, number };
@@ -68,7 +83,7 @@ export async function submitApplication(conn, { govUserId, citizenId, type, data
 }
 
 function needsApproval(type, s) {
-  if (type === 'marriage' || type === 'birth') return true;
+  if (type === 'marriage' || type === 'birth' || type === 'license') return true;
   return type === 'passport' && !!s.passport_approval;
 }
 
@@ -133,6 +148,7 @@ async function issueFor(conn, app) {
   }
   const citizen = await citizenOf(app.gov_user_id, conn);
   if (!citizen) throw bad('no_passport', 'Сначала получите паспорт БФ');
+  if (issuers.has(app.type)) return issuers.get(app.type)(conn, app, citizen, month);
   if (app.type === 'inn') {
     return withUnique(async () => {
       const n = randomDigits(10);
@@ -214,10 +230,15 @@ export async function payInvoice(conn, number, { fromAccount, via, actor, idem, 
     const acc = await one('SELECT status FROM accounts WHERE id = ?', [fromAccount], conn);
     if (acc?.status === 'arrested') force = true;
   }
+  const splits = json(inv.splits, null);
+  const budget = await sys('BUDGET', conn);
+  const credit = splits?.length
+    ? splits.filter((x) => Number(x.amount) > 0).map((x) => ({ account: x.account ?? budget, amount: Number(x.amount) }))
+    : [{ account: budget, amount: Number(inv.amount) }];
   const r = await post(conn, {
     kind: via === 'cash' ? 'invoice_cash' : 'invoice',
     memo: `${inv.purpose} (${inv.number})`,
-    entries: [{ account: fromAccount, amount: -Number(inv.amount) }, { account: await sys('BUDGET', conn), amount: Number(inv.amount) }],
+    entries: [{ account: fromAccount, amount: -Number(inv.amount) }, ...credit],
     idem,
     actor,
     force,

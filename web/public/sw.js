@@ -1,7 +1,7 @@
 // Service worker Балесноландии: приложения ставятся как PWA и открываются без сети
 // (деньги и данные — только онлайн: API не кешируется).
-const CACHE = 'bln-v1';
-const SHELLS = ['./', './bank/', './pos/', './services/', './admin/'];
+const CACHE = 'bln-v2';
+const SHELLS = ['./', './apps/', './bank/', './pos/', './services/', './admin/'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELLS).catch(() => {})).then(() => self.skipWaiting()));

@@ -52,6 +52,7 @@ export function client(app) {
     get: (u) => call('GET', u),
     post: (u, b = {}, h) => call('POST', u, b, h),
     patch: (u, b = {}) => call('PATCH', u, b),
+    put: (u, b = {}) => call('PUT', u, b),
     delete: (u) => call('DELETE', u),
     idem: (u, b = {}) => call('POST', u, b, { 'idempotency-key': `k${Date.now()}${n++}` }),
   };

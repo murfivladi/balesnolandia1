@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 
-// Четыре приложения — multi-page сборка: / (выбор), /bank/, /pos/, /services/, /admin/.
+// Multi-page сборка: / (ВлодБраузер), /apps/ (выбор приложения), /bank/, /pos/, /services/, /admin/.
 // Cloudflare Pages: сайт в корне bln.vladislavb.qzz.io; другой путь — через BASE_PATH.
 // Маршрутизация внутри приложений по hash (#/...), поэтому перенаправления не нужны.
 export default defineConfig({
@@ -14,6 +14,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve(import.meta.dirname, 'index.html'),
+        apps: resolve(import.meta.dirname, 'apps/index.html'),
         bank: resolve(import.meta.dirname, 'bank/index.html'),
         pos: resolve(import.meta.dirname, 'pos/index.html'),
         services: resolve(import.meta.dirname, 'services/index.html'),

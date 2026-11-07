@@ -15,6 +15,8 @@ import { publicBankUser, publicGovUser } from './auth.js';
 import { passportView } from './gov.js';
 import { activePassport } from '../lib/gov.js';
 import { formatMoney } from '@bln/shared/money.js';
+import { invalidateNet } from '../lib/net.js';
+import { flushResolverCache } from '../lib/dns.js';
 
 export const ROLES = {
   admin: ['bank', 'gov'],
@@ -57,7 +59,9 @@ function cleanSettings(body) {
 }
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories', 'wholesale_items', 'fine_articles', 'countries']);
+const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories', 'wholesale_items', 'fine_articles', 'countries',
+  // Инфраструктура БалНета — настройка админа, а не игровые данные. Аренды адресов (net_leases) сбрасываются.
+  'net_providers', 'net_ip_blocks', 'net_hosts', 'net_vhosts', 'dns_zones', 'dns_zone_servers', 'dns_records', 'tlds']);
 
 async function tableNames(conn) {
   const rows = await q('SHOW TABLES', [], conn);
@@ -530,9 +534,15 @@ export async function adminRoutes(app) {
         }
       }
       await conn.query("INSERT INTO accounts (number, owner_kind, type, name, allow_negative, system_code) VALUES ('BF00000000000001','system','system','Эмиссия',1,'EMISSION'),('BF00000000000002','system','system','Казна ВлодБанка',1,'TREASURY'),('BF00000000000003','system','system','Госбюджет БФ',1,'BUDGET'),('BF00000000000004','system','system','Наличные в обороте',1,'CASH'),('BF00000000000005','system','system','Оптовая база БФ',1,'WHOLESALE')");
+      // DNS доменов игроков живёт в сохраняемых таблицах сети — убираем его отдельно.
+      await conn.query('DELETE FROM dns_records WHERE domain_id IS NOT NULL');
+      await conn.query('DELETE FROM dns_zones WHERE domain_id IS NOT NULL');
+      await conn.query('UPDATE tlds SET registry_org_id = NULL');
       await conn.query('INSERT INTO game_clock (id, month_index, last_tick_at, paused) VALUES (1, 0, NOW(3), 0)');
       await conn.query('INSERT INTO price_index (month, rate_bp, index_ppm) VALUES (0, 0, 1000000)');
       await conn.commit();
+      invalidateNet();
+      flushResolverCache();
     } catch (err) {
       await conn.rollback().catch(() => {});
       throw err;

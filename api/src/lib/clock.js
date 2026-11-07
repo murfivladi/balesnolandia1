@@ -14,6 +14,42 @@ export function onMonth(name, fn) {
   handlers.push({ name, fn });
 }
 
+// ——— Игровые секунды (TTL DNS, сроки в сети) ———
+// В игровом месяце 30 игровых суток. Внутри месяца время идёт пропорционально реальному
+// от last_tick_at; на паузе стоит. Значение монотонно: после снятия паузы не идёт назад.
+const GAME_MONTH_SECONDS = 30 * 86400;
+let gameCache = { at: 0, state: null };
+let lastGame = 0;
+let gameOverride = null;
+
+/** Для тестов: подменить игровое время (null — вернуть настоящее). */
+export function setGameTimeOverride(fn) {
+  gameOverride = fn;
+  lastGame = 0;
+}
+
+export async function gameSeconds() {
+  if (gameOverride) return gameOverride();
+  if (Date.now() - gameCache.at > 1000 || !gameCache.state) {
+    const r = await one('SELECT month_index, last_tick_at, paused FROM game_clock WHERE id = 1');
+    const s = await getSettings();
+    gameCache = { at: Date.now(), state: { ...r, minutes: Number(s.game_month_minutes) || 10 } };
+  }
+  const st = gameCache.state;
+  let t = (st?.month_index || 0) * GAME_MONTH_SECONDS;
+  if (st && !st.paused) {
+    const frac = Math.min(1, Math.max(0, (Date.now() - new Date(st.last_tick_at).getTime()) / (st.minutes * 60000)));
+    t += Math.floor(frac * (GAME_MONTH_SECONDS - 1));
+  }
+  lastGame = Math.max(lastGame, t);
+  return lastGame;
+}
+
+export async function isPaused() {
+  const r = await one('SELECT paused FROM game_clock WHERE id = 1');
+  return !!r?.paused;
+}
+
 export async function currentMonth(conn) {
   const r = await one('SELECT month_index FROM game_clock WHERE id = 1', [], conn);
   return r ? r.month_index : 0;
