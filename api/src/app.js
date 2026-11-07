@@ -31,6 +31,7 @@ import { certRoutes, adminPkiRoutes } from './routes/certs.js';
 import { searchRoutes, adminSearchRoutes } from './routes/search.js';
 import { hubRoutes } from './routes/hub.js';
 import { mailRoutes, adminMailRoutes } from './routes/mail.js';
+import { payRoutes, posOnlineRoutes, oauthRoutes, adminPayRoutes } from './routes/pay.js';
 
 export async function buildApp({ logger = config.env !== 'test' } = {}) {
   const app = Fastify({
@@ -111,6 +112,10 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
   await app.register(mailRoutes, { prefix: '/api/mail' });
   await app.register(adminMailRoutes, { prefix: '/api/admin/mail' });
   await app.register(adminSearchRoutes, { prefix: '/api/admin/search' });
+  await app.register(payRoutes, { prefix: '/api/pay' });
+  await app.register(posOnlineRoutes, { prefix: '/api/pos' });
+  await app.register(oauthRoutes, { prefix: '/api/oauth' });
+  await app.register(adminPayRoutes, { prefix: '/api/admin/pay' });
 
   return app;
 }

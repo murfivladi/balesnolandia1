@@ -4,6 +4,7 @@ import { migrate } from './migrate.js';
 import { startClock } from './lib/clock.js';
 import { startCrawler } from './lib/search/crawler.js';
 import { startCron } from './lib/vhost/cron.js';
+import { startPayWorker } from './lib/pay/core.js';
 import { ensureJwtSecret } from './lib/secrets.js';
 import { VERSION, watchForNewVersion } from './lib/version.js';
 import { patchNetworkInterfaces } from './lib/netinfo.js';
@@ -21,7 +22,7 @@ if (!patchNetworkInterfaces((err) => app.log.warn({ err }, 'Сетевые ин�
 // Всё, что раньше делали скрипты на сервере: схема базы и секрет — при запуске.
 if (config.migrateOnStart) await migrate({ log: (m) => app.log.info(m) });
 await ensureJwtSecret();
-if (config.gameClock) { startClock(); startCrawler(); startCron(); }
+if (config.gameClock) { startClock(); startCrawler(); startCron(); startPayWorker(); }
 
 await app.listen({ port: config.port, host: config.host });
 app.log.info(`Балесноландия API ${VERSION} на ${config.host}:${config.port}`);

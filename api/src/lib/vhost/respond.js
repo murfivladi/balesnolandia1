@@ -228,7 +228,18 @@ export async function netRequest({ fromIp, url, method = 'GET', headers = {}, bo
       if (binary) out.buf = g.body; else out.body = g.body.toString('utf8');
       return out;
     }
-    if (conn.target.startsWith('app:')) return { error: 'ERR_GOV_SITE: госсайты не принимают запросы от серверов (API для сайтов появятся с эквайрингом ВлодБанка)', ip, gov: true };
+    if (conn.target.startsWith('app:')) {
+      // Госсайты отвечают серверам только своим API: эквайринг pay.bank.bln/api/v1 и OAuth ВлодПочты и ВлодУслуг.
+      if (p.scheme === 'https' && !(await tlsFor({ target: conn.target, host: p.host }))) return { error: 'ERR_CONNECTION_REFUSED', ip };
+      const { govHttp } = await import('../pay/api.js');
+      const g = p.scheme === 'https'
+        ? await govHttp(conn.target, { method, path: p.path, headers, body })
+        : { status: 400, headers: { 'content-type': 'application/json; charset=utf-8' }, body: Buffer.from(JSON.stringify({ error: { code: 'https_required', message: 'API госсайтов — только по https://' } })) };
+      if (!g) return { error: 'ERR_GOV_SITE: этот адрес госсайта открывается только во ВлодБраузере (серверам доступны pay.bank.bln/api/v1 и /oauth/…)', ip, gov: true };
+      const res = { status: g.status, headers: g.headers, url: cur, ip, siteId: null, gov: true };
+      if (binary) res.buf = g.body; else res.body = g.body.toString('utf8');
+      return res;
+    }
     if (p.scheme === 'https') {
       const tls = await tlsFor({ target: conn.target, host: p.host });
       if (!tls) return { error: 'ERR_CONNECTION_REFUSED', ip, note: 'на сервере нет сертификата (порт 443 закрыт)' };

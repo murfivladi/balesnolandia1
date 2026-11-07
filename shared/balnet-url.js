@@ -30,6 +30,7 @@ export const GOV_SITES = {
   'poisk.bln': { app: 'poisk', title: 'ВлодПоиск', owner: 'Правительство БФ' },
   'vlodhub.bln': { app: 'hub', title: 'ВлодХаб', owner: 'Координационный центр БалНета' },
   'mail.bln': { app: 'mail', title: 'ВлодПочта', owner: 'Координационный центр БалНета' },
+  'pay.bank.bln': { app: 'pay', title: 'ВлодБанк Оплата', owner: 'ВлодБанк (госбанк БФ)' },
 };
 
 const SCHEME_RE = /^([a-z][a-z0-9+.-]*):\/\//i;

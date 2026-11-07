@@ -17,6 +17,10 @@ export const DEFAULTS = {
   transfer_fee_bp: 0,
   transfer_fee_min: 0,
   acquiring_fee_bp: 0,
+  // Эквайринг для сайтов (Н9): комиссия банка с онлайн-оплат, срок платёжной ссылки, реальная доставка
+  online_fee_bp: 200,
+  pay_link_minutes: 60,
+  physical_delivery_days: 7,
   card_valid_months: 36,
   card_issue_fee: 0,
   card_reissue_fee: 0,

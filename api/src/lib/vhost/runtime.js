@@ -98,6 +98,14 @@ export async function runHandler({ dir, entry = 'server.js', handler, arg, cpuMs
       return host.ws(ctx.getString(op), JSON.parse(ctx.getString(args)));
     }));
     def('__uuid', () => ctx.newString(crypto.randomUUID()));
+    // Хеши и HMAC для подписей (вебхуки эквайринга, токены): hex-строка.
+    def('__hash', (alg, key, data) => {
+      const a = ctx.getString(alg);
+      if (!['sha256', 'sha1', 'sha512', 'md5'].includes(a)) throw new Error('Неизвестный алгоритм');
+      const k = ctx.getString(key);
+      const d = ctx.getString(data);
+      return ctx.newString(k ? crypto.createHmac(a, k).update(d).digest('hex') : crypto.createHash(a).update(d).digest('hex'));
+    });
     const asyncHost = (name, fn) => def(name, (reqH) => {
       const d = ctx.newPromise();
       const req = JSON.parse(ctx.getString(reqH));

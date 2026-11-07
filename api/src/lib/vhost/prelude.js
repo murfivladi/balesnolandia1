@@ -183,7 +183,18 @@ export const PRELUDE = String.raw`
     close: function (id, reason) { return JSON.parse(__ws('close', JSON.stringify({ id: id, reason: reason || '' }))); },
     list: function (path) { return JSON.parse(__ws('list', JSON.stringify({ path: path || null }))); },
   };
-  g.crypto = { randomUUID: function () { return __uuid(); } };
+  g.crypto = {
+    randomUUID: function () { return __uuid(); },
+    // crypto.hmac('sha256', ключ, данные) и crypto.hash('sha256', данные) → hex. Сравнение подписей — timingSafeEqual.
+    hmac: function (alg, key, data) { return __hash(String(alg), String(key), String(data)); },
+    hash: function (alg, data) { return __hash(String(alg), '', String(data)); },
+    timingSafeEqual: function (a, b) {
+      a = String(a); b = String(b);
+      if (a.length !== b.length) return false;
+      var r = 0; for (var i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+      return r === 0;
+    },
+  };
   g.setTimeout = function (fn) { Promise.resolve().then(fn); return 0; };
 
   function normalize(res) {

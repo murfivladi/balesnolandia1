@@ -495,7 +495,7 @@ export async function tlsFor({ target, host }) {
 
 const GOV_CERTS = () => {
   const hosts = [...new Set([...Object.keys(GOV_SITES), SEARCH_HOST])];
-  return hosts.map((h) => ({ names: [h, `www.${h}`], policy: h === 'bank.bln' ? 'EV' : 'OV', o: h === 'bank.bln' ? 'ВлодБанк' : GOV_SITES[h]?.owner || 'Координационный центр БалНета' }));
+  return hosts.map((h) => ({ names: [h, `www.${h}`], policy: h.endsWith('bank.bln') ? 'EV' : 'OV', o: h.endsWith('bank.bln') ? 'ВлодБанк' : GOV_SITES[h]?.owner || 'Координационный центр БалНета' }));
 };
 
 /** Сертификаты госсайтов: выпуск при старте и перевыпуск за 2 игровых месяца до конца. */
