@@ -3,6 +3,8 @@ process.env.DB_NAME = process.env.TEST_DB_NAME || 'bln_test';
 process.env.MAIL_TRANSPORT = 'console';
 process.env.ADMIN_EMAILS = 'admin@test.bf';
 process.env.GAME_CLOCK = 'off';
+// Файлы сайтов игроков — во временном каталоге теста.
+process.env.BALNET_SITES_DIR = (await import('node:path')).join((await import('node:os')).tmpdir(), `bln-sites-${process.pid}`);
 
 const { buildApp } = await import('../src/app.js');
 const { migrate, dropAll } = await import('../src/migrate.js');

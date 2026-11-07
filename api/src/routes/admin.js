@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import { tx, q, one, pool, json } from '../db.js';
 import { bad, notFound, int, str, need } from '../lib/errors.js';
 import { needAdmin, actorOf, rolesOf } from '../lib/auth.js';
@@ -61,7 +62,9 @@ function cleanSettings(body) {
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories', 'wholesale_items', 'fine_articles', 'countries',
   // Инфраструктура БалНета — настройка админа, а не игровые данные. Аренды адресов (net_leases) сбрасываются.
-  'net_providers', 'net_ip_blocks', 'net_hosts', 'net_vhosts', 'dns_zones', 'dns_zone_servers', 'dns_records', 'tlds']);
+  'net_providers', 'net_ip_blocks', 'net_hosts', 'net_vhosts', 'dns_zones', 'dns_zone_servers', 'dns_records', 'tlds',
+  // Госхостинг (серверы и тарифы без организации) — настройка админа; хостеров убираем отдельно.
+  'hosting_servers', 'hosting_plans']);
 
 async function tableNames(conn) {
   const rows = await q('SHOW TABLES', [], conn);
@@ -534,6 +537,15 @@ export async function adminRoutes(app) {
         }
       }
       await conn.query("INSERT INTO accounts (number, owner_kind, type, name, allow_negative, system_code) VALUES ('BF00000000000001','system','system','Эмиссия',1,'EMISSION'),('BF00000000000002','system','system','Казна ВлодБанка',1,'TREASURY'),('BF00000000000003','system','system','Госбюджет БФ',1,'BUDGET'),('BF00000000000004','system','system','Наличные в обороте',1,'CASH'),('BF00000000000005','system','system','Оптовая база БФ',1,'WHOLESALE')");
+      // Хостинг игроков: арендованные серверы и их адреса, сайты на серверах, тарифы хостеров.
+      const rented = (await q('SELECT ip FROM hosting_servers WHERE org_id IS NOT NULL', [], conn)).map((r) => r.ip);
+      await conn.query("DELETE FROM net_vhosts WHERE target LIKE 'site:%'");
+      for (const ip of rented) {
+        await conn.query('DELETE FROM net_hosts WHERE ip = ?', [ip]);
+        await conn.query("DELETE FROM dns_records WHERE type = 'PTR' AND name = ?", [`${ip.split('.').reverse().join('.')}.in-addr.arpa.`]);
+      }
+      await conn.query('DELETE FROM hosting_plans WHERE org_id IS NOT NULL');
+      await conn.query('DELETE FROM hosting_servers WHERE org_id IS NOT NULL');
       // DNS доменов игроков живёт в сохраняемых таблицах сети — убираем его отдельно.
       await conn.query('DELETE FROM dns_records WHERE domain_id IS NOT NULL');
       await conn.query('DELETE FROM dns_zones WHERE domain_id IS NOT NULL');
@@ -543,6 +555,7 @@ export async function adminRoutes(app) {
       await conn.commit();
       invalidateNet();
       flushResolverCache();
+      await fs.rm(config.sitesDir, { recursive: true, force: true }).catch(() => {});
     } catch (err) {
       await conn.rollback().catch(() => {});
       throw err;

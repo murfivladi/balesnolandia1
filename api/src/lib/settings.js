@@ -98,6 +98,12 @@ export const DEFAULTS = {
   domain_redemption_fee: 2000,
   auction_months: 1,
   auction_pay_months: 1,
+  // Хостинг (этап Н4)
+  hosting_server_rent: 3000,
+  hosting_server_disk_mb: 500,
+  hosting_grace_months: 1,
+  hosting_max_months: 12,
+  hosting_max_file_kb: 5120,
   // Адреса и почта — задаются в админке (раздел «Система»), .env для них не нужен
   public_web_url: '',
   cors_origins: '',

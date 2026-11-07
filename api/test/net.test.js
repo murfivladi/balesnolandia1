@@ -220,7 +220,7 @@ test('провайдер и хост из админки; удаление зо�
   const ptr = await resolveA(dev, '1.0.9.60.in-addr.arpa', { type: 'PTR' });
   assert.equal(ptr.answer[0].data, 'gw.test-isp.bln.');
   await assert.rejects(admin.post('/api/admin/net/hosts', { ip: '80.0.0.1', name: 'x.bln', kind: 'web' }), /блок/);
-  await admin.post('/api/admin/net/hosts', { ip: '50.1.0.30', name: 'web3.dc.gov.bln', kind: 'web' });
+  await admin.post('/api/admin/net/hosts', { ip: '50.1.0.40', name: 'web3.dc.gov.bln', kind: 'web' });
 
   await admin.delete(`/api/admin/net/zones/${zoneId}`);
   await admin.post('/api/admin/net/cache/flush', {});

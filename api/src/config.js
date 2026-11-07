@@ -45,5 +45,7 @@ export const config = {
     from: env.MAIL_FROM || 'Балесноландия <no-reply@vladislavb.ru>',
   },
   gameClock: (env.GAME_CLOCK || 'on') === 'on',
+  // Файлы сайтов игроков (статический хостинг БалНета). Каталог не трогает деплой.
+  sitesDir: env.BALNET_SITES_DIR || path.join(APP_DIR, 'balnet-sites'),
 };
 

@@ -8,6 +8,7 @@ import { isIP, normalizeIP } from '@bln/shared/balnet-ip.js';
 import { splitUrl } from '@bln/shared/balnet-url.js';
 import { fqdn } from '@bln/shared/balnet-dns.js';
 import { whoisDomain } from '../lib/domains.js';
+import { createTicket, cleanJar } from '../lib/gateway.js';
 
 const limited = (max) => ({ config: { rateLimit: { max, timeWindow: '1 minute' } } });
 
@@ -22,7 +23,7 @@ function ipParam(v, what) {
 }
 
 /** Клиент и его резолвер: свой (настройка браузера) или резолвер провайдера. */
-async function clientCtx(body) {
+export async function clientCtx(body) {
   const c = await clientOf(body.client_id);
   const resolverIp = ipParam(body.resolver, 'DNS-сервер') || c.provider.resolver_ip;
   return { ...c, resolverIp };
@@ -50,6 +51,19 @@ export function dnsErrorCode(dns) {
   if (dns.rcode === 'NOERROR') return 'ERR_NAME_NOT_RESOLVED'; // имя есть, но адресов (A/AAAA) у него нет
   if (dns.rcode === 'TIMEOUT') return 'DNS_PROBE_FINISHED_BAD_CONFIG';
   return 'ERR_NAME_RESOLUTION_FAILED';
+}
+
+/** Открыть адрес от имени устройства: { ok, ip, target, gov, server, code, dns, timing }. */
+export async function openFor(c, url) {
+  const p = splitUrl(url);
+  if (!p || (p.scheme !== 'https' && p.scheme !== 'http')) throw bad('invalid_url', 'Неверный адрес');
+  const started = Date.now();
+  const { ip, dns } = await hostToIp(c, p.host);
+  const base = { url, host: p.host, client_ip: c.ip, resolver_ip: c.resolverIp, dns };
+  if (!ip) return { ...base, ok: false, code: dnsErrorCode(dns), timing: { dns: dns?.ms || 0 } };
+  const snap = await netSnapshot();
+  const conn = connect(snap, c.ip, ip, p.host);
+  return { ...base, ...conn, ok: conn.ok, timing: { dns: dns?.ms || 0, connect: conn.ms || 0, server: Date.now() - started } };
 }
 
 export async function netRoutes(app) {
@@ -85,19 +99,20 @@ export async function netRoutes(app) {
   });
 
   // Открытие адреса браузером: DNS → подключение к серверу → что показать.
+  // Открытие адреса браузером: DNS → подключение к серверу → что показать.
+  // Для сайта игрока выдаётся билет шлюза (адрес песочницы) с хранилищами сайта от браузера.
   app.post('/open', limited(240), async (req) => {
     await online();
     const b = req.body || {};
     const c = await clientCtx(b);
-    const p = splitUrl(String(b.url || ''));
-    if (!p || (p.scheme !== 'https' && p.scheme !== 'http')) throw bad('invalid_url', 'Неверный адрес');
-    const started = Date.now();
-    const { ip, dns } = await hostToIp(c, p.host);
-    const base = { url: b.url, host: p.host, client_ip: c.ip, resolver_ip: c.resolverIp, dns };
-    if (!ip) return { ...base, ok: false, code: dnsErrorCode(dns), timing: { dns: dns?.ms || 0 } };
-    const snap = await netSnapshot();
-    const conn = connect(snap, c.ip, ip, p.host);
-    return { ...base, ...conn, ok: conn.ok, timing: { dns: dns?.ms || 0, connect: conn.ms || 0, server: Date.now() - started } };
+    const r = await openFor(c, String(b.url || ''));
+    if (r.ok && r.target?.startsWith('site:')) {
+      const p = splitUrl(r.url);
+      const jar = cleanJar(b.jar);
+      r.ticket = createTicket({ clientId: b.client_id, resolver: c.resolverIp, target: r.target, host: p.host, scheme: p.scheme, origin: `${p.scheme}://${p.host}`, ...jar });
+      r.tls = false; // сертификаты сайтов игроков — этап Н5
+    } else if (r.ok) r.tls = true;
+    return r;
   });
 
   app.post('/ping', limited(60), async (req) => {
