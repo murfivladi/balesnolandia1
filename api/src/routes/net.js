@@ -49,6 +49,11 @@ async function hostToIp(c, host) {
   return { ip, dns };
 }
 
+/** Referer как у браузера (strict-origin-when-cross-origin): только origin страницы, откуда перешли. */
+function refOrigin(v) {
+  try { const u = new URL(String(v || '')); return /^https?:$/.test(u.protocol) ? u.origin : null; } catch { return null; }
+}
+
 /** Ошибка резолва → код как в Chrome. */
 export function dnsErrorCode(dns) {
   if (dns.rcode === 'NXDOMAIN') return 'DNS_PROBE_FINISHED_NXDOMAIN';
@@ -118,7 +123,7 @@ export async function netRoutes(app) {
     if (p.scheme === 'https') r.tls = await tlsFor({ target: r.target, host: p.host });
     if (r.target?.startsWith('site:') && !(p.scheme === 'https' && !r.tls)) {
       const jar = cleanJar(b.jar);
-      r.ticket = createTicket({ clientId: b.client_id, clientIp: c.ip, resolver: c.resolverIp, target: r.target, host: p.host, scheme: p.scheme, origin: `${p.scheme}://${p.host}`, ...jar });
+      r.ticket = createTicket({ clientId: b.client_id, clientIp: c.ip, referrer: refOrigin(b.referrer), resolver: c.resolverIp, target: r.target, host: p.host, scheme: p.scheme, origin: `${p.scheme}://${p.host}`, ...jar });
     }
     return r;
   });

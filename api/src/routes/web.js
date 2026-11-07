@@ -7,6 +7,7 @@ import {
 } from '../lib/gateway.js';
 import { siteRespond, netRequest, reachSite } from '../lib/vhost/respond.js';
 import { attach } from '../lib/vhost/sockets.js';
+import { recordHit } from '../lib/vhost/analytics.js';
 import { siteByTarget } from '../lib/hosting.js';
 import { SHIM_JS } from '../lib/balnet-shim.js';
 import { splitUrl } from '@bln/shared/balnet-url.js';
@@ -88,6 +89,11 @@ export async function webRoutes(app) {
       reply.code(r.status).type(type);
       if (req.method === 'HEAD') return reply.send();
       if (type.startsWith('text/html')) {
+        if (req.method === 'GET' && r.status === 200) {
+          const first = !ticket.seen;
+          ticket.seen = true;
+          recordHit(site, ticket, urlPath, { first }).catch(() => {});
+        }
         const html = rewriteRootPaths(r.body.toString('utf8'), prefix, 'html');
         return reply.send(injectShim(html, {
           ticket: ticketId, prefix, origin: ticket.origin, cookies: ticket.cookies, local: ticket.local, jarDirty: jarChanged,

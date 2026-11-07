@@ -381,3 +381,31 @@ test('SSH: вход по паролю из панели, клетка домаш
   const { stopPools } = await import('../src/lib/vhost/pool.js');
   await stopPools();
 });
+
+test('аналитика: просмотры, посетители, страницы, источники (прямой, ВлодПоиск, другой сайт)', async () => {
+  (await import('../src/lib/vhost/respond.js')).resetRateLimits();
+  await boris.gov.delete(`${site['boris.bln'].f}/file?path=server.py`).catch(() => {});
+  await put('boris.bln', 'index.html', '<html><head><title>Пекарня</title></head><body>Главная</body></html>');
+  await put('boris.bln', 'menu.html', '<html><head><title>Меню</title></head><body>Меню</body></html>');
+  const before = (await boris.gov.get(`${site['boris.bln'].f}/analytics`)).total.views;
+  const o1 = await open('http://boris.bln/'); // набрали адрес
+  await web(o1.ticket, '/');
+  await web(o1.ticket, '/menu.html'); // переход внутри сайта
+  await web(o1.ticket, '/style.css'); // не страница — не считается
+  const o2 = await dev.post('/api/net/open', { client_id: DEV, url: 'http://boris.bln/menu.html', referrer: 'https://poisk.bln/?q=хлеб' });
+  await web(o2.ticket, '/menu.html');
+  const other = client(app);
+  await other.post('/api/net/lease', { client_id: 'device-vhost-02', provider: 'baltelecom' });
+  const o3 = await other.post('/api/net/open', { client_id: 'device-vhost-02', url: 'http://boris.bln/', referrer: 'http://anna.bln/links.html' });
+  await web(o3.ticket, '/');
+  const a = await boris.gov.get(`${site['boris.bln'].f}/analytics?days=7`);
+  assert.equal(a.total.views - before, 4);
+  assert.equal(a.daily.length, 7);
+  assert.ok(a.total.visitors >= 2, 'два разных устройства');
+  const src = Object.fromEntries(a.sources.map((x) => [`${x.source}${x.host ? `:${x.host}` : ''}`, x.visits]));
+  assert.ok(src.direct >= 1);
+  assert.equal(src['search:poisk.bln'], 1);
+  assert.equal(src['site:anna.bln'], 1);
+  assert.ok(a.pages.some((p) => p.path === '/menu.html' && p.views >= 2));
+  await assert.rejects(anna.gov.get(`${site['boris.bln'].f}/analytics`), /not_found/);
+});

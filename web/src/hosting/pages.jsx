@@ -6,6 +6,7 @@ import {
   Spinner, useAsync, Input, Select, Form, Money, MoneyInput, Badge, ActionButton, ErrorBox, Button, Modal, useToast,
 } from '../shared/ui.jsx';
 import { gameDateLabel } from '@bln/shared/time.js';
+import { BarChart } from '../shared/charts.jsx';
 
 const STATUS_KIND = { active: 'ok', reserved: 'warn', suspended: 'err' };
 const mb = (bytes) => `${(Number(bytes) / 1048576).toFixed(Number(bytes) < 10485760 ? 2 : 1)} МБ`;
@@ -150,6 +151,7 @@ export function HostingAccountPage({ id }) {
         </div>
       </div>
       {site && <SslCard key={`ssl${site.id}`} accountId={id} site={site} active={a.status === 'active'} onChange={reload} />}
+      {site && <AnalyticsCard key={`an${site.id}`} accountId={id} site={site} />}
       {site && a.kind === 'virtual' && <ServerCard key={`srv${site.id}`} accountId={id} site={site} canWrite={a.status === 'active'} />}
       {site && <FileManager key={site.id} accountId={id} site={site} canWrite={a.status === 'active'} onChange={reload} />}
     </div>
@@ -341,6 +343,56 @@ export function OrgHosting({ orgId, director, kind }) {
           </div>
           <MoneyInput label="Цена в игровой месяц (с НДС)" value={plan.price_month} onChange={(v) => setPlan({ ...plan, price_month: v })} />
         </Form>
+      )}
+    </div>
+  );
+}
+
+const SOURCE = { direct: 'Прямые заходы', search: 'ВлодПоиск', site: 'Переходы с сайтов' };
+
+/** Аналитика сайта за игровые дни: просмотры, посетители, страницы, источники, запросы из ВлодПоиска. */
+function AnalyticsCard({ accountId, site }) {
+  const [days, setDays] = useState(14);
+  const a = useAsync(() => get(`/gov/hosting/${accountId}/sites/${site.id}/analytics?days=${days}`), [accountId, site.id, days]);
+  const d = a.data;
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="card-head">
+        <h2>Аналитика — {site.host}</h2>
+        <select className="input" style={{ width: 'auto' }} value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Период">
+          <option value={7}>7 игровых дней</option><option value={14}>14 игровых дней</option><option value={30}>30 игровых дней</option>
+        </select>
+      </div>
+      {!d ? (a.error ? <ErrorBox error={a.error} /> : <Spinner />) : (
+        <div className="stack">
+          <div className="row" style={{ gap: 24 }}>
+            <div><div className="small muted">Просмотры</div><div style={{ fontSize: '1.6rem', fontWeight: 700 }}>{d.total.views}</div></div>
+            <div><div className="small muted">Посетители</div><div style={{ fontSize: '1.6rem', fontWeight: 700 }}>{d.total.visitors}</div></div>
+          </div>
+          <BarChart data={d.daily.map((x) => ({ label: `${(x.day % 30) + 1}`, value: x.views, hint: `день ${(x.day % 30) + 1}, месяц ${Math.floor(x.day / 30)}: ${x.views} просмотров, ${x.visitors} посетителей` }))} format={(v) => String(v)} height={120} />
+          <div className="grid grid-2">
+            <div>
+              <h3>Страницы</h3>
+              {!d.pages.length ? <p className="muted small">Просмотров пока нет.</p> : (
+                <table className="table"><thead><tr><th>Страница</th><th>Просм.</th><th>Посет.</th></tr></thead>
+                  <tbody>{d.pages.map((p) => <tr key={p.path}><td className="mono small">{p.path}</td><td>{p.views}</td><td>{p.visitors}</td></tr>)}</tbody></table>
+              )}
+            </div>
+            <div>
+              <h3>Источники</h3>
+              {!d.sources.length ? <p className="muted small">Нет данных.</p> : (
+                <table className="table"><thead><tr><th>Откуда</th><th>Визиты</th></tr></thead>
+                  <tbody>{d.sources.map((x, i) => <tr key={i}><td>{SOURCE[x.source]}{x.host && x.source === 'site' ? <span className="mono small"> {x.host}</span> : ''}</td><td>{x.visits}</td></tr>)}</tbody></table>
+              )}
+              <h3>Запросы во ВлодПоиске</h3>
+              {!d.queries.length ? <p className="muted small">Сайт ещё не показывался в поиске.</p> : (
+                <table className="table"><thead><tr><th>Запрос</th><th>Показы</th><th>Клики</th><th>Поз.</th></tr></thead>
+                  <tbody>{d.queries.map((x) => <tr key={x.q}><td>{x.q}</td><td>{x.impressions}</td><td>{x.clicks}</td><td>{x.position ?? '—'}</td></tr>)}</tbody></table>
+              )}
+            </div>
+          </div>
+          <p className="small muted">Считаются просмотры страниц во ВлодБраузере. Посетитель — устройство за игровой день. Источник — Referer: прямой заход (адрес набран вручную), ВлодПоиск или другой сайт.</p>
+        </div>
       )}
     </div>
   );

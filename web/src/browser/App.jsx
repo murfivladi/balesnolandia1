@@ -168,7 +168,7 @@ function SiteFrame({ tab, ticket, origin, path, ctx }) {
         if (m.title) c.setTitle(tab.id, String(m.title).slice(0, 200));
       } else if (m.type === 'open' && typeof m.url === 'string') {
         const url = parseInput(m.url);
-        if (url && !url.startsWith('balnet://')) c.navigate(url, m.newTab ? { newTab: true } : { tabId: tab.id });
+        if (url && !url.startsWith('balnet://')) c.navigate(url, m.newTab ? { newTab: true, referrer: lastUrl.current } : { tabId: tab.id });
       } else if (m.type === 'jar') {
         const jar = { cookies: m.cookies || {}, local: m.local || {} };
         c.saveJar(origin, jar);
@@ -196,7 +196,7 @@ function WebTab({ tab, target, ctx }) {
     setSt({ phase: 'loading', key });
     const t0 = performance.now();
     const origin = `${target.scheme}://${target.host}`;
-    c.loadJar(origin).then((jar) => openUrl(tb.url, c.net, jar)).then(async (r) => {
+    c.loadJar(origin).then((jar) => openUrl(tb.url, c.net, jar, tb.ref)).then(async (r) => {
       if (!alive) return;
       const total = Math.round(performance.now() - t0);
       if (r.failed) {
@@ -293,7 +293,7 @@ function WebTab({ tab, target, ctx }) {
         theme={ctx.theme}
         onFrameNav={(url) => ctx.navigate(url, { tabId: tab.id })}
         onTitle={(title) => ctx.setTitle(tab.id, title)}
-        onOpen={(url, newTab) => ctx.navigate(url, newTab ? { newTab: true } : { tabId: tab.id })}
+        onOpen={(url, newTab) => ctx.navigate(url, newTab ? { newTab: true, referrer: tab.url } : { tabId: tab.id })}
       />
     );
   }
@@ -360,7 +360,7 @@ function AddressBar({ tab, inputRef, ctx }) {
 
   const submit = (url) => {
     if (!url) return;
-    ctx.navigate(url);
+    ctx.navigate(url, { typed: true }); // набран вручную — без Referer, прямой заход
     setFocus(false);
     inputRef.current?.blur();
   };
@@ -553,7 +553,7 @@ export default function App() {
 
   const update = useCallback((fn) => setData((d) => (d ? fn(d) : d)), []);
 
-  const navigate = useCallback((input, { tabId, newTab } = {}) => {
+  const navigate = useCallback((input, { tabId, newTab, typed = false, referrer = null } = {}) => {
     let url = input;
     if (!url) return;
     const target = resolveTarget(url);
@@ -562,14 +562,16 @@ export default function App() {
     update((d) => {
       let { tabs, activeId, history } = d;
       if (newTab) {
-        const t = makeTab(url);
+        const t = { ...makeTab(url), ref: /^https?:/.test(referrer || '') ? referrer : null };
         tabs = [...tabs, t];
         activeId = t.id;
       } else {
         const id = tabId || activeId;
         const cur = tabs.find((t) => t.id === id);
         if (!cur || cur.url === url) return d;
-        tabs = tabs.map((t) => (t.id !== id ? t : { ...t, back: [...t.back, t.url].slice(-MAX_BACK), fwd: [], url, title }));
+        // Откуда пришли (для Referer): страница вкладки, если переход по ссылке, а не набран вручную.
+        const ref = typed ? null : referrer || (/^https?:/.test(cur.url) ? cur.url : null);
+        tabs = tabs.map((t) => (t.id !== id ? t : { ...t, back: [...t.back, t.url].slice(-MAX_BACK), fwd: [], url, title, ref }));
       }
       if (!incognito && url !== NEW_TAB) history = [{ url, title, ts: Date.now() }, ...history].slice(0, HISTORY_LIMIT);
       return { ...d, tabs, activeId, history };

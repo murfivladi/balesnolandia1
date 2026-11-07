@@ -16,6 +16,7 @@ import { withSite, siteDb, flush, sqlExec, sqlQuery, closeDb } from '../lib/vhos
 import { getLogs, clearLogs } from '../lib/vhost/logs.js';
 import { parseCrontab } from '../lib/vhost/cron.js';
 import { EXAMPLE } from '../lib/vhost/example.js';
+import { siteAnalytics } from '../lib/vhost/analytics.js';
 
 /** Вид тарифа и лимиты из формы хостера или админа. */
 function planKind(b) {
@@ -141,6 +142,12 @@ export async function hostingRoutes(app) {
     await refreshUsage(a.id);
     await audit(null, actor(req), 'hosting.zip', 'hosting_account', a.id, { files: files.length });
     return { files };
+  });
+
+  /** Аналитика сайта: посещения, посетители, страницы, источники, запросы из ВлодПоиска. */
+  app.get('/hosting/:id/sites/:sid/analytics', auth, async (req) => {
+    const { s } = await siteCtx(req);
+    return siteAnalytics(s, Math.min(60, Math.max(7, Number(req.query.days) || 14)));
   });
 
   /** Пароль SSH для аккаунта: вход ssh u<номер>@<адрес сервера> из терминала ВлодБраузера. */
