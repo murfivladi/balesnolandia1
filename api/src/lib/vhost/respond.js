@@ -15,6 +15,7 @@ import { splitUrl } from '@bln/shared/balnet-url.js';
 import { runHandler, ScriptError } from './runtime.js';
 import { withSite, siteDb, flush, sqlQuery, sqlRun, sqlExec, kvOp, closeDb } from './store.js';
 import { runInPool } from './pool.js';
+import { gitHttp, isGitPath } from '../hub/hub.js';
 import { addLog } from './logs.js';
 
 export const SERVER_FILES = new Set(['server.js', 'server.py', 'crontab']);
@@ -215,6 +216,14 @@ export async function netRequest({ fromIp, url, method = 'GET', headers = {}, bo
     if (!ip) return { error: dnsCode(dns) };
     const conn = connect(await netSnapshot(), fromIp, ip, p.host);
     if (!conn.ok) return { error: conn.code, ip };
+    if (conn.target === 'app:hub' && isGitPath(p.path)) {
+      // ВлодХаб принимает git по HTTP (clone, fetch, push) — как настоящий git-хостинг.
+      if (p.scheme === 'https' && !(await tlsFor({ target: conn.target, host: p.host }))) return { error: 'ERR_CONNECTION_REFUSED', ip };
+      const g = await gitHttp({ method, path: p.path, headers, body: Buffer.isBuffer(body) ? body : Buffer.from(body || '') });
+      const out = { status: g.status, headers: g.headers, url: cur, ip, siteId: null };
+      if (binary) out.buf = g.body; else out.body = g.body.toString('utf8');
+      return out;
+    }
     if (conn.target.startsWith('app:')) return { error: 'ERR_GOV_SITE: госсайты не принимают запросы от серверов (API для сайтов появятся с эквайрингом ВлодБанка)', ip, gov: true };
     if (p.scheme === 'https') {
       const tls = await tlsFor({ target: conn.target, host: p.host });

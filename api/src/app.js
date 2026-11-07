@@ -29,6 +29,7 @@ import { webRoutes } from './routes/web.js';
 import { hostingRoutes, adminHostingRoutes } from './routes/hosting.js';
 import { certRoutes, adminPkiRoutes } from './routes/certs.js';
 import { searchRoutes, adminSearchRoutes } from './routes/search.js';
+import { hubRoutes } from './routes/hub.js';
 
 export async function buildApp({ logger = config.env !== 'test' } = {}) {
   const app = Fastify({
@@ -105,6 +106,7 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
   await app.register(certRoutes, { prefix: '/api/gov' });
   await app.register(adminPkiRoutes, { prefix: '/api/admin/pki' });
   await app.register(searchRoutes, { prefix: '/api/search' });
+  await app.register(hubRoutes, { prefix: '/api/hub' });
   await app.register(adminSearchRoutes, { prefix: '/api/admin/search' });
 
   return app;

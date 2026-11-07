@@ -28,6 +28,7 @@ export const GOV_SITES = {
   'nalog.gov.bln': { app: 'nalog', title: 'Налоговая служба БФ', owner: 'Правительство БФ' },
   'ca.gov.bln': { app: 'ca', title: 'БалСерт', owner: 'Координационный центр БалНета' },
   'poisk.bln': { app: 'poisk', title: 'ВлодПоиск', owner: 'Правительство БФ' },
+  'vlodhub.bln': { app: 'hub', title: 'ВлодХаб', owner: 'Координационный центр БалНета' },
 };
 
 const SCHEME_RE = /^([a-z][a-z0-9+.-]*):\/\//i;

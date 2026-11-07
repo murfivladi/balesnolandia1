@@ -158,7 +158,7 @@ export async function netRoutes(app) {
     const acc = m ? await one("SELECT * FROM hosting_accounts WHERE id = ? AND server_id = ? AND status IN ('active','suspended')", [Number(m[1]), server.id]) : null;
     if (!acc || !acc.ssh_hash || !(await verifyHash(String(b.password || ''), acc.ssh_hash))) return { error: `${b.user}@${b.host}: Permission denied (password).` };
     const name = String(server.name).replace(/\.$/, '').split('.')[0];
-    const id = newSession(acc, name);
+    const id = newSession(acc, name, ip);
     const s = getSession(id);
     return { session: id, prompt: prompt(s), motd: [`Добро пожаловать на ${String(server.name).replace(/\.$/, '')} (${ip}) — хостинг БалНета.`, 'help — список команд, exit — выход.', acc.status === 'suspended' ? 'Внимание: хостинг приостановлен за неуплату.' : ''].filter(Boolean) };
   });

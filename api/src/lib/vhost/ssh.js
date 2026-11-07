@@ -12,14 +12,15 @@ import { siteByTarget, refreshUsage } from '../hosting.js';
 import { runSite, runExternal } from './respond.js';
 import { withSite, siteDb, flush, sqlExec, closeDb } from './store.js';
 import { getLogs } from './logs.js';
+import { gitCommand } from '../hub/gitcli.js';
 
 const SESSION_MS = 60 * 60 * 1000;
 const sessions = new Map();
 const MAX_OUT = 200_000;
 
-export function newSession(account, server) {
+export function newSession(account, server, serverIp) {
   const id = crypto.randomBytes(18).toString('base64url');
-  sessions.set(id, { accountId: account.id, user: `u${account.id}`, server, cwd: `/home/u${account.id}`, expires: Date.now() + SESSION_MS });
+  sessions.set(id, { accountId: account.id, user: `u${account.id}`, server, serverIp, cwd: `/home/u${account.id}`, expires: Date.now() + SESSION_MS });
   return id;
 }
 
@@ -132,6 +133,7 @@ const glob = (pat) => new RegExp(`^${pat.replace(/[.+^${}()|[\]\\]/g, '\\$&').re
 
 const HELP = `Команды оболочки хостинга:
   ls [-la] [путь]   cd [путь]   pwd   tree [путь]
+  git clone|status|add|commit -m|log|diff|push|pull|fetch|branch|checkout|remote|config
   cat файл   head [-n N] файл   tail [-n N] файл   wc файл   grep [-rin] слово путь   find [путь] -name '*.php'
   mkdir [-p] папка   rmdir папка   rm [-rf] путь   mv откуда куда   cp [-r] откуда куда   touch файл
   echo текст > файл (>> — дописать)   unzip архив.zip [-d папка]   nano|vi файл — редактор
@@ -413,6 +415,22 @@ async function command(s, cmd, args) {
       if (!flags.has('l')) throw new ShellError('используйте crontab -l; правьте файл crontab в папке сайта (nano crontab)');
       const { site } = await siteOfPath(s, resolvePath(s, '.').rel || '?');
       return fs.readFile(`${site.dir}/crontab`, 'utf8').catch(() => `no crontab for ${s.user} (${site.host})`);
+    }
+    case 'git': {
+      let out;
+      try {
+        out = await gitCommand({
+          cwd: resolvePath(s, '.').full, home: accountDir(s.accountId), homeVirt: home(s), user: s.user, serverIp: s.serverIp,
+          resolve: (p) => resolvePath(s, p).full,
+        }, args);
+      } catch (e) {
+        if (e instanceof ShellError) throw e;
+        return { out: e.message, error: true };
+      }
+      const lim = await limitsOf(s.accountId);
+      const used = await refreshUsage(s.accountId);
+      if (used > lim.quotaBytes) return [].concat(out, `Внимание: занято ${human(used)} из ${lim.diskMb}M — превышена квота тарифа, удалите лишнее.`);
+      return out;
     }
     case 'logs': {
       const { site } = await siteOfPath(s, resolvePath(s, '.').rel || '?');
