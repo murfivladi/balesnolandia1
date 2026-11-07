@@ -10,9 +10,9 @@ import { humanTtl } from '@bln/shared/balnet-dns.js';
 
 const STATUS_KIND = { active: 'ok', reserved: 'warn', expired: 'err', redemption: 'err', released: '' };
 const RR_HINT = {
-  A: '50.1.0.20', AAAA: 'ba1:1::10', CNAME: 'boris.bln.', MX: '10 mail.boris.bln.', TXT: 'Привет из БалНета', SRV: '10 5 443 web.boris.bln.', CAA: '0 issue "ca.gov.bln"', NS: 'ns1.example.bln.', PTR: 'host.boris.bln.',
+  A: '50.1.0.20', AAAA: 'ba1:1::10', CNAME: 'boris.bln.', MX: '10 mail.boris.bln.', TXT: 'Привет из БалНета', SRV: '10 5 443 web.boris.bln.', CAA: '0 issue "ca.gov.bln"', NS: 'ns1.example.bln.', PTR: 'host.boris.bln.', DS: '41733 13 2 <sha256 ключа дочерней зоны>',
 };
-const RR_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'SRV', 'CAA', 'NS'];
+const RR_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'SRV', 'CAA', 'NS', 'DS'];
 
 function PayLink({ invoice, amount }) {
   return (
@@ -226,6 +226,20 @@ export function DomainPage({ id }) {
             </div>
             <p className="small muted">По этому коду домен можно передать другому человеку (раздел «Получить домен по коду») или перенести к другому регистратору.</p>
           </div>
+          {d.status === 'active' && (
+            <div className="card">
+              <h2>DNSSEC {d.dnssec.signed ? <Badge kind="ok">подписан</Badge> : d.dnssec.ds.length ? <Badge kind="err">DS без подписи</Badge> : <Badge>выключен</Badge>}</h2>
+              <p className="small muted">Подпись зоны защищает записи домена (A, TXT, CAA) от подмены: резолверы проверяют цепочку подписей от корня БалНета. Регистратор публикует запись DS в зоне .{d.tld}.</p>
+              {d.dnssec.ds.map((x) => <div key={x} className="mono small" style={{ wordBreak: 'break-all' }}>DS {x}</div>)}
+              {!d.dnssec.signed && d.dnssec.ds.length > 0 && <div className="form-warn small">В зоне TLD осталась запись DS, а зона не подписана: проверяющие резолверы отвечают SERVFAIL. Выключите DNSSEC, чтобы убрать DS.</div>}
+              <div className="row" style={{ marginTop: 8 }}>
+                {d.dnssec.signed || d.dnssec.ds.length
+                  ? <ActionButton kind="ghost" confirm="Выключить DNSSEC? Пока резолверы помнят старую DS (до часа игрового времени), домен может не открываться." action={async () => { await post(`/gov/domains/${id}/dnssec`, { enabled: false }); reload(); }}>Выключить</ActionButton>
+                  : <ActionButton disabled={d.ns_mode !== 'hosted'} action={async () => { await post(`/gov/domains/${id}/dnssec`, { enabled: true }); reload(); }}>Включить DNSSEC</ActionButton>}
+              </div>
+              {d.ns_mode !== 'hosted' && <p className="small muted">Доступно на DNS-хостинге БалНета (ns1/ns2.dns.bln).</p>}
+            </div>
+          )}
           {d.status !== 'reserved' && (
             <div className="card">
               <h2>{d.status === 'redemption' ? 'Восстановить' : 'Продлить'}</h2>

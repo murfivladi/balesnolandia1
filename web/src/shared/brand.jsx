@@ -128,3 +128,15 @@ export function NalogLogo({ size = 34 }) {
     </svg>
   );
 }
+
+/** БалСерт (ca.gov.bln): замок со щитом. */
+export function CaLogo({ size = 34 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
+      <rect width="40" height="40" rx="10" fill="#0f766e" />
+      <path d="M14 18v-3.5a6 6 0 0 1 12 0V18" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
+      <rect x="10.5" y="17.5" width="19" height="14" rx="3" fill="#fff" />
+      <path d="M16 24.5l3 3 5.5-6" fill="none" stroke="#0f766e" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

@@ -5,19 +5,23 @@ import { isIP } from '@bln/shared/balnet-ip.js';
 import { netCall, lease, resolverOf } from './net.js';
 import { get } from '../shared/api.js';
 import { gameDateLabel } from '@bln/shared/time.js';
+import { checkTls, gameDate } from './certs.jsx';
 
 const HELP = [
   'Команды:',
   '  ipconfig                   — адрес устройства, шлюз, DNS',
   '  nslookup <имя> [сервер]    — найти адрес',
   '  host <имя>                 — адреса и почтовые серверы имени',
-  '  dig [@сервер] <имя> [тип] [+trace] [+short] [+norec]',
-  '                             — DNS-запрос; типы: A AAAA CNAME MX TXT NS SOA SRV CAA PTR ANY',
+  '  dig [@сервер] <имя> [тип] [+trace] [+short] [+norec] [+dnssec] [+cd]',
+  '                             — DNS-запрос; типы: A AAAA CNAME MX TXT NS SOA SRV CAA PTR DS DNSKEY ANY',
+  '                               +dnssec — с подписями RRSIG/NSEC, +cd — без проверки DNSSEC',
+  '  openssl s_client -connect <хост>[:443]',
+  '                             — сертификат сервера и его проверка',
   '  dig -x <ip>                — обратный запрос (PTR)',
   '  ping [-c N] <хост>         — проверить связь',
   '  traceroute <хост>          — маршрут до хоста',
   '  whois <домен|ip>           — кто владеет доменом или адресом',
-  '  curl [-I] <адрес>          — запрос к сайту',
+  '  curl [-I] [-k] <адрес>     — запрос к сайту (-k — не проверять сертификат)',
   '  clear                      — очистить экран',
   '',
   'Подсказка: ↑ и ↓ — история команд.',
@@ -61,7 +65,7 @@ export function TerminalPage({ ctx }) {
     if (r.failed) throw new Error(r.message || 'Нет связи с сервером БалНета');
     return r.data;
   };
-  const query = (server, name, type, recurse = true) => call('/net/query', { server, name, type, recurse });
+  const query = (server, name, type, recurse = true, extra = {}) => call('/net/query', { server, name, type, recurse, ...extra });
 
   async function dig(args) {
     let server = null;
@@ -83,13 +87,16 @@ export function TerminalPage({ ctx }) {
       server = a.data;
     }
     if (flags.has('trace')) return digTrace(name, type);
-    const r = await query(server || undefined, name, type, !flags.has('norec'));
+    const dnssec = flags.has('dnssec') || flags.has('do');
+    const r = await query(server || undefined, name, type, !flags.has('norec'), { dnssec, cd: flags.has('cd') });
     if (flags.has('short')) return print(r.answer.map((x) => x.data));
     const used = server || resolverOf(net) || (await lease(net.clientId, net.provider)).resolver_ip;
     if (r.rcode === 'TIMEOUT') return print(`;; connection timed out; no servers could be reached (${used})`);
     print(
-      `; <<>> DiG (ВлодБраузер) <<>> ${server ? `@${server} ` : ''}${name} ${type}${flags.has('norec') ? ' +norec' : ''}`,
-      ...header(r, ['qr', !flags.has('norec') && 'rd', r.ra !== false && !r.aa && 'ra', r.aa && 'aa'].filter(Boolean).join(' ')),
+      `; <<>> DiG (ВлодБраузер) <<>> ${server ? `@${server} ` : ''}${name} ${type}${[...flags].filter((f) => f !== 'short').map((f) => ` +${f}`).join('')}`,
+      ...header(r, ['qr', r.aa && 'aa', !flags.has('norec') && 'rd', r.ra !== false && !r.aa && 'ra', r.ad && 'ad', flags.has('cd') && 'cd'].filter(Boolean).join(' ')),
+      ...(dnssec ? ['', ';; OPT PSEUDOSECTION:', '; EDNS: version: 0, flags: do; udp: 1232'] : []),
+      ...(r.ede ? [`; EDE: 6 (DNSSEC Bogus): (${r.ede.replace(/^DNSSEC Bogus: /, '')})`] : []),
       ...sections(r),
       '',
       `;; Query time: ${Math.round(r.ms)} msec`,
@@ -113,7 +120,7 @@ export function TerminalPage({ ctx }) {
     }
     for (let step = 0; step < 12 && servers.length; step++) {
       const s = servers[0];
-      const r = await query(s.ip, name, type, false);
+      const r = await query(s.ip, name, type, false, { dnssec: true });
       const recs = r.answer.length ? r.answer : r.authority;
       print(...recs.map(formatRR), `;; Received from ${strip(s.name)} (${s.ip}) in ${Math.round(r.ms)} ms`, '');
       if (r.rcode !== 'NOERROR' || r.answer.length || r.aa) return;
@@ -232,7 +239,7 @@ export function TerminalPage({ ctx }) {
   async function curl(args) {
     const head = args.includes('-I') || args.includes('--head');
     const raw = args.find((a) => !a.startsWith('-'));
-    if (!raw) return print('Использование: curl [-I] <адрес>');
+    if (!raw) return print('Использование: curl [-I] [-k] <адрес>');
     const url = /^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`;
     const host = url.replace(/^[a-z]+:\/\//i, '').split(/[/?#]/)[0];
     const r = await call('/net/open', { url });
@@ -240,6 +247,13 @@ export function TerminalPage({ ctx }) {
     if (r.code === 'ERR_CONNECTION_TIMED_OUT') return print(`curl: (28) Failed to connect to ${host} port 443 after 10000 ms: Timeout was reached`);
     if (r.code === 'ERR_CONNECTION_REFUSED') return print(`curl: (7) Failed to connect to ${host} port 443: Connection refused`);
     if (r.code === 'ERR_ADDRESS_UNREACHABLE') return print(`curl: (7) Failed to connect to ${host} port 443: No route to host`);
+    if (r.ok && url.startsWith('https:')) {
+      if (!r.tls) return print(`curl: (7) Failed to connect to ${host} port 443: Connection refused`);
+      const v = await checkTls(r.tls, host);
+      if (!v.ok && !(args.includes('-k') || args.includes('--insecure'))) {
+        return print(`curl: (60) SSL certificate problem: ${v.code}`, 'More details here: https://ca.gov.bln/', '', 'curl failed to verify the legitimacy of the server. Use -k to skip (небезопасно).');
+      }
+    }
     const status = r.ok ? '200 OK' : '404 Not Found';
     const headers = [
       `HTTP/1.1 ${status}`,
@@ -250,6 +264,31 @@ export function TerminalPage({ ctx }) {
     ];
     print(headers);
     if (!head) print(r.ok ? `<!-- ${host}: содержимое сайта — откройте адрес во вкладке браузера -->` : '<h1>404 Not Found</h1>', '');
+  }
+
+  /** openssl s_client: подключение по TLS, цепочка сертификатов и итог проверки (как во ВлодБраузере). */
+  async function openssl(args) {
+    const i = args.indexOf('-connect');
+    if (args[0] !== 's_client' || i < 0 || !args[i + 1]) return print('Использование: openssl s_client -connect <хост>[:443]');
+    const [host, port = '443'] = args[i + 1].split(':');
+    if (port !== '443') return print(`connect: ${host}:${port}: Connection refused`, 'connect:errno=111');
+    const d = await call('/net/open', { url: `https://${host}/` });
+    if (!d.ok) return print(`${d.code}: не удалось подключиться к ${host}:443`);
+    if (!d.tls) return print(`connect: ${host}:443: Connection refused (на сервере ${d.ip} нет HTTPS)`, 'connect:errno=111');
+    const v = await checkTls(d.tls, host);
+    const out = [`CONNECTED(${d.ip}:443)`, '---', 'Certificate chain'];
+    d.tls.chain.forEach((c, n) => {
+      const t = c.tbs;
+      out.push(` ${n} s:CN = ${t.subject.cn}${t.subject.o ? `, O = ${t.subject.o}` : ''}`, `   i:CN = ${t.issuer.cn}${t.issuer.o ? `, O = ${t.issuer.o}` : ''}`);
+      out.push(`   a:ECDSA P-256, sigalg: ecdsa-with-SHA256`, `   v:NotBefore: ${gameDate(t.nb)}; NotAfter: ${gameDate(t.na)}`);
+    });
+    const leaf = d.tls.chain[0].tbs;
+    out.push('---', 'Server certificate', `subject=CN = ${leaf.subject.cn}`, `issuer=CN = ${leaf.issuer.cn}`, `X509v3 Subject Alternative Name: ${leaf.san.map((n) => `DNS:${n}`).join(', ')}`);
+    out.push(`Serial: ${leaf.serial}`, `Policy: ${leaf.policy}`);
+    if (d.tls.sct) out.push(`SCT: log ${d.tls.sct.log_id}, index ${d.tls.sct.index}`);
+    out.push(`OCSP response: ${d.tls.ocsp ? `${d.tls.ocsp.status}${d.tls.ocsp.reason ? ` (${d.tls.ocsp.reason})` : ''}` : 'no response sent'}`);
+    out.push('---', 'New, TLSv1.3, Cipher is TLS_AES_128_GCM_SHA256', `Verify return code: ${v.ok ? '0 (ok)' : `${v.code}`}`, '---', '');
+    return print(out);
   }
 
   async function ipconfig() {
@@ -278,6 +317,7 @@ export function TerminalPage({ ctx }) {
       case 'traceroute': case 'tracert': return traceroute(args);
       case 'whois': return whois(args);
       case 'curl': return curl(args);
+      case 'openssl': return openssl(args);
       default: return print(`${cmd}: команда не найдена. Введите help.`);
     }
   }

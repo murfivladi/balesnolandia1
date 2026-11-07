@@ -262,3 +262,23 @@ body[data-app='browser'] #root { height: 100vh; height: 100dvh; min-height: 0; }
 .bp-term-out { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; }
 .bp-term-line { display: flex; gap: 8px; align-items: center; }
 .bp-term-line input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: inherit; font: inherit; caret-color: #7ee787; }
+
+/* ——— HTTPS (этап Н5): замок, страница ошибки сертификата, просмотр сертификата ——— */
+.bb .bb-chip-secure { color: var(--frame-ink); }
+.bb .bb-chip-danger { color: var(--err); font-weight: 600; }
+.bb-bad { color: var(--err); }
+.bp-link { background: none; border: 0; padding: 0; color: var(--accent, #1a73e8); cursor: pointer; font: inherit; text-decoration: underline; }
+.bp-link.bp-danger { color: var(--err); }
+
+.bp-certerr .bp-error-icon { filter: saturate(1.4); }
+.bp-certerr-adv { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; color: var(--muted); }
+.bb-modal-wrap { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; }
+.bb-modal-wrap .bb-backdrop { position: absolute; inset: 0; z-index: 0; background: rgb(0 0 0 / 35%); }
+.bb-modal { position: relative; z-index: 1; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 40px rgb(0 0 0 / 30%); width: min(560px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 14px 18px 18px; }
+.bb-modal header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.bb-cert-chain { display: flex; flex-direction: column; gap: 2px; margin: 10px 0; }
+.bb-cert-chain button { text-align: left; border: 0; background: none; padding: 6px 8px; border-radius: 6px; cursor: pointer; color: inherit; font: inherit; }
+.bb-cert-chain button.is-sel { background: color-mix(in srgb, var(--accent, #1a73e8) 14%, transparent); font-weight: 600; }
+.bb-cert-dl { grid-template-columns: minmax(110px, auto) minmax(0, 1fr); font-size: 13px; }
+.bb-break { word-break: break-all; }
+.bp-certerr .bp-link { white-space: normal; overflow: visible; text-overflow: clip; text-align: left; max-width: none; }

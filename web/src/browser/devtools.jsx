@@ -43,6 +43,23 @@ function Details({ e }) {
           {e.message && <><dt>Ошибка</dt><dd>{e.message}</dd></>}
         </dl>
       </section>
+      {e.tls !== undefined && e.url?.startsWith('https:') && (
+        <section>
+          <h4>Безопасность</h4>
+          {!e.tls && <p>На сервере нет HTTPS (сертификат не установлен).</p>}
+          {e.cert && (
+            <dl className="bp-dl">
+              <dt>Сертификат</dt><dd className={e.cert.ok ? 'bb-ok' : 'bb-bad'}>{e.cert.ok ? 'действителен' : e.cert.code}</dd>
+              {e.cert.leaf && <><dt>Кому</dt><dd className="mono">{(e.cert.leaf.san || []).join(', ')}</dd></>}
+              {e.cert.issuer && <><dt>Издатель</dt><dd>{e.cert.issuer}</dd></>}
+              {e.cert.leaf && <><dt>Вид</dt><dd>{e.cert.leaf.policy}{e.cert.org ? `, ${e.cert.org}` : ''}</dd></>}
+              {e.cert.ct_index !== undefined && <><dt>CT</dt><dd>запись № {e.cert.ct_index}</dd></>}
+              <dt>OCSP</dt><dd>{e.cert.ocsp || 'нет ответа'}</dd>
+              <dt>Шифрование</dt><dd>TLS 1.3, ECDHE + ECDSA P-256</dd>
+            </dl>
+          )}
+        </section>
+      )}
       {(t.dns !== undefined || t.connect !== undefined) && (
         <section>
           <h4>Тайминг (сеть БалНета)</h4>
@@ -53,14 +70,15 @@ function Details({ e }) {
       )}
       {dns && (
         <section>
-          <h4>DNS: {dns.qname} {dns.qtype} → {dns.rcode}{dns.cached ? ' (из кэша резолвера)' : ''}</h4>
+          <h4>DNS: {dns.qname} {dns.qtype} → {dns.rcode}{dns.cached ? ' (из кэша резолвера)' : ''}{dns.ad ? ' · DNSSEC: подписано (AD)' : dns.dnssec === 'insecure' ? ' · без DNSSEC' : ''}</h4>
+          {dns.ede && <p className="bb-bad">{dns.ede}</p>}
           <p>Резолвер: <span className="mono">{dns.resolver?.name || ''} {dns.resolver?.ip}</span>, {dns.ms} мс</p>
           {dns.trace?.length > 0 && (
             <ol className="dt-trace">
               {dns.trace.map((s, i) => (
                 <li key={i}>
                   <span className="mono">{s.server_name} ({s.server})</span>
-                  {' '}— {s.timeout ? 'не ответил (тайм-аут)' : KIND_LABEL[s.kind] || s.kind}, {s.ms} мс
+                  {' '}— {s.dnssec ? `проверка DNSSEC: ${s.qname} ${s.qtype} → ` : ''}{s.timeout ? 'не ответил (тайм-аут)' : KIND_LABEL[s.kind] || s.kind}, {s.ms} мс
                   {s.kind === 'referral' && <span className="bp-muted"> {s.authority.map((r) => r.data).join(', ')}</span>}
                 </li>
               ))}

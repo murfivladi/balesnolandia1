@@ -643,6 +643,8 @@ body[data-app='reg'] { --brand: #0b7a5e; --accent: #0b7a5e; --brand-2: #e0f4ed; 
 :root[data-theme='dark'] body[data-app='reg'] { --brand: #19a77f; --accent: #2bc496; --brand-2: #10302a; --hero-2: #0b7a5e; }
 body[data-app='hosting'] { --brand: #6326d1; --accent: #6326d1; --brand-2: #efe7ff; --hero-2: #b14be8; --brand-ink: #fff; }
 :root[data-theme='dark'] body[data-app='hosting'] { --brand: #8b5cf6; --accent: #a78bfa; --brand-2: #261a40; --hero-2: #6326d1; }
+body[data-app='ca'] { --brand: #0f766e; --accent: #0f766e; --brand-2: #e0f2ef; --hero-2: #0e9384; --brand-ink: #fff; }
+:root[data-theme='dark'] body[data-app='ca'] { --brand: #14b8a6; --accent: #2dd4bf; --brand-2: #0f2e2b; --hero-2: #0f766e; }
 body[data-app='nalog'] { --brand: #155e3b; --accent: #15803d; --brand-2: #e3f2e8; --hero-2: #1f7a4d; --brand-ink: #fff; }
 :root[data-theme='dark'] body[data-app='nalog'] { --brand: #22a35e; --accent: #34c47a; --brand-2: #12301f; --hero-2: #155e3b; }
 body[data-app='services'] { --hero-2: #3b82f6; }
@@ -661,3 +663,11 @@ body[data-app='bank'] { --hero-2: #1e3a8a; }
 .bank-card-art span { font-weight: 800; font-size: 1.1rem; }
 .bank-card-art b { font-family: var(--mono); font-size: 1.15rem; letter-spacing: .06em; }
 .bank-card-art small { font-size: .78rem; letter-spacing: .12em; }
+
+/* БалСерт и общие мелочи сайтов БалНета */
+.ok-text { color: var(--ok); }
+.err-text { color: var(--err); }
+ul.plain { list-style: none; padding: 0; margin: 0; }
+.prose { line-height: 1.6; }
+.prose h2 { margin-top: 1.4em; }
+.steps li.done b::after { content: ' ✔'; color: var(--ok); }

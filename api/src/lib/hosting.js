@@ -258,7 +258,11 @@ onMonth('hosting', async (month) => { await hostingMonth(month); });
 export async function accountView(conn, a) {
   const plan = await one('SELECT * FROM hosting_plans WHERE id = ?', [a.plan_id], conn);
   const server = await one('SELECT ip, name FROM hosting_servers WHERE id = ?', [a.server_id], conn);
-  const sites = await q('SELECT id, host FROM hosting_sites WHERE account_id = ? ORDER BY host', [a.id], conn);
+  const rows = await q('SELECT s.id, s.host, s.cert_id, c.policy, c.na, c.status AS cert_status, c.names, c.auto_renew FROM hosting_sites s LEFT JOIN pki_certs c ON c.id = s.cert_id WHERE s.account_id = ? ORDER BY s.host', [a.id], conn);
+  const sites = rows.map((r) => ({
+    id: r.id, host: r.host,
+    cert: r.cert_id ? { id: r.cert_id, policy: r.policy, na: Number(r.na), status: r.cert_status, auto_renew: !!r.auto_renew, names: typeof r.names === 'string' ? JSON.parse(r.names) : r.names } : null,
+  }));
   const pending = await one("SELECT o.amount, i.number FROM hosting_orders o LEFT JOIN invoices i ON i.id = o.invoice_id WHERE o.account_id = ? AND o.status = 'pending' ORDER BY o.id DESC LIMIT 1", [a.id], conn);
   return {
     id: a.id, status: a.status, status_title: ACCOUNT_STATUS[a.status], hoster: await hosterName(conn, a.org_id), plan: plan?.name, disk_mb: plan?.disk_mb, max_sites: plan?.max_sites, price_month: Number(plan?.price_month || 0),

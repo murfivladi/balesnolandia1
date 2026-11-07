@@ -130,8 +130,10 @@ export function HostingAccountPage({ id }) {
           <div className="list">
             {a.sites.map((s) => (
               <div key={s.id} className="list-item">
-                <div className="li-main"><button className="link-btn mono" onClick={() => setSiteId(s.id)}>{s.host}</button></div>
-                <a className="btn sm secondary" href={`../#http://${s.host}/`} target="_top">Открыть</a>
+                <div className="li-main">
+                  <button className="link-btn mono" onClick={() => setSiteId(s.id)}>{s.cert?.status === 'valid' ? '🔒 ' : ''}{s.host}</button>
+                </div>
+                <a className="btn sm secondary" href={`../#${s.cert ? 'https' : 'http'}://${s.host}/`} target="_top">Открыть</a>
                 <ActionButton size="sm" kind="ghost" confirm={`Удалить сайт ${s.host} вместе с файлами?`} action={async () => { await del(`/gov/hosting/${id}/sites/${s.id}`); reload(); }}>✕</ActionButton>
               </div>
             ))}
@@ -144,6 +146,7 @@ export function HostingAccountPage({ id }) {
           <p className="small muted">Чтобы сайт открывался, в DNS домена нужна A-запись на <span className="mono">{a.server_ip}</span> — её можно поставить на сайте регистратора <a href="../reg/#/domains">reg.bln</a>.</p>
         </div>
       </div>
+      {site && <SslCard key={`ssl${site.id}`} accountId={id} site={site} active={a.status === 'active'} onChange={reload} />}
       {site && <FileManager key={site.id} accountId={id} site={site} canWrite={a.status === 'active'} onChange={reload} />}
     </div>
   );
@@ -326,6 +329,52 @@ export function OrgHosting({ orgId, director, kind }) {
           <MoneyInput label="Цена в игровой месяц (с НДС)" value={plan.price_month} onChange={(v) => setPlan({ ...plan, price_month: v })} />
         </Form>
       )}
+    </div>
+  );
+}
+
+const gameDay = (sec) => `день ${Math.floor((Number(sec) % 2592000) / 86400) + 1}, месяц ${Math.floor(Number(sec) / 2592000)}`;
+
+/** SSL сайта: бесплатный сертификат БалСерта в один клик (HTTP-01 панель делает сама) или свой сертификат. */
+function SslCard({ accountId, site, active, onChange }) {
+  const [res, setRes] = useState(null);
+  const [certId, setCertId] = useState('');
+  const mine = useAsync(() => get('/gov/certs'), [site.id]);
+  const base = `/gov/hosting/${accountId}/sites/${site.id}`;
+  const c = site.cert;
+  const own = (mine.data?.certs || []).filter((x) => x.status === 'valid');
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <h2>HTTPS для {site.host}</h2>
+      {c ? (
+        <p>
+          {c.status === 'valid' ? '🔒' : '⚠'} Установлен сертификат {c.policy} на <span className="mono">{c.names.join(', ')}</span>
+          {' '}— {c.status === 'revoked' ? <b className="err-text">отозван</b> : <>до {gameDay(c.na)}</>}
+          {c.auto_renew ? ' · продлевается автоматически' : ''}. <a href={`../ca/#/certs/${c.id}`}>Подробнее на БалСерте</a>
+        </p>
+      ) : <p className="muted">Сертификата нет: сайт открывается только по http, и ВлодБраузер пишет «Не защищено».</p>}
+      <div className="row">
+        {active && <ActionButton kind="primary" action={async () => { const r = await post(`${base}/ssl`); setRes(r); if (r.ok) onChange(); }}>{c ? 'Перевыпустить бесплатный SSL' : 'Бесплатный SSL (БалСерт DV)'}</ActionButton>}
+        {own.length > 0 && (
+          <>
+            <select className="input" value={certId} onChange={(e) => setCertId(e.target.value)} aria-label="Свой сертификат">
+              <option value="">— свой сертификат —</option>
+              {own.map((x) => <option key={x.id} value={x.id}>{x.policy} · {x.names.join(', ')} · {x.issuer}</option>)}
+            </select>
+            <ActionButton disabled={!certId} action={async () => { await put(`${base}/cert`, { cert_id: Number(certId) }); onChange(); }}>Установить</ActionButton>
+          </>
+        )}
+        {c && <ActionButton kind="ghost" confirm="Снять сертификат? Сайт снова будет только по http." action={async () => { await put(`${base}/cert`, { cert_id: null }); onChange(); }}>Снять</ActionButton>}
+      </div>
+      {res && !res.ok && (
+        <div className="form-warn" style={{ marginTop: 8 }}>
+          Не получилось подтвердить домен:
+          <ul>{res.results.filter((r) => !r.ok).map((r, i) => <li key={i}>{r.error}</li>)}</ul>
+          Проверьте, что A-запись {site.host} указывает на этот сервер и записи CAA разрешают «ca.gov.bln».
+        </div>
+      )}
+      {res?.ok && <p className="ok-text">✔ Выпущен и установлен сертификат на {res.names.join(', ')}.</p>}
+      <p className="small muted">Бесплатный SSL: панель сама кладёт файл проверки в <span className="mono">/.well-known/</span>, БалСерт заходит на сайт по http и выпускает сертификат. За месяц до конца срока продлевается сам. OV и EV — на <a href="../ca/#/order">ca.gov.bln</a>.</p>
     </div>
   );
 }

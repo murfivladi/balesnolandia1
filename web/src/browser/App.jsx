@@ -11,6 +11,9 @@ import { DEFAULT_NET, newClientId, openUrl } from './net.js';
 import { apiBase, post as apiPost } from '../shared/api.js';
 import { splitUrl } from '@bln/shared/balnet-url.js';
 import { DevTools } from './devtools.jsx';
+import { checkTls, isBypassed, addBypass, CertErrorPage, CertViewer } from './certs.jsx';
+import { HSTS_PRELOAD } from '@bln/shared/balnet-url.js';
+import { CERT_ERRORS } from '@bln/shared/balnet-pki.js';
 import { TerminalPage } from './terminal.jsx';
 import {
   profileStore, loadProfiles, saveProfiles, loadActiveProfile, saveActiveProfile, removeItem, PROFILE_COLORS, HISTORY_LIMIT,
@@ -56,9 +59,13 @@ function securityOf(tab) {
   const t = resolveTarget(tab.url);
   if (t.kind === 'internal') return { kind: 'internal', label: 'ВлодБраузер' };
   const c = tab.conn;
-  if (t.kind === 'web' && c?.gov && c.host === t.host) {
-    return { kind: 'gov', label: 'Госсайт БФ', owner: GOV_SITES[t.host]?.owner || 'Правительство БФ', host: t.host, ip: c.ip };
+  const mine = t.kind === 'web' && c?.host === t.host;
+  // https: решает проверка сертификата браузером. Ошибка (пропущенная вручную) — красное «Не защищено».
+  if (mine && t.scheme === 'https' && c.cert && !c.cert.ok) return { kind: 'danger', label: 'Не защищено', host: t.host, ip: c.ip, cert: c.cert, tls: c.tls };
+  if (mine && c.gov && c.cert?.ok) {
+    return { kind: 'gov', label: 'Госсайт БФ', owner: GOV_SITES[t.host]?.owner || 'Правительство БФ', host: t.host, ip: c.ip, cert: c.cert, tls: c.tls };
   }
+  if (mine && t.scheme === 'https' && c.cert?.ok) return { kind: 'secure', label: '', host: t.host, ip: c.ip, cert: c.cert, tls: c.tls };
   if (t.kind === 'web' && t.scheme === 'http') return { kind: 'insecure', label: 'Не защищено', host: t.host, ip: c?.ip };
   return { kind: 'none', label: '', host: t.host, ip: c?.ip };
 }
@@ -182,7 +189,7 @@ function WebTab({ tab, target, ctx }) {
     setSt({ phase: 'loading', key });
     const t0 = performance.now();
     const origin = `${target.scheme}://${target.host}`;
-    c.loadJar(origin).then((jar) => openUrl(tb.url, c.net, jar)).then((r) => {
+    c.loadJar(origin).then((jar) => openUrl(tb.url, c.net, jar)).then(async (r) => {
       if (!alive) return;
       const total = Math.round(performance.now() - t0);
       if (r.failed) {
@@ -193,15 +200,31 @@ function WebTab({ tab, target, ctx }) {
         return;
       }
       const d = r.data;
-      // Сертификата нет (сайты игроков до этапа Н5): как Chrome — откат с https на http и «Не защищено».
-      if (d.ok && d.tls === false && target.scheme === 'https') {
-        c.logNet(tb.id, { ...d, lease: r.lease, total, note: 'нет сертификата — переход на http' });
+      if (d.ok && target.scheme === 'https' && !d.tls) {
+        // На сервере нет сертификата (порт 443 закрыт). Как Chrome с автопереходом на HTTPS: откат на http —
+        // кроме сайтов из списка HSTS, им http запрещён.
+        if (HSTS_PRELOAD.has(target.host)) {
+          setSt({ phase: 'done', d: { ...d, ok: false, code: 'ERR_CONNECTION_REFUSED' }, key });
+          c.logNet(tb.id, { ...d, ok: false, code: 'ERR_CONNECTION_REFUSED', lease: r.lease, total });
+          return;
+        }
+        c.logNet(tb.id, { ...d, lease: r.lease, total, note: 'https на сервере нет — переход на http' });
         c.replaceUrl(tb.id, tb.url.replace(/^https:/, 'http:'));
         return;
       }
+      let cert = null;
+      if (d.ok && d.tls) {
+        try { cert = await checkTls(d.tls, target.host); } catch (e) { cert = { ok: false, code: 'ERR_CERT_INVALID', message: e.message }; }
+        if (!alive) return;
+      }
+      const conn = { ok: d.ok, gov: !!d.gov, ip: d.ip, host: target.host, cert, tls: d.tls || null };
+      c.setConn(tb.id, conn);
+      c.logNet(tb.id, { ...d, lease: r.lease, total, cert });
+      if (cert && !cert.ok && !isBypassed(target.host, cert.hash)) {
+        setSt({ phase: 'certerror', d, cert, key });
+        return;
+      }
       setSt({ phase: 'done', d, key });
-      c.setConn(tb.id, { ok: d.ok, gov: !!d.gov, ip: d.ip, host: target.host });
-      c.logNet(tb.id, { ...d, lease: r.lease, total });
     });
     return () => { alive = false; };
   }, [key, target.host, target.scheme]);
@@ -215,6 +238,20 @@ function WebTab({ tab, target, ctx }) {
   if (st.phase === 'failed') {
     if (st.code === 'maintenance') return <MaintenancePage onReload={() => { ctx.refreshClock(); reload(); }} />;
     return <ErrorPage code={st.code} host={target.host} onReload={reload} ctx={ctx} />;
+  }
+  if (st.phase === 'certerror') {
+    return (
+      <>
+        <CertErrorPage
+          host={target.host}
+          cert={st.cert}
+          onBack={() => ctx.navigate(NEW_TAB, { tabId: tab.id })}
+          onProceed={() => { addBypass(target.host, st.cert.hash); ctx.reload(tab.id); }}
+          onShowCert={() => setSt((v) => ({ ...v, viewer: true }))}
+        />
+        {st.viewer && <CertViewer tls={st.d.tls} verdict={st.cert} host={target.host} onClose={() => setSt((v) => ({ ...v, viewer: false }))} />}
+      </>
+    );
   }
   const d = st.d;
   if (!d.ok) return <ErrorPage code={d.code} host={target.host} onReload={reload} ctx={ctx} ip={d.ip} />;
@@ -266,6 +303,7 @@ function AddressBar({ tab, inputRef, ctx }) {
   const [focus, setFocus] = useState(false);
   const [sel, setSel] = useState(0);
   const [info, setInfo] = useState(false);
+  const [viewer, setViewer] = useState(false);
   const sec = securityOf(tab);
 
   useEffect(() => { if (!focus) setText(displayUrl(tab.url)); }, [tab.url, focus]);
@@ -313,7 +351,10 @@ function AddressBar({ tab, inputRef, ctx }) {
         title={sec.kind === 'gov' ? 'Сведения о сайте' : 'Сведения'}
         aria-label="Сведения о сайте"
       >
-        {sec.kind === 'gov' ? <>🛡<span className="bb-chip-text">{sec.label}</span></> : sec.kind === 'internal' ? <CoatOfArms size={14} /> : sec.kind === 'insecure' ? <>⚠<span className="bb-chip-text">{sec.label}</span></> : 'ⓘ'}
+        {sec.kind === 'gov' ? <>🛡<span className="bb-chip-text">{sec.label}</span></>
+          : sec.kind === 'internal' ? <CoatOfArms size={14} />
+            : sec.kind === 'secure' ? <span aria-label="Подключение защищено">🔒</span>
+              : sec.kind === 'insecure' || sec.kind === 'danger' ? <>⚠<span className="bb-chip-text">{sec.label}</span></> : 'ⓘ'}
       </button>
       {info && (
         <>
@@ -324,15 +365,30 @@ function AddressBar({ tab, inputRef, ctx }) {
                 <b className="bb-ok">🛡 Проверенный госсайт БФ</b>
                 <p>{sec.host} — официальный сайт. Владелец: {sec.owner}.</p>
                 <p>Сервер: {sec.ip} (госдата-центр).</p>
-                <p className="bp-muted">Этот значок рисует ВлодБраузер по ответу госсервера, а не сайт. Копия сайта по другому адресу или подменённый DNS значка не получат.</p>
+                <p className="bp-muted">Значок ставит ВлодБраузер: сервер — госсервер, сертификат {sec.cert.ev ? 'EV ' : ''}выдан «{sec.cert.issuer}» для «{sec.cert.org}». Копия сайта по другому адресу значка не получит.</p>
               </>
             )}
+            {sec.kind === 'secure' && (
+              <>
+                <b className="bb-ok">🔒 Подключение защищено</b>
+                <p>Данные (пароли, номера карт) передаются на {sec.host} в зашифрованном виде.</p>
+                <p>Сертификат действителен. Выдан: {sec.cert.issuer}.{sec.cert.org ? ` Владелец: ${sec.cert.org}${sec.cert.ev ? ' (EV)' : ''}.` : ' Проверен только домен (DV) — кто владелец, неизвестно.'}</p>
+              </>
+            )}
+            {sec.kind === 'danger' && (
+              <>
+                <b className="bb-bad">⚠ Подключение не защищено</b>
+                <p>{CERT_ERRORS[sec.cert.code] || 'Сертификат недействителен'} ({sec.cert.code}). Вы перешли на сайт, несмотря на предупреждение. Не вводите здесь пароли и данные карт.</p>
+              </>
+            )}
+            {sec.tls && <p><button className="bp-link" onClick={() => { setInfo(false); setViewer(true); }}>📄 Сертификат</button>{sec.cert?.ocsp ? ` · статус: ${sec.cert.ocsp === 'good' ? 'не отозван' : 'отозван'}` : ''}</p>}
             {sec.kind === 'internal' && <p>Это страница ВлодБраузера.</p>}
-            {sec.kind === 'insecure' && <p><b>Соединение не защищено.</b> Сайт {sec.host} открыт по http. Не вводите здесь пароли.</p>}
-            {sec.kind === 'none' && <p>{sec.host ? `Сайт ${sec.host}${sec.ip ? `, сервер ${sec.ip}` : ''}. Сертификатов HTTPS в БалНете пока нет — они появятся на этапе Н5.` : `Сайт не открыт: ${displayUrl(tab.url) || 'пустая вкладка'}.`}</p>}
+            {sec.kind === 'insecure' && <p><b>Соединение не защищено.</b> Сайт {sec.host} открыт по http: всё, что вы вводите, видно провайдеру и любому на пути. Не вводите здесь пароли.</p>}
+            {sec.kind === 'none' && <p>{sec.host ? `Сайт ${sec.host}${sec.ip ? `, сервер ${sec.ip}` : ''}.` : `Сайт не открыт: ${displayUrl(tab.url) || 'пустая вкладка'}.`}</p>}
           </div>
         </>
       )}
+      {viewer && sec.tls && <CertViewer tls={sec.tls} verdict={sec.cert} host={sec.host} onClose={() => setViewer(false)} />}
       <input
         ref={inputRef}
         className="bb-url"

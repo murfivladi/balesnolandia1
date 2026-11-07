@@ -179,7 +179,7 @@ export async function adminPkiRoutes(app) {
     const rows = await q(`SELECT * FROM pki_certs ${s ? 'WHERE names LIKE ?' : ''} ORDER BY id DESC LIMIT 100`, s ? [`%${s.replace(/[%_\\]/g, '\\$&')}%`] : []);
     const out = [];
     for (const c of rows) out.push(await certView(null, c));
-    return { certs: out.map(({ cert, ...v }) => v) };
+    return { certs: out.map(({ cert: _c, ...v }) => v) };
   });
 
   app.post('/certs/:id/revoke', async (req) => {

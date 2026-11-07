@@ -68,7 +68,7 @@ export default function App() {
   // Вход «через ВлодУслуги» с другого сайта БалНета: после входа возвращаемся туда (только на свои приложения).
   const back = route.query.return;
   useEffect(() => {
-    if (me && back && /^\.\.\/(reg|hosting|nalog|bank|pos)\/#\/[^\s]*$/.test(back)) location.href = back;
+    if (me && back && /^\.\.\/(reg|hosting|nalog|ca|bank|pos)\/#\/[^\s]*$/.test(back)) location.href = back;
   }, [me, back]);
 
   const isOfficial = me?.roles?.some((r) => ['admin', 'official'].includes(r));

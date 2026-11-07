@@ -1,5 +1,6 @@
 // Админка → БалНет: провайдеры, IP-блоки и серверы, сайты на серверах, DNS-зоны и записи.
 import { useState } from 'react';
+import { PkiAdmin } from './pki.jsx';
 import { get, post, patch, del } from '../shared/api.js';
 import {
   Spinner, useAsync, Input, Select, Form, Modal, Empty, Badge, ActionButton, Tabs, ErrorBox, Button, useToast,
@@ -20,10 +21,11 @@ export function NetSection() {
     <div className="page">
       <h1>БалНет</h1>
       <p className="muted">Сеть ВлодБраузера: провайдеры выдают игрокам IP-адреса, DNS идёт по цепочке корень → зона верхнего уровня → серверы имён домена. TTL считается в игровых секундах (в игровом месяце 30 игровых суток).</p>
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'registry', label: 'Домены и организации' }, { value: 'hosting', label: 'Хостинг' }, { value: 'zones', label: 'Зоны DNS' }, { value: 'hosts', label: 'Адреса и серверы' }, { value: 'providers', label: 'Провайдеры' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'registry', label: 'Домены и организации' }, { value: 'hosting', label: 'Хостинг' }, { value: 'pki', label: 'Сертификаты' }, { value: 'zones', label: 'Зоны DNS' }, { value: 'hosts', label: 'Адреса и серверы' }, { value: 'providers', label: 'Провайдеры' }]} />
       <ErrorBox error={ov.error} />
       {tab === 'registry' && <RegistryAdmin />}
       {tab === 'hosting' && <HostingAdmin />}
+      {tab === 'pki' && <PkiAdmin />}
       {!ov.data ? <Spinner /> : (
         <>
           {tab === 'zones' && <Zones ov={ov.data} reload={ov.reload} />}
@@ -191,7 +193,7 @@ function Zones({ ov, reload }) {
         <h2>Зоны</h2>
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Зона</th><th>Серверы</th><th>Записей</th><th>Serial</th></tr></thead>
+            <thead><tr><th>Зона</th><th>Серверы</th><th>Записей</th><th>Serial</th><th>DNSSEC</th></tr></thead>
             <tbody>
               {ov.zones.map((z) => (
                 <tr key={z.id} style={{ cursor: 'pointer' }} onClick={() => setOpen(z.id)}>
@@ -199,6 +201,13 @@ function Zones({ ov, reload }) {
                   <td className="mono small">{z.servers.join(', ')}</td>
                   <td>{z.records}</td>
                   <td className="mono small">{z.serial}</td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    {z.kind === 'domain' && !z.dnssec ? <span className="muted small">—</span> : (
+                      <ActionButton size="sm" kind="ghost" confirm={z.dnssec ? `Выключить DNSSEC зоны ${z.name}? DS у родителя будет удалена.` : null} action={async () => { await patch(`/admin/net/zones/${z.id}/dnssec`, { enabled: !z.dnssec }); reload(); }}>
+                        {z.dnssec ? `🔏 ${z.key_tag ?? ''}` : 'выкл'}
+                      </ActionButton>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

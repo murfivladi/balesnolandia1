@@ -216,7 +216,7 @@ export async function signResponse(zone, resp, qname, qtype, now) {
     sigs.push(['authority', await rrsig(zone, set, now)]);
   }
   for (const [sec, s] of sigs) out[sec].push(s);
-  out.answer = out.answer.map(({ wildcard, ...r }) => r);
+  out.answer = out.answer.map(({ wildcard: _w, ...r }) => r);
   return out;
 }
 

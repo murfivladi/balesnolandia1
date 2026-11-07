@@ -31,7 +31,7 @@ export async function adminNetRoutes(app) {
       providers: snap.providers.map((p) => ({ ...p, cidr: snap.blocks.find((b) => b.id === p.block_id)?.cidr || null, leases: leaseBy.get(p.id) || 0 })),
       blocks: snap.blocks,
       hosts: [...snap.hostByIp.values()].map((h) => ({ ...h, vhosts: vhosts.filter((v) => v.ip === h.ip), cache: h.kind === 'resolver' ? resolverCacheSize(h.ip) : undefined })),
-      zones: [...snap.zoneById.values()].map((z) => ({ id: z.id, name: z.name, kind: z.kind, serial: z.serial, servers: z.servers, records: [...z.names.values()].reduce((n, l) => n + l.length, 0) })).sort((a, b) => a.name.localeCompare(b.name)),
+      zones: [...snap.zoneById.values()].map((z) => ({ id: z.id, name: z.name, kind: z.kind, serial: z.serial, dnssec: z.dnssec, key_tag: z.key?.key_tag ?? null, servers: z.servers, records: [...z.names.values()].reduce((n, l) => n + l.length, 0) })).sort((a, b) => a.name.localeCompare(b.name)),
       vhost_targets: VHOST_TARGETS,
       record_types: RR_TYPES,
     };
@@ -232,6 +232,25 @@ export async function adminNetRoutes(app) {
     });
     await done(req, 'net.zone.create', 'dns_zone', id, { name, servers });
     return { id };
+  });
+
+  /** DNSSEC инфраструктурной зоны: ключ и DS у родителя ставятся автоматически, выключение их убирает. */
+  app.patch('/zones/:id/dnssec', async (req) => {
+    const id = int(req.params.id, 'id');
+    const z = await one('SELECT * FROM dns_zones WHERE id = ?', [id]);
+    if (!z) throw notFound();
+    need(!z.domain_id, 'DNSSEC домена игрока включает его владелец на БалРеге');
+    await tx(async (conn) => {
+      await q('UPDATE dns_zones SET dnssec = ? WHERE id = ?', [req.body?.enabled ? 1 : 0, id], conn);
+      if (!req.body?.enabled) {
+        await q('DELETE FROM dnssec_keys WHERE zone_id = ?', [id], conn);
+        const r = await q("DELETE FROM dns_records WHERE name = ? AND type = 'DS' AND domain_id IS NULL", [z.name], conn);
+        if (r.affectedRows) for (const p of await q('SELECT id, name FROM dns_zones', [], conn)) if (p.id !== id && inZone(z.name, p.name)) await bumpSerial(conn, p.id);
+      }
+      await bumpSerial(conn, id);
+    });
+    await done(req, req.body?.enabled ? 'dns.dnssec_on' : 'dns.dnssec_off', 'dns_zone', id);
+    return { ok: true };
   });
 
   app.delete('/zones/:id', async (req) => {
