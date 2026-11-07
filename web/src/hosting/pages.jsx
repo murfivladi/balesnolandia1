@@ -37,6 +37,8 @@ export function HostingPage({ initialPlan = null }) {
   const [owner, setOwner] = useState('');
   const [order, setOrder] = useState(null);
   if (!data) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
+  const govOffers = data.offers.filter((o) => o.org_id == null);
+  const selectedGovPlan = govOffers.some((o) => o.id === pick);
   return (
     <div className="page">
       <div className="page-head">
@@ -64,7 +66,7 @@ export function HostingPage({ initialPlan = null }) {
         <div className="card">
           <h2>Тарифы</h2>
           <div className="list">
-            {data.offers.map((o) => (
+            {govOffers.map((o) => (
               <label key={o.id} className="list-item" style={{ cursor: 'pointer' }}>
                 <input type="radio" name="plan" checked={pick === o.id} onChange={() => { setPick(o.id); setOrder(null); }} />
                 <div className="li-main">
@@ -75,7 +77,7 @@ export function HostingPage({ initialPlan = null }) {
               </label>
             ))}
           </div>
-          {pick && !order && (
+          {selectedGovPlan && !order && (
             <Form submitLabel="Купить" onSubmit={async () => { setOrder(await post('/gov/hosting', { plan_id: pick, months, owner_org_id: owner ? Number(owner) : null })); reload(); }}>
               <Select label="Срок" value={months} onChange={(e) => setMonths(Number(e.target.value))} options={Array.from({ length: data.max_months }, (_, i) => ({ value: i + 1, label: `${i + 1} игр. мес.` }))} />
               {(orgs.data?.orgs || []).length > 0 && (

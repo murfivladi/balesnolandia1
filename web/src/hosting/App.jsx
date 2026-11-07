@@ -1,4 +1,4 @@
-// БалХост (hosting.bln) — Госхостинг БалНета: тарифы всех хостеров, кабинет, файлы сайтов, кабинет партнёра.
+// БалХост (hosting.bln) — Госхостинг БалНета: тарифы Госхостинга, кабинет, файлы сайтов, кабинет партнёра.
 import { get } from '../shared/api.js';
 import { useLang } from '../shared/i18n.js';
 import { useRoute, pick } from '../shared/router.js';
@@ -39,7 +39,7 @@ export default function App() {
       </main>
       <SiteFooter
         brand={BRAND}
-        about="Госхостинг БалНета: место для HTML, CSS, JS и картинок вашего сайта, файловый менеджер и загрузка ZIP. Плюс тарифы хостеров-партнёров."
+        about="Госхостинг БалНета: место для HTML, CSS, JS и картинок вашего сайта, файловый менеджер и загрузка ZIP. Тарифы частных хостеров доступны на их собственных сайтах."
         columns={[
           { title: 'Хостинг', links: [{ href: '#/', label: 'Тарифы' }, { href: '#/cabinet', label: 'Мой хостинг' }] },
           { title: 'Партнёрам', links: [{ href: '#/partners', label: 'Стать хостером' }, { href: '../nalog/#/', label: 'Лицензии' }] },
@@ -52,7 +52,7 @@ export default function App() {
 
 function Home() {
   const plans = useAsync(() => get('/gov/hosting/plans'), []);
-  const offers = plans.data?.offers || [];
+  const offers = (plans.data?.offers || []).filter((o) => o.org_id == null);
   const best = offers.length > 1 ? offers[1].id : offers[0]?.id;
   return (
     <>
@@ -118,7 +118,7 @@ function Partners() {
   return (
     <div className="page">
       <h1>Хостерам</h1>
-      <p className="muted">Организация с лицензией хостинг-провайдера арендует серверы в дата-центре БалНета и продаёт свои тарифы на этой витрине. Аренда списывается со счёта организации каждый игровой месяц.</p>
+      <p className="muted">Организация с лицензией хостинг-провайдера арендует серверы в дата-центре БалНета и продаёт свои тарифы на собственном сайте через API. Аренда списывается со счёта организации каждый игровой месяц.</p>
       {!mine.length && <div className="card"><p>Вы не директор ни одной организации. Зарегистрируйте ООО или АО в <a href="../nalog/#/">Налоговой службе</a>.</p></div>}
       <div className="stack">
         {mine.map((o) => (
@@ -165,7 +165,7 @@ kv.get('counter'); kv.delete('counter'); kv.list('session:');`)}
       <h2>Запросы к другим сайтам</h2>
       {CODE(`const r = await fetch('https://shop.bln/api/items');
 const items = await r.json();`)}
-      <p>Запрос идёт по сети БалНета с адреса вашего сервера: DNS, проверка сертификата HTTPS. Госсайты запросов от серверов не принимают.</p>
+      <p>Запрос идёт по сети БалНета с адреса вашего сервера: DNS, проверка сертификата HTTPS. API госсайтов доступен серверу сайта с подходящим API-токеном; отдельные платёжные и OAuth API используют собственные ключи.</p>
       <h2>Cron по игровому времени</h2>
       <p>Файл <code>crontab</code> в корне сайта, синтаксис как у настоящего cron: минута, час, день (1–30), месяц (1–12), день недели (0–6) и имя задачи.</p>
       {CODE(`# каждый игровой день в 9:00
