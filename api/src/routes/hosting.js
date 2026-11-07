@@ -205,6 +205,34 @@ export async function hostingRoutes(app) {
     });
   });
 
+  // ——— Почта сайта: ключ DKIM для mail.send({ dkim: селектор }) и запись для DNS ———
+  app.get('/hosting/:id/sites/:sid/dkim', auth, async (req) => {
+    const { site } = await vsite(req);
+    const { publicFromPrivate, dkimRecord } = await import('../lib/mailnet/dkim.js');
+    const keys = [];
+    for (const f of await fs.readdir(`${site.dir}/.dkim`).catch(() => [])) {
+      if (!f.endsWith('.key')) continue;
+      const sel = f.slice(0, -4);
+      try {
+        const pub = publicFromPrivate((await fs.readFile(`${site.dir}/.dkim/${f}`, 'utf8')).trim());
+        keys.push({ selector: sel, record: { name: `${sel}._domainkey`, type: 'TXT', data: dkimRecord(pub) } });
+      } catch { keys.push({ selector: sel, error: 'Ключ повреждён' }); }
+    }
+    return { keys, ip: site.server_ip, spf: `v=spf1 ip4:${site.server_ip} -all`, mx: `10 ${site.host}.` };
+  });
+  app.post('/hosting/:id/sites/:sid/dkim', auth, async (req) => {
+    const { a, dir, base, site } = await vsite(req);
+    const sel = String(req.body?.selector || 'mail').trim().toLowerCase();
+    need(/^[a-z0-9-]{1,63}$/.test(sel), 'Селектор: латиница, цифры и дефис');
+    const { generateDkimKey, dkimRecord } = await import('../lib/mailnet/dkim.js');
+    const k = generateDkimKey();
+    await fs.mkdir(`${dir}/.dkim`, { recursive: true });
+    await writeFile(dir, base, `.dkim/${sel}.key`, `${k.privateKey}\n`, await limits(a));
+    await refreshUsage(a.id);
+    await audit(null, actor(req), 'hosting.dkim', 'hosting_site', site.id, { selector: sel });
+    return { selector: sel, record: { name: `${sel}._domainkey`, type: 'TXT', data: dkimRecord(k.publicKey) } };
+  });
+
   /** Готовый пример: гостевая книга на SQLite с cron. */
   app.post('/hosting/:id/sites/:sid/example', auth, async (req) => {
     const { a, dir, base } = await vsite(req);

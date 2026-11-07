@@ -98,10 +98,10 @@ export async function runHandler({ dir, entry = 'server.js', handler, arg, cpuMs
       return host.ws(ctx.getString(op), JSON.parse(ctx.getString(args)));
     }));
     def('__uuid', () => ctx.newString(crypto.randomUUID()));
-    def('__fetch', (reqH) => {
+    const asyncHost = (name, fn) => def(name, (reqH) => {
       const d = ctx.newPromise();
       const req = JSON.parse(ctx.getString(reqH));
-      const p = Promise.resolve().then(() => host.fetch(req)).then(
+      const p = Promise.resolve().then(() => fn(req)).then(
         (r) => r, (e) => ({ error: e.message || String(e) }),
       ).then((r) => {
         pending.delete(p);
@@ -111,6 +111,8 @@ export async function runHandler({ dir, entry = 'server.js', handler, arg, cpuMs
       pending.add(p);
       return d.handle;
     });
+    asyncHost('__fetch', (req) => host.fetch(req));
+    asyncHost('__mail', (req) => (host.mail ? host.mail(req) : { error: 'mail.send доступен на виртуальном тарифе' }));
     const pre = enter(() => ctx.evalCode(PRELUDE, 'prelude.js'));
     if (pre.error) throw fail(pre.error);
     pre.value.dispose();

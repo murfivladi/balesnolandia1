@@ -99,7 +99,7 @@ export async function runExternal(site, kind, payload, { depth = 0 } = {}) {
 }
 
 /** Выполнить обработчик сайта (onRequest, onCron, …) в очереди сайта, с базой и логами. */
-export async function runSite(site, handler, arg, { depth = 0, ws = null, script = 'server.js', onLog = null } = {}) {
+export async function runSite(site, handler, arg, { depth = 0, ws = null, script = 'server.js', onLog = null, chain = [] } = {}) {
   return withSite(site.id, async () => {
     const now = await gameSeconds();
     let entry = null;
@@ -121,6 +121,10 @@ export async function runSite(site, handler, arg, { depth = 0, ws = null, script
           kv: (op, a) => kvOp(entry, op, a, now),
           fetch: (req) => netRequest({ fromIp: site.server_ip, ...req, depth: depth + 1 }),
           ws: ws || (wsHost ? wsHost(site.id) : null),
+          mail: async (req) => {
+            const { sendFromSite } = await import('../mailnet/mailbox.js');
+            return sendFromSite(site, req, { depth: depth + 1, chain: [...chain, site.id] });
+          },
         },
       });
       return r.result;

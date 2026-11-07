@@ -165,6 +165,16 @@ export const PRELUDE = String.raw`
       });
   };
   g.gameTime = function () { return __now(); };
+  // Почта: письмо уходит с адреса сервера сайта по MX получателя (SPF проверит этот адрес).
+  g.mail = {
+    send: function (m) {
+      return __mail(JSON.stringify(m || {})).then(function (s) {
+        var r = JSON.parse(s);
+        if (r && r.error) throw new Error(r.error);
+        return r;
+      });
+    },
+  };
   // WebSocket-соединения посетителей с сайтом (живут между вызовами onSocket).
   function wsData(d) { return typeof d === 'string' ? d : JSON.stringify(d); }
   g.sockets = {
