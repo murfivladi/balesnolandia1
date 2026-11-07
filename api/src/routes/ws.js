@@ -15,6 +15,8 @@ export async function wsRoutes(app) {
 
     async function allowed(channel) {
       if (channel === 'clock') return true;
+      // Страница оплаты: статус своего платежа (id платежа длинный и случайный).
+      if (channel.startsWith('pay:pay_')) return channel.length > 16;
       if (channel === 'admin') return isAdmin;
       if (channel.startsWith('user:b')) return bank && `user:b${bank.id}` === channel;
       if (channel.startsWith('user:g')) return gov && `user:g${gov.id}` === channel;

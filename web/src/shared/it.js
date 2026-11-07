@@ -14,6 +14,7 @@ export const IT = {
   "Сохранено": "Salvato",
   "Отмена": "Annulla",
   "Отменить": "Annulla",
+  "Покупки": "Acquisti",
   "Назад": "Indietro",
   "Далее": "Avanti",
   "Готово": "Fatto",

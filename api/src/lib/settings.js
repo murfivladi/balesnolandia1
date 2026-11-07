@@ -165,6 +165,7 @@ export function publicSettings(s) {
     idle_minutes: s.idle_minutes,
     game_month_minutes: s.game_month_minutes,
     vat_bp: s.vat_bp,
+    online_fee_bp: s.online_fee_bp,
     fee_org: s.fee_org,
     fee_license: s.fee_license,
     hosting_server_rent: s.hosting_server_rent,

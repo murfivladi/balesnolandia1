@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { PkiAdmin } from './pki.jsx';
 import { SearchAdmin } from './search.jsx';
 import { MailAdmin } from './mail.jsx';
+import { PayAdmin } from './pay.jsx';
 import { get, post, patch, del } from '../shared/api.js';
 import {
   Spinner, useAsync, Input, Select, Form, Modal, Empty, Badge, ActionButton, Tabs, ErrorBox, Button, useToast,
@@ -23,13 +24,14 @@ export function NetSection() {
     <div className="page">
       <h1>БалНет</h1>
       <p className="muted">Сеть ВлодБраузера: провайдеры выдают игрокам IP-адреса, DNS идёт по цепочке корень → зона верхнего уровня → серверы имён домена. TTL считается в игровых секундах (в игровом месяце 30 игровых суток).</p>
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'registry', label: 'Домены и организации' }, { value: 'hosting', label: 'Хостинг' }, { value: 'pki', label: 'Сертификаты' }, { value: 'search', label: 'ВлодПоиск' }, { value: 'mail', label: 'Почта' }, { value: 'zones', label: 'Зоны DNS' }, { value: 'hosts', label: 'Адреса и серверы' }, { value: 'providers', label: 'Провайдеры' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'registry', label: 'Домены и организации' }, { value: 'hosting', label: 'Хостинг' }, { value: 'pki', label: 'Сертификаты' }, { value: 'search', label: 'ВлодПоиск' }, { value: 'mail', label: 'Почта' }, { value: 'pay', label: 'Эквайринг' }, { value: 'zones', label: 'Зоны DNS' }, { value: 'hosts', label: 'Адреса и серверы' }, { value: 'providers', label: 'Провайдеры' }]} />
       <ErrorBox error={ov.error} />
       {tab === 'registry' && <RegistryAdmin />}
       {tab === 'hosting' && <HostingAdmin />}
       {tab === 'pki' && <PkiAdmin />}
       {tab === 'search' && <SearchAdmin />}
       {tab === 'mail' && <MailAdmin />}
+      {tab === 'pay' && <PayAdmin />}
       {!ov.data ? <Spinner /> : (
         <>
           {tab === 'zones' && <Zones ov={ov.data} reload={ov.reload} />}

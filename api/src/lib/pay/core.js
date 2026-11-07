@@ -300,6 +300,7 @@ export function paymentView(p) {
     refunded: Number(p.refunded),
     method: p.method,
     created: Math.floor(new Date(p.created_at).getTime() / 1000),
+    created_at: p.created_at,
     paid_at: p.paid_at,
     expires_at: p.expires_at,
   };

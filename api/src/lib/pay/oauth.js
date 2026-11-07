@@ -11,8 +11,8 @@ import { ageFrom } from '@bln/shared/format.js';
 import { sha256 } from './core.js';
 
 export const PROVIDERS = {
-  mail: { host: 'mail.bln', title: 'ВлодПочта', scopes: ['openid', 'profile', 'email'] },
-  gov: { host: 'gosuslugi.gov.bln', title: 'ВлодУслуги', scopes: ['openid', 'profile', 'age', 'passport'] },
+  mail: { host: 'mail.bln', title: 'ВлодПочта', via: 'ВлодПочту', scopes: ['openid', 'profile', 'email'] },
+  gov: { host: 'gosuslugi.gov.bln', title: 'ВлодУслуги', via: 'ВлодУслуги', scopes: ['openid', 'profile', 'age', 'passport'] },
 };
 export const SCOPE_TITLES = {
   openid: 'Знать, что это вы (постоянный идентификатор для этого сайта)',
@@ -165,6 +165,7 @@ export async function authorizeInfo(provider, govUserId, p) {
   return {
     provider,
     provider_title: PROVIDERS[provider].title,
+    provider_via: PROVIDERS[provider].via,
     client: { name: client.name, site_url: client.site_url, redirect_host: new URL(uri).host },
     scopes: scopes.map((s) => ({ scope: s, title: SCOPE_TITLES[s] })),
     remembered: scopes.every((s) => granted.includes(s)),
@@ -192,7 +193,7 @@ export async function grantsOf(govUserId) {
      WHERE (g.provider = 'gov' AND g.subject_id = ?) OR (g.provider = 'mail' AND g.subject_id = ?) ORDER BY g.last_used_at DESC`,
     [govUserId, mail?.id || 0],
   );
-  return rows.map((r) => ({ client_id: r.cid, name: r.name, site_url: r.site_url, provider: r.provider, provider_title: PROVIDERS[r.provider].title, scopes: r.scope.split(' '), created_at: r.created_at, last_used_at: r.last_used_at }));
+  return rows.map((r) => ({ client_id: r.cid, name: r.name, site_url: r.site_url, provider: r.provider, provider_title: PROVIDERS[r.provider].title, provider_via: PROVIDERS[r.provider].via, scopes: r.scope.split(' '), created_at: r.created_at, last_used_at: r.last_used_at }));
 }
 
 export async function revokeGrant(govUserId, clientId, provider) {

@@ -13,6 +13,7 @@ import { IdCard, passportBlocks, MARITAL, DOC_DISCLAIMER } from '../shared/passp
 import { renderThermal, shareCanvas } from '../shared/thermal.js';
 import { gameDateLabel, mmYY } from '@bln/shared/time.js';
 import { SiteFooter, Hero, GovStrip } from '../shared/site.jsx';
+import { OAuthConsent, ConnectedApps } from '../shared/oauth.jsx';
 
 const DOC_TITLES = { inn: 'ИНН', ip: 'Свидетельство ИП', driver: 'Водительские права', marriage: 'Свидетельство о браке', birth: 'Свидетельство о рождении', foreign_passport: 'Загранпаспорт', visa: 'Виза' };
 
@@ -126,6 +127,9 @@ export default function App() {
           ['/invoices', () => <InvoicesPage />],
           ['/applications', () => <ApplicationsPage />],
           ['/links', () => <LinksPage />],
+          // «Войти через ВлодУслуги» на сайтах БалНета (OAuth 2): согласие и подключённые сайты.
+          ['/oauth/authorize', () => <div className="page narrow"><OAuthConsent provider="gov" query={route.query} /></div>],
+          ['/apps', () => <div className="page narrow stack"><h1>Подключённые сайты</h1><div className="card"><ConnectedApps /></div></div>],
           // Разделы переехали на отдельные сайты БалНета — старые ссылки ведут туда.
           ['/orgs', () => <Moved href="../nalog/#/orgs" site="Налоговую службу (nalog.gov.bln)" />],
           ['/orgs/:id', (p) => <Moved href={`../nalog/#/orgs/${p.id}`} site="Налоговую службу (nalog.gov.bln)" />],

@@ -7,6 +7,8 @@ import { useRoute, pick, navigate } from '../shared/router.js';
 import { Topbar, NavLink, Spinner, useAsync, Empty, ErrorBox, Badge, Button, ActionButton, Input, Field, useToast, useChannel } from '../shared/ui.jsx';
 import { MailLogo } from '../shared/brand.jsx';
 import { SiteFooter, Hero, Section, Features, GovLogin } from '../shared/site.jsx';
+import { OAuthConsent, ConnectedApps } from '../shared/oauth.jsx';
+import { Developers } from './developers.jsx';
 
 const FOLDERS = [
   ['inbox', '📥', 'Входящие'], ['starred', '⭐', 'Помеченные'], ['sent', '📤', 'Отправленные'], ['spam', '⚠️', 'Спам'], ['trash', '🗑', 'Корзина'],
@@ -27,7 +29,12 @@ export default function App() {
   const right = acc ? <a className="tb-btn" href="#/settings">{acc.address}</a> : me.data.gov ? null : <a className="tb-btn" href="#/login">Войти</a>;
   let body;
   if (!me.data.gov) {
-    body = pick([['/login', () => <div className="page narrow"><GovLogin app="mail" siteName="mail.bln" hash="#/" /></div>], ['*', () => <Landing />]], route.path);
+    body = pick([
+      ['/login', () => <div className="page narrow"><GovLogin app="mail" siteName="mail.bln" hash="#/" /></div>],
+      ['/oauth/authorize', () => <div className="page narrow"><GovLogin app="mail" siteName="mail.bln — вход на сайт через ВлодПочту" /></div>],
+      ['/developers', () => <div className="page narrow"><GovLogin app="mail" siteName="mail.bln" /></div>],
+      ['*', () => <Landing />],
+    ], route.path);
   } else if (!acc) body = <ChooseLogin onDone={me.reload} name={me.data.gov.name} />;
   else {
     body = pick([
@@ -36,19 +43,22 @@ export default function App() {
       ['/settings', () => <Settings me={me.data} reload={me.reload} />],
       ['/domains', () => <Domains />],
       ['/browser', () => <BrowserAccount />],
+      ['/oauth/authorize', () => <div className="page narrow"><OAuthConsent provider="mail" query={route.query} /></div>],
+      ['/apps', () => <div className="page narrow stack"><h1>Подключённые сайты</h1><p className="muted">Сайты, на которые вы входили через ВлодПочту или ВлодУслуги. Отзыв доступа сразу гасит их токены.</p><div className="card"><ConnectedApps /></div></div>],
+      ['/developers', () => <Developers />],
       ['/f/:folder', (p) => <Mailbox me={me.data} route={route} folder={p.folder} />],
       ['*', () => <Mailbox me={me.data} route={route} folder="inbox" />],
     ], route.path);
   }
   return (
     <>
-      <Topbar variant="site" brand={<><MailLogo /> <span>ВлодПочта</span></>} nav={acc ? <><NavLink href="#/" path={route.path}>Почта</NavLink><NavLink href="#/domains" path={route.path}>Свой домен</NavLink><NavLink href="#/browser" path={route.path}>ВлодБраузер</NavLink></> : null} right={right} />
+      <Topbar variant="site" brand={<><MailLogo /> <span>ВлодПочта</span></>} nav={acc ? <><NavLink href="#/" path={route.path}>Почта</NavLink><NavLink href="#/domains" path={route.path}>Свой домен</NavLink><NavLink href="#/browser" path={route.path}>ВлодБраузер</NavLink><NavLink href="#/apps" path={route.path}>Сайты</NavLink><NavLink href="#/developers" path={route.path}>Разработчикам</NavLink></> : null} right={right} />
       <main style={{ flex: 1 }}>{body}</main>
       <SiteFooter
         brand="ВлодПочта"
         about="Почта БалНета: настоящие MX, SPF, DKIM и DMARC, спам-фильтр, почта на своём домене и аккаунт ВлодБраузера."
         columns={[
-          { title: 'ВлодПочта', links: [{ href: '#/', label: 'Входящие' }, { href: '#/domains', label: 'Почта для домена' }, { href: '#/browser', label: 'Аккаунт браузера' }] },
+          { title: 'ВлодПочта', links: [{ href: '#/', label: 'Входящие' }, { href: '#/domains', label: 'Почта для домена' }, { href: '#/browser', label: 'Аккаунт браузера' }, { href: '#/apps', label: 'Подключённые сайты' }, { href: '#/developers', label: 'Вход через ВлодПочту для сайтов' }] },
           { title: 'Сервисы БалНета', links: [{ href: '../reg/#/', label: 'БалРег — домены' }, { href: '../hosting/#/', label: 'БалХост — хостинг' }, { href: '../poisk/#/', label: 'ВлодПоиск' }] },
         ]}
       />

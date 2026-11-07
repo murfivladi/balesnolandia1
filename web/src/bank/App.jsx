@@ -12,6 +12,7 @@ import { NewCard, CreditPage, AutopayPage, CashbackPage } from './finance.jsx';
 import { Atm } from './atm.jsx';
 import { TellerPage } from './teller.jsx';
 import { DebtsPage } from './debts.jsx';
+import { PurchasesPage, CourierPage } from '../pay/purchases.jsx';
 
 export default function App() {
   useLang();
@@ -100,6 +101,7 @@ export default function App() {
             <NavLink href="#/credit" path={route.path}>{t('Кредиты')}</NavLink>
             <NavLink href="#/cashback" path={route.path}>{t('Кешбэк')}</NavLink>
             <NavLink href="#/debts" path={route.path}>{t('Долги')}</NavLink>
+            <NavLink href="#/purchases" path={route.path}>{t('Покупки')}</NavLink>
             {isTeller && <NavLink href="#/teller" path={route.path}>{t('Операционист')}</NavLink>}
           </>
         )}
@@ -127,6 +129,8 @@ export default function App() {
           ['/autopay', () => <AutopayPage tick={tick} />],
           ['/cashback', () => <CashbackPage tick={tick} />],
           ['/debts', () => <DebtsPage tick={tick} />],
+          ['/purchases', () => <PurchasesPage tick={tick} />],
+          ['/courier', () => <CourierPage />],
           ['/receipt/:id', (p) => <ReceiptPage id={p.id} />],
           ['/profile', () => <ProfilePage me={me} />],
           ['/teller', () => (isTeller ? <TellerPage /> : <Empty>{t('Нет доступа')}</Empty>)],
