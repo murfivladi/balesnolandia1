@@ -270,7 +270,7 @@ export function question(name, type = 'A') {
  * Ошибки уровня сети: timeout (по адресу нет резолвера или он выключен), refused (резолвер провайдера
  * обслуживает только своих абонентов).
  */
-export async function resolve({ resolverIp, clientIp, clientProviderId, name, type }) {
+export async function resolve({ resolverIp, clientIp, clientProviderId, name, type, fresh = false }) {
   const { qname, qtype } = question(name, type);
   const snap = await netSnapshot();
   const host = snap.hostByIp.get(resolverIp);
@@ -282,7 +282,8 @@ export async function resolve({ resolverIp, clientIp, clientProviderId, name, ty
   if (host.provider_id && host.provider_id !== clientProviderId) {
     return { ...base, rcode: 'REFUSED', answer: [], authority: [], trace: [], ms: toResolver, cached: false };
   }
-  const ctx = { snap, resolverIp, cache: cacheOf(resolverIp), now: await gameSeconds(), trace: [], ms: 0, queries: 0, fromCache: 0 };
+  // fresh — без кэша: так проверяет домены удостоверяющий центр (всегда идёт к авторитетным серверам).
+  const ctx = { snap, resolverIp, cache: fresh ? new Map() : cacheOf(resolverIp), now: await gameSeconds(), trace: [], ms: 0, queries: 0, fromCache: 0 };
   const res = await iterate(ctx, qname, qtype);
   return { ...base, ...res, trace: ctx.trace, ms: Math.round((toResolver + ctx.ms) * 10) / 10, cached: ctx.trace.length === 0, time: ctx.now };
 }

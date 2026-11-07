@@ -124,11 +124,13 @@ test('сайт на домене: A-запись на сервер, файлы, 
   assert.deepEqual(list.entries.map((e) => e.name), ['img', '_headers', 'index.html', 'style.css']);
   assert.equal((await boris.gov.get(`${f}/file?path=index.html`)).text, true);
 
-  const o = await open('https://boris.bln/');
+  const s443 = await open('https://boris.bln/');
+  assert.equal(s443.tls, null, 'сертификат не установлен — https на сервере нет');
+  assert.equal(s443.ticket, undefined, 'страница по https не отдаётся');
+  const o = await open('http://boris.bln/');
   assert.equal(o.ok, true);
   assert.equal(o.target, `site:${site.id}`);
   assert.equal(o.gov, false);
-  assert.equal(o.tls, false, 'у сайтов игроков пока нет сертификатов');
   assert.ok(o.ticket);
   const res = await web(o.ticket, '/');
   assert.equal(res.statusCode, 200);
@@ -138,7 +140,7 @@ test('сайт на домене: A-запись на сервер, файлы, 
   assert.ok(res.body.includes('<script src="/api/net/shim.js">'), 'shim встроен');
   assert.ok(res.body.includes(`href="/api/net/web/${o.ticket}/style.css"`), 'корневые пути переписаны');
   assert.ok(res.body.includes('href="https://bank.bln/"'), 'внешние ссылки не тронуты');
-  assert.ok(res.body.includes('"origin":"https://boris.bln"'));
+  assert.ok(res.body.includes('"origin":"http://boris.bln"'));
   const css = await web(o.ticket, '/style.css');
   assert.match(css.headers['content-type'], /text\/css/);
   assert.equal(css.body, `body{background:url(/api/net/web/${o.ticket}/img/bg.png)}`);

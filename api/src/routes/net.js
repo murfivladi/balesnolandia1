@@ -9,6 +9,7 @@ import { splitUrl } from '@bln/shared/balnet-url.js';
 import { fqdn } from '@bln/shared/balnet-dns.js';
 import { whoisDomain } from '../lib/domains.js';
 import { createTicket, cleanJar } from '../lib/gateway.js';
+import { tlsFor, trustStore } from '../lib/pki.js';
 
 const limited = (max) => ({ config: { rateLimit: { max, timeWindow: '1 minute' } } });
 
@@ -98,20 +99,24 @@ export async function netRoutes(app) {
     return queryServer({ serverIp: server, clientIp: c.ip, clientProviderId: c.provider.id, name: b.name, type: b.type || 'A', recurse: b.recurse !== false });
   });
 
-  // Открытие адреса браузером: DNS → подключение к серверу → что показать.
-  // Открытие адреса браузером: DNS → подключение к серверу → что показать.
+  /** Хранилище доверия ВлодБраузера: корневые УЦ, журналы прозрачности, отозванные УЦ. */
+  app.get('/trust', async () => trustStore());
+
+  // Открытие адреса браузером: DNS → подключение к серверу → TLS (для https) → что показать.
+  // tls: { chain, sct, ocsp, time } — браузер сам проверяет подписи; null — на сервере нет сертификата (порт 443 закрыт).
   // Для сайта игрока выдаётся билет шлюза (адрес песочницы) с хранилищами сайта от браузера.
   app.post('/open', limited(240), async (req) => {
     await online();
     const b = req.body || {};
     const c = await clientCtx(b);
     const r = await openFor(c, String(b.url || ''));
-    if (r.ok && r.target?.startsWith('site:')) {
-      const p = splitUrl(r.url);
+    if (!r.ok) return r;
+    const p = splitUrl(r.url);
+    if (p.scheme === 'https') r.tls = await tlsFor({ target: r.target, host: p.host });
+    if (r.target?.startsWith('site:') && !(p.scheme === 'https' && !r.tls)) {
       const jar = cleanJar(b.jar);
       r.ticket = createTicket({ clientId: b.client_id, resolver: c.resolverIp, target: r.target, host: p.host, scheme: p.scheme, origin: `${p.scheme}://${p.host}`, ...jar });
-      r.tls = false; // сертификаты сайтов игроков — этап Н5
-    } else if (r.ok) r.tls = true;
+    }
     return r;
   });
 

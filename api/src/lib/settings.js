@@ -104,6 +104,11 @@ export const DEFAULTS = {
   hosting_grace_months: 1,
   hosting_max_months: 12,
   hosting_max_file_kb: 5120,
+  // Сертификаты (этап Н5): сроки в игровых месяцах, цены в влодинках
+  cert_dv_months: 3,
+  cert_paid_months: 12,
+  cert_ov_price: 5000,
+  cert_ev_price: 20000,
   // Адреса и почта — задаются в админке (раздел «Система»), .env для них не нужен
   public_web_url: '',
   cors_origins: '',
@@ -153,6 +158,9 @@ export function publicSettings(s) {
     fee_org: s.fee_org,
     fee_license: s.fee_license,
     hosting_server_rent: s.hosting_server_rent,
+    cert_ov_price: s.cert_ov_price,
+    cert_ev_price: s.cert_ev_price,
+    cert_dv_months: s.cert_dv_months,
     bank_logo: s.bank_logo,
     gov_logo: s.gov_logo,
     transfer_fee_bp: s.transfer_fee_bp,
