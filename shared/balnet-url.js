@@ -23,6 +23,9 @@ export const GOV_SITES = {
   'bank.bln': { app: 'bank', title: 'ВлодБанк', owner: 'ВлодБанк (госбанк БФ)' },
   'gosuslugi.gov.bln': { app: 'services', title: 'ВлодУслуги', owner: 'Правительство БФ' },
   'kassa.bln': { app: 'pos', title: 'Касса', owner: 'Министерство торговли БФ' },
+  'reg.bln': { app: 'reg', title: 'БалРег', owner: 'Координационный центр БалНета' },
+  'hosting.bln': { app: 'hosting', title: 'БалХост', owner: 'Координационный центр БалНета' },
+  'nalog.gov.bln': { app: 'nalog', title: 'Налоговая служба БФ', owner: 'Правительство БФ' },
 };
 
 const SCHEME_RE = /^([a-z][a-z0-9+.-]*):\/\//i;

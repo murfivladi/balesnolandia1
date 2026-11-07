@@ -445,7 +445,7 @@ export function DisclaimerBar() {
 }
 
 /** Шапка всех приложений. На телефоне навигация и действия прячутся в бургер-меню. */
-export function Topbar({ brand, nav, right, homeHref = '#/' }) {
+export function Topbar({ brand, nav, right, homeHref = '#/', variant = '', strip = null }) {
   const [open, setOpen] = useState(false);
   const menuId = useId();
   useEffect(() => {
@@ -475,7 +475,8 @@ export function Topbar({ brand, nav, right, homeHref = '#/' }) {
 
   return (
     <>
-      <header className={`topbar${open ? ' menu-open' : ''}`}>
+      {strip && <div className="site-strip"><div className="site-strip-inner">{strip}</div></div>}
+      <header className={`topbar${variant ? ` ${variant}` : ''}${open ? ' menu-open' : ''}`}>
         <div className="topbar-inner">
           <a className="brand" href={homeHref} onClick={() => setOpen(false)}>{brand}</a>
           {nav && <nav className="nav topbar-nav">{nav}</nav>}

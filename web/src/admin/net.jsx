@@ -10,7 +10,7 @@ import { HostingAdmin } from './hosting.jsx';
 
 const KIND_LABEL = { router: 'маршрутизатор', auth: 'DNS-сервер зон', resolver: 'резолвер', web: 'веб-сервер' };
 const PURPOSE_LABEL = { infra: 'инфраструктура', datacenter: 'дата-центр', provider: 'провайдер', ix: 'точка обмена', hosting: 'хостинг' };
-const TARGET_LABEL = { 'app:bank': 'ВлодБанк', 'app:services': 'ВлодУслуги', 'app:pos': 'Касса', poisk: 'ВлодПоиск' };
+const TARGET_LABEL = { 'app:bank': 'ВлодБанк', 'app:services': 'ВлодУслуги', 'app:pos': 'Касса', 'app:reg': 'БалРег', 'app:hosting': 'БалХост', 'app:nalog': 'Налоговая служба', poisk: 'ВлодПоиск' };
 const strip = (n) => String(n || '').replace(/\.$/, '');
 
 export function NetSection() {

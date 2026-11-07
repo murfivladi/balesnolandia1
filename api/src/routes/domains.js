@@ -178,7 +178,19 @@ export async function domainRoutes(app) {
   });
 
   // ——— Домены ———
-  app.get('/domains/check', auth, async (req) => {
+  // Публично, как на сайте любого регистратора: зоны и цены, проверка имени.
+  app.get('/domains/zones', async () => {
+    const month = await currentMonth();
+    const tlds = await q('SELECT * FROM tlds WHERE active = 1 ORDER BY restricted IS NOT NULL, gov_price DESC, name');
+    return {
+      zones: await Promise.all(tlds.map(async (t) => {
+        const offers = await registrarOffers(null, t, month);
+        return { name: disp(t.name), restricted: t.restricted, price: offers[0].price, min_price: Math.min(...offers.map((o) => o.price)), registrars: offers.length };
+      })),
+    };
+  });
+
+  app.get('/domains/check', async (req) => {
     const month = await currentMonth();
     const { name, tld } = await parseDomain(null, req.query.name);
     const av = await availability(null, name, tld);

@@ -15,6 +15,9 @@ export default defineConfig({
       input: {
         index: resolve(import.meta.dirname, 'index.html'),
         apps: resolve(import.meta.dirname, 'apps/index.html'),
+        reg: resolve(import.meta.dirname, 'reg/index.html'),
+        hosting: resolve(import.meta.dirname, 'hosting/index.html'),
+        nalog: resolve(import.meta.dirname, 'nalog/index.html'),
         bank: resolve(import.meta.dirname, 'bank/index.html'),
         pos: resolve(import.meta.dirname, 'pos/index.html'),
         services: resolve(import.meta.dirname, 'services/index.html'),

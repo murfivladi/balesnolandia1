@@ -87,3 +87,44 @@ export function AdminLogo({ size = 34 }) {
     </svg>
   );
 }
+
+// ——— Логотипы сервисов БалНета (оригинальные знаки) ———
+
+/** БалРег — регистратор доменов: «глобус-точка». */
+export function RegLogo({ size = 34 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
+      <rect width="40" height="40" rx="10" fill="#0b7a5e" />
+      <circle cx="20" cy="20" r="11" fill="none" stroke="#fff" strokeWidth="2.4" />
+      <ellipse cx="20" cy="20" rx="5" ry="11" fill="none" stroke="#fff" strokeWidth="2" />
+      <path d="M9.5 16h21M9.5 24h21" stroke="#fff" strokeWidth="2" />
+      <circle cx="30" cy="30" r="5" fill="#ffd166" stroke="#0b7a5e" strokeWidth="2" />
+    </svg>
+  );
+}
+
+/** БалХост — хостинг: три сервера. */
+export function HostLogo({ size = 34 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
+      <rect width="40" height="40" rx="10" fill="#6326d1" />
+      {[9, 17.5, 26].map((y) => (
+        <g key={y}>
+          <rect x="8" y={y} width="24" height="6" rx="2" fill="#fff" />
+          <circle cx="12" cy={y + 3} r="1.4" fill="#22c55e" />
+          <rect x="20" y={y + 2.2} width="9" height="1.6" rx=".8" fill="#c4b5fd" />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+/** Налоговая служба БФ: герб на зелёном щите. */
+export function NalogLogo({ size = 34 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
+      <path d="M20 2 35 8v11c0 9.5-6.4 16.4-15 19-8.6-2.6-15-9.5-15-19V8Z" fill="#155e3b" stroke="#d4a72c" strokeWidth="2" />
+      <path d="M13 26h14M14 26V17m4 9v-9m4 9v-9m4 9v-9M12 17h16l-8-5Z" stroke="#fff" strokeWidth="2" fill="none" strokeLinejoin="round" />
+    </svg>
+  );
+}

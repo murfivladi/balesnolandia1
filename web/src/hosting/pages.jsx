@@ -1,4 +1,4 @@
-// ВлодУслуги → Хостинг (этап Н4): тарифы, аккаунты, сайты, файловый менеджер. Кабинет хостера для организаций.
+// БалХост (hosting.bln): тарифы, кабинет, сайты, файловый менеджер, кабинет партнёра-хостера.
 import { useRef, useState } from 'react';
 import { get, post, put, patch, del, appUrl } from '../shared/api.js';
 import { useLang } from '../shared/i18n.js';
@@ -27,11 +27,11 @@ const readAsBase64 = (file) => new Promise((resolve, reject) => {
   r.readAsDataURL(file);
 });
 
-export function HostingPage() {
+export function HostingPage({ initialPlan = null }) {
   const lang = useLang();
   const { data, error, reload } = useAsync(() => get('/gov/hosting'), []);
   const orgs = useAsync(() => get('/gov/orgs'), []);
-  const [pick, setPick] = useState(null);
+  const [pick, setPick] = useState(initialPlan);
   const [months, setMonths] = useState(1);
   const [owner, setOwner] = useState('');
   const [order, setOrder] = useState(null);
@@ -39,7 +39,7 @@ export function HostingPage() {
   return (
     <div className="page">
       <div className="page-head">
-        <h1>Хостинг</h1>
+        <h1>Мой хостинг</h1>
         <span className="muted small">Игровая дата: {gameDateLabel(data.month, lang)}</span>
       </div>
       <p className="muted">Хостинг — место на сервере для файлов сайта (HTML, CSS, JS, картинки). Купите тариф, подключите к нему домен, поставьте в DNS домена A-запись на адрес сервера — и сайт откроется во ВлодБраузере.</p>
@@ -49,7 +49,7 @@ export function HostingPage() {
           {!data.accounts.length ? <p className="muted">Пока нет.</p> : (
             <div className="list">
               {data.accounts.map((a) => (
-                <a key={a.id} href={`#/hosting/${a.id}`} className="list-item" style={{ color: 'inherit' }}>
+                <a key={a.id} href={`#/cabinet/${a.id}`} className="list-item" style={{ color: 'inherit' }}>
                   <div className="li-main">
                     <div className="li-title">{a.hoster} · «{a.plan}»</div>
                     <div className="li-sub">{a.sites.map((s) => s.host).join(', ') || 'сайтов нет'} · до {gameDateLabel(a.paid_until_month, lang)}</div>
@@ -82,7 +82,7 @@ export function HostingPage() {
               )}
             </Form>
           )}
-          {order && (order.invoice ? <PayLink invoice={order.invoice} amount={order.amount} /> : <div className="form-ok">Хостинг работает. <a href={`#/hosting/${order.account_id}`}>Открыть</a></div>)}
+          {order && (order.invoice ? <PayLink invoice={order.invoice} amount={order.amount} /> : <div className="form-ok">Хостинг работает. <a href={`#/cabinet/${order.account_id}`}>Открыть</a></div>)}
         </div>
       </div>
     </div>
@@ -141,7 +141,7 @@ export function HostingAccountPage({ id }) {
               <Input label="Имя сайта" value={host} onChange={(e) => setHost(e.target.value)} placeholder="boris.bln или www.boris.bln" />
             </Form>
           )}
-          <p className="small muted">Чтобы сайт открывался, в DNS домена нужна A-запись на <span className="mono">{a.server_ip}</span> — её можно поставить в разделе <a href="#/domains">Домены</a>.</p>
+          <p className="small muted">Чтобы сайт открывался, в DNS домена нужна A-запись на <span className="mono">{a.server_ip}</span> — её можно поставить на сайте регистратора <a href="../reg/#/domains">reg.bln</a>.</p>
         </div>
       </div>
       {site && <FileManager key={site.id} accountId={id} site={site} canWrite={a.status === 'active'} onChange={reload} />}

@@ -4,7 +4,7 @@ import { reconnect } from '../shared/ws.js';
 import { t, useLang, fmtDate, fmtBirth } from '../shared/i18n.js';
 import { useRoute, pick, navigate } from '../shared/router.js';
 import {
-  Topbar, NavLink, DisclaimerBar, Spinner, useAsync, useChannel, useIdle, useToast, Bell, Input, Form, Select, PhotoInput,
+  Topbar, NavLink, Spinner, useAsync, useChannel, useIdle, useToast, Bell, Input, Form, Select, PhotoInput,
   Money, StatusBadge, Empty, ActionButton, Badge, QR, ErrorBox, Modal, Tabs,
 } from '../shared/ui.jsx';
 import { ServicesLogo, CoatOfArms, Flag } from '../shared/brand.jsx';
@@ -12,8 +12,7 @@ import { LoginForm, AuthDisclaimer, NotificationsModal } from '../shared/auth.js
 import { IdCard, passportBlocks, MARITAL, DOC_DISCLAIMER } from '../shared/passport.jsx';
 import { renderThermal, shareCanvas } from '../shared/thermal.js';
 import { gameDateLabel, mmYY } from '@bln/shared/time.js';
-import { OrgsPage, OrgPage, DomainsPage, DomainPage } from './domains.jsx';
-import { HostingPage, HostingAccountPage } from './hosting.jsx';
+import { SiteFooter, Hero, GovStrip } from '../shared/site.jsx';
 
 const DOC_TITLES = { inn: 'ИНН', ip: 'Свидетельство ИП', driver: 'Водительские права', marriage: 'Свидетельство о браке', birth: 'Свидетельство о рождении', foreign_passport: 'Загранпаспорт', visa: 'Виза' };
 
@@ -66,6 +65,12 @@ export default function App() {
     navigate('/');
   }
 
+  // Вход «через ВлодУслуги» с другого сайта БалНета: после входа возвращаемся туда (только на свои приложения).
+  const back = route.query.return;
+  useEffect(() => {
+    if (me && back && /^\.\.\/(reg|hosting|nalog|bank|pos)\/#\/[^\s]*$/.test(back)) location.href = back;
+  }, [me, back]);
+
   const isOfficial = me?.roles?.some((r) => ['admin', 'official'].includes(r));
   const publicPage = pick([
     ['/verify/passport/:code', (p) => <VerifyPassport code={p.code} />],
@@ -74,12 +79,25 @@ export default function App() {
   ], route.path);
 
   const brand = <><ServicesLogo src={settings?.gov_logo} /> <span>ВлодУслуги</span></>;
+  const footer = (
+    <SiteFooter
+      brand="ВлодУслуги"
+      about="Госпортал Балесноландской Федерации: паспорт, документы, ИП, квитанции и заявления онлайн."
+      columns={[
+        { title: 'Услуги', links: [{ href: '#/passport', label: 'Паспорт БФ' }, { href: '#/documents', label: 'ИНН, ИП, документы' }, { href: '#/invoices', label: 'Квитанции' }, { href: '#/applications', label: 'Заявления' }] },
+        { title: 'Ведомства', links: [{ href: '../nalog/#/', label: 'Налоговая служба' }, { href: '../bank/#/', label: 'ВлодБанк' }] },
+        { title: 'БалНет', links: [{ href: '../reg/#/', label: 'БалРег — домены' }, { href: '../hosting/#/', label: 'БалХост — хостинг' }, { href: '../', label: 'ВлодБраузер', top: true }] },
+      ]}
+    />
+  );
 
-  if (me === undefined) return <><Topbar brand={brand} /><Spinner /></>;
+  if (me === undefined) return <><Topbar variant="site" strip={<GovStrip />} brand={brand} /><Spinner /></>;
 
   return (
     <>
       <Topbar
+        variant="site"
+        strip={<GovStrip />}
         brand={brand}
         nav={me && (
           <>
@@ -88,9 +106,6 @@ export default function App() {
             <NavLink href="#/documents" path={route.path}>{t('Документы')}</NavLink>
             <NavLink href="#/invoices" path={route.path}>{t('Квитанции')}</NavLink>
             <NavLink href="#/applications" path={route.path}>{t('Заявления')}</NavLink>
-            <NavLink href="#/orgs" path={route.path}>Организации</NavLink>
-            <NavLink href="#/domains" path={route.path}>Домены</NavLink>
-            <NavLink href="#/hosting" path={route.path}>Хостинг</NavLink>
             {isOfficial && <NavLink href="#/queue" path={route.path}>{t('Рассмотрение')}</NavLink>}
           </>
         )}
@@ -111,24 +126,37 @@ export default function App() {
           ['/invoices', () => <InvoicesPage />],
           ['/applications', () => <ApplicationsPage />],
           ['/links', () => <LinksPage />],
-          ['/orgs', () => <OrgsPage />],
-          ['/orgs/:id', (p) => <OrgPage id={p.id} />],
-          ['/domains', () => <DomainsPage />],
-          ['/domains/:id', (p) => <DomainPage id={p.id} />],
-          ['/hosting', () => <HostingPage />],
-          ['/hosting/:id', (p) => <HostingAccountPage id={p.id} />],
+          // Разделы переехали на отдельные сайты БалНета — старые ссылки ведут туда.
+          ['/orgs', () => <Moved href="../nalog/#/orgs" site="Налоговую службу (nalog.gov.bln)" />],
+          ['/orgs/:id', (p) => <Moved href={`../nalog/#/orgs/${p.id}`} site="Налоговую службу (nalog.gov.bln)" />],
+          ['/domains', () => <Moved href="../reg/#/domains" site="БалРег (reg.bln)" />],
+          ['/domains/:id', (p) => <Moved href={`../reg/#/domains/${p.id}`} site="БалРег (reg.bln)" />],
+          ['/hosting', () => <Moved href="../hosting/#/cabinet" site="БалХост (hosting.bln)" />],
+          ['/hosting/:id', (p) => <Moved href={`../hosting/#/cabinet/${p.id}`} site="БалХост (hosting.bln)" />],
           ['/queue', () => (isOfficial ? <QueuePage /> : <Empty>{t('Нет доступа')}</Empty>)],
           ['*', () => <Empty>{t('Страница не найдена')}</Empty>],
         ], route.path)
       ))}
-      <DisclaimerBar />
+      {footer}
     </>
   );
+}
+
+function Moved({ href, site }) {
+  useEffect(() => { location.href = href; }, [href]);
+  return <Empty>Раздел переехал на {site}. <a href={href}>Перейти</a></Empty>;
 }
 
 function AuthScreen({ onDone }) {
   const [tab, setTab] = useState('login');
   return (
+    <>
+    <Hero
+      kicker="Госпортал Балесноландской Федерации"
+      title="Государственные услуги онлайн"
+      lead="Паспорт БФ, ИНН, регистрация ИП, квитанции и заявления — без очередей. Один аккаунт для всех госсайтов и сервисов БалНета."
+      art="🏛"
+    />
     <div className="auth-wrap">
       <div className="card auth-card">
         <div className="brand-big">
@@ -141,6 +169,7 @@ function AuthScreen({ onDone }) {
         <div style={{ marginTop: 16 }}><AuthDisclaimer /></div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -169,11 +198,9 @@ function Home({ me }) {
   const p = data.passport;
   const unpaid = data.invoices.filter((i) => i.status === 'unpaid');
   return (
+    <>
+    <Hero compact kicker={`${t('Игровая дата')}: ${gameDateLabel(data.month, lang)}`} title={t('Здравствуйте, {name}', { name: p?.full_name?.split(' ')[0] || me.display_name })} lead="Что хотите сделать сегодня? Все услуги — ниже." />
     <div className="page">
-      <div className="page-head">
-        <h1>{t('Здравствуйте, {name}', { name: p?.full_name?.split(' ')[0] || me.display_name })}</h1>
-        <span className="muted small">{t('Игровая дата')}: {gameDateLabel(data.month, lang)}</span>
-      </div>
       {data.links.length > 0 && (
         <div className="form-warn" style={{ marginBottom: 16 }}>
           {t('ВлодБанк просит подтвердить ваш паспорт')} — <a href="#/links">{t('посмотреть')}</a>
@@ -208,9 +235,9 @@ function Home({ me }) {
               <ServiceTile href="#/documents" icon="🪪" title={t('ИНН и ИП')} sub={t('Регистрация бизнеса')} />
               <ServiceTile href="#/invoices" icon="🧾" title={t('Квитанции')} sub={t('Пошлины, штрафы, налоги')} />
               <ServiceTile href="#/links" icon="🏦" title={t('ВлодБанк')} sub={t('Связка с паспортом')} />
-              <ServiceTile href="#/orgs" icon="🏢" title="Организации" sub="ООО, АО, лицензии" />
-              <ServiceTile href="#/domains" icon="🌐" title="Домены" sub="Имена сайтов в БалНете" />
-              <ServiceTile href="#/hosting" icon="🗄" title="Хостинг" sub="Место для файлов сайта" />
+              <ServiceTile href="../nalog/#/" icon="🏢" title="Организации" sub="Налоговая служба: ООО, АО, лицензии" />
+              <ServiceTile href="../reg/#/" icon="🌐" title="Домены" sub="БалРег — имена сайтов" />
+              <ServiceTile href="../hosting/#/" icon="🗄" title="Хостинг" sub="БалХост — место для сайта" />
               <ServiceTile href={appUrl('bank')} icon="💳" title={t('Открыть ВлодБанк')} sub={t('Счета и карты')} />
             </div>
           </div>
@@ -230,6 +257,7 @@ function Home({ me }) {
         </div>
       </div>
     </div>
+    </>
   );
 }
 

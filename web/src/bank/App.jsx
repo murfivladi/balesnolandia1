@@ -5,6 +5,7 @@ import { t, useLang } from '../shared/i18n.js';
 import { useRoute, pick, navigate } from '../shared/router.js';
 import { Topbar, NavLink, DisclaimerBar, Spinner, useChannel, useIdle, useToast, Bell, Input, Form, Tabs, Empty, ErrorBox } from '../shared/ui.jsx';
 import { BankLogo } from '../shared/brand.jsx';
+import { SiteFooter, Hero, Section, Features } from '../shared/site.jsx';
 import { LoginForm, AuthDisclaimer, NotificationsModal } from '../shared/auth.jsx';
 import { Dashboard, AccountPage, OpenAccount, CardsPage, TransferPage, PayInvoice, QrPay, ReceiptPage, ProfilePage } from './pages.jsx';
 import { NewCard, CreditPage, AutopayPage, CashbackPage } from './finance.jsx';
@@ -68,7 +69,19 @@ export default function App() {
 
   // Банкомат — отдельный экран без входа в кабинет.
   if (route.path === '/atm') return <><Atm brand={brand} /><DisclaimerBar /></>;
-  if (me === undefined) return <><Topbar brand={brand} /><Spinner /></>;
+  const footer = (
+    <SiteFooter
+      brand="ВлодБанк"
+      about="Государственный банк Балесноландской Федерации: счета, карты, переводы, вклады и кредиты."
+      columns={[
+        { title: 'Частным клиентам', links: [{ href: '#/cards', label: 'Карты' }, { href: '#/transfer', label: 'Переводы' }, { href: '#/credit', label: 'Кредиты' }, { href: '#/cashback', label: 'Кешбэк' }] },
+        { title: 'Сервисы', links: [{ href: '#/atm', label: 'Банкомат' }, { href: '#/pay', label: 'Оплата квитанций' }] },
+        { title: 'Госсайты', links: [{ href: '../services/#/', label: 'ВлодУслуги' }, { href: '../nalog/#/', label: 'Налоговая служба' }] },
+      ]}
+    />
+  );
+
+  if (me === undefined) return <><Topbar variant="site" brand={brand} /><Spinner /></>;
 
   const isTeller = me?.roles?.some((r) => r === 'teller' || r === 'admin');
   const ready = me && me.status === 'active' && me.passport_verified;
@@ -76,6 +89,7 @@ export default function App() {
   return (
     <>
       <Topbar
+        variant="site"
         brand={brand}
         nav={ready && (
           <>
@@ -119,7 +133,7 @@ export default function App() {
           ['*', () => <Empty>{t('Страница не найдена')}</Empty>],
         ], route.path)
       )}
-      <DisclaimerBar />
+      {footer}
     </>
   );
 }
@@ -140,6 +154,13 @@ function AuthScreen({ onDone }) {
     }
   }
   return (
+    <>
+    <Hero
+      kicker="Государственный банк Балесноландии"
+      title="Ваши деньги — под защитой Федерации"
+      lead="Счета, дебетовые и кредитные карты, переводы по номеру карты и счёта, вклады и кешбэк. Вход — через ВлодУслуги или по паролю."
+      art={<div className="bank-card-art"><span>ВлодБанк</span><b>7700 •••• •••• 0042</b><small>ИМЯ ФАМИЛИЯ</small></div>}
+    />
     <div className="auth-wrap">
       <div className="card auth-card">
         <div className="brand-big">
@@ -156,6 +177,15 @@ function AuthScreen({ onDone }) {
         <div style={{ marginTop: 16 }}><AuthDisclaimer /></div>
       </div>
     </div>
+    <Section muted title="Продукты банка">
+      <Features items={[
+        { icon: '💳', title: 'Дебетовые карты', text: 'Оплата на любой Кассе, по QR и в интернет-магазинах БалНета.' },
+        { icon: '⇄', title: 'Переводы', text: 'По номеру карты, счёта или имени — мгновенно.' },
+        { icon: '📈', title: 'Вклады', text: 'Накопительный счёт и срочный вклад с процентами каждый игровой месяц.' },
+        { icon: '🎁', title: 'Кешбэк', text: 'Выберите категории месяца и получайте часть покупок обратно.' },
+      ]} />
+    </Section>
+    </>
   );
 }
 

@@ -22,6 +22,9 @@ export async function hostingRoutes(app) {
   const auth = { preHandler: needGov() };
   const actor = (req) => actorOf(req.gov);
 
+  // Публично: тарифы всех хостеров (витрина сайта БалХоста).
+  app.get('/hosting/plans', async () => ({ offers: await offers(null, await currentMonth()) }));
+
   app.get('/hosting', auth, async (req) => {
     const month = await currentMonth();
     const rows = await q(
