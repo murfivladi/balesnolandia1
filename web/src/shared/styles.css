@@ -554,3 +554,11 @@ table.table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+/* Кнопка, которая выглядит как ссылка */
+.link-btn { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-align: left; }
+.link-btn:hover { text-decoration: underline; }
+/* Шкала заполнения (место на хостинге) */
+.meter { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.meter > span { display: block; height: 100%; background: var(--accent); }
+/* Редактор кода в файловом менеджере */
+.code-editor { width: 100%; min-height: 55vh; font-size: 13px; line-height: 1.5; resize: vertical; white-space: pre; tab-size: 2; }

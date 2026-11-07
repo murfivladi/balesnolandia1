@@ -59,4 +59,5 @@ export async function netCall(path, body, net) {
   }
 }
 
-export const openUrl = (url, net) => netCall('/net/open', { url }, net);
+/** Открыть адрес. jar — cookies и localStorage сайта из профиля (для сайтов игроков). */
+export const openUrl = (url, net, jar) => netCall('/net/open', { url, jar }, net);

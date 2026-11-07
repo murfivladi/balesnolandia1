@@ -19,7 +19,16 @@ export const SHIM_JS = String.raw`(function () {
   function toBalnet(href) {
     var u = new URL(href, location.href);
     if (inGateway(u)) return ORIGIN + (u.pathname.slice(PREFIX.length) || '/') + u.search + u.hash;
+    // Корневой путь сайта («/page»), который скрипт собрал сам, — это путь на сайте, а не на сервере шлюза.
+    if (originOf(u) === API) return ORIGIN + u.pathname + u.search + u.hash;
     return u.href;
+  }
+  /** Адрес из скрипта сайта → адрес в шлюзе (свой сайт) или null (чужой сайт / другая схема). */
+  function ownToGateway(href) {
+    var u = new URL(href, location.href);
+    if (inGateway(u)) return u.href;
+    if (originOf(u) === API || originOf(u) === ORIGIN) return API + PREFIX + u.pathname + u.search + u.hash;
+    return null;
   }
   function toGateway(href) {
     var u = new URL(href);
@@ -60,7 +69,16 @@ export const SHIM_JS = String.raw`(function () {
 
   ['pushState', 'replaceState'].forEach(function (m) {
     var orig = history[m];
-    history[m] = function () { var r = orig.apply(this, arguments); report(); return r; };
+    history[m] = function (state, title, url) {
+      var args = [state, title];
+      if (url !== undefined && url !== null) {
+        var g = ownToGateway(String(url));
+        args.push(g || url);
+      }
+      var r = orig.apply(this, args);
+      report();
+      return r;
+    };
   });
   window.addEventListener('popstate', report);
   window.addEventListener('hashchange', report);
@@ -124,8 +142,9 @@ export const SHIM_JS = String.raw`(function () {
     window.fetch = function (input, init) {
       var href = typeof input === 'string' ? input : (input && input.url) || String(input);
       var u = new URL(href, location.href);
-      if (!/^https?:$/.test(u.protocol) || originOf(u) === API) return origFetch(input, init);
-      if (originOf(u) === ORIGIN) return origFetch(toGateway(u.href), init);
+      if (!/^https?:$/.test(u.protocol)) return origFetch(input, init);
+      var own = ownToGateway(u.href);
+      if (own) return origFetch(typeof input === 'string' || input instanceof URL ? own : new Request(own, input), init);
       var method = (init && init.method) || 'GET';
       return origFetch(API + '/api/net/xfetch', {
         method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ ticket: C.ticket, url: u.href, method: method }),
@@ -139,6 +158,17 @@ export const SHIM_JS = String.raw`(function () {
         for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
         return new Response(bytes, { status: res.status, headers: res.headers });
       });
+    };
+  }
+
+  // XMLHttpRequest: свой сайт — через шлюз; к чужим сайтам — как в браузере без разрешения CORS (ошибка).
+  if (window.XMLHttpRequest) {
+    var xopen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url) {
+      var args = Array.prototype.slice.call(arguments);
+      var own = ownToGateway(String(url));
+      if (own) args[1] = own;
+      return xopen.apply(this, args);
     };
   }
 

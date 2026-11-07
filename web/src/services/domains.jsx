@@ -8,6 +8,7 @@ import {
 } from '../shared/ui.jsx';
 import { gameDateLabel } from '@bln/shared/time.js';
 import { humanTtl } from '@bln/shared/balnet-dns.js';
+import { OrgHosting } from './hosting.jsx';
 
 const STATUS_KIND = { active: 'ok', reserved: 'warn', expired: 'err', redemption: 'err', released: '' };
 const RR_HINT = {
@@ -125,7 +126,7 @@ export function OrgPage({ id }) {
               {data.licenses.map((l) => (
                 <div key={l.number} className="list-item">
                   <div className="li-main">
-                    <div className="li-title">{l.kind === 'registrar' ? 'Регистратор доменов' : l.kind === 'registry' ? 'Администратор доменной зоны' : l.kind}</div>
+                    <div className="li-title">{({ registrar: 'Регистратор доменов', registry: 'Администратор доменной зоны', hosting: 'Хостинг-провайдер' })[l.kind] || l.kind}</div>
                     <div className="li-sub"><span className="mono">{l.number}</span>{l.expires_month != null ? ` · до ${gameDateLabel(l.expires_month, lang)}` : ' · бессрочно'}</div>
                   </div>
                   <Badge kind={l.status === 'active' ? 'ok' : 'err'}>{l.status === 'active' ? 'действует' : l.status === 'expired' ? 'истекла' : 'отозвана'}</Badge>
@@ -164,6 +165,7 @@ export function OrgPage({ id }) {
               {data.sold_domains.length > 0 && <p className="small">Доменов на обслуживании: {data.sold_domains.length}</p>}
             </div>
           )}
+          <OrgHosting orgId={id} director={director} kind={o.kind} />
           {data.registry.length > 0 && (
             <div className="card">
               <h2>Реестр зон</h2>
@@ -421,7 +423,7 @@ export function DomainPage({ id }) {
           {d.ns_mode === 'hosted' && d.zone_id && (
             <div className="card">
               <h2>DNS-записи</h2>
-              <p className="small muted">Например, A-запись @ — адрес сервера, где лежит сайт. Свои сайты на хостинге появятся на этапе Н4.</p>
+              <p className="small muted">Например, A-запись @ — адрес сервера, где лежит сайт: его показывает раздел <a href="#/hosting">Хостинг</a>.</p>
               <div className="table-wrap">
                 <table className="table">
                   <thead><tr><th>Имя</th><th>Тип</th><th>Значение</th><th>TTL</th><th /></tr></thead>

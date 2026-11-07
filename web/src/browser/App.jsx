@@ -8,6 +8,8 @@ import {
   NEW_TAB, INTERNAL_PAGES, GOV_SITES, SEARCH_HOST, parseInput, resolveTarget, appPath, govUrlFromApp, displayUrl, searchQuery,
 } from '@bln/shared/balnet-url.js';
 import { DEFAULT_NET, newClientId, openUrl } from './net.js';
+import { apiBase, post as apiPost } from '../shared/api.js';
+import { splitUrl } from '@bln/shared/balnet-url.js';
 import { DevTools } from './devtools.jsx';
 import { TerminalPage } from './terminal.jsx';
 import {
@@ -112,20 +114,74 @@ function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle }) {
   return <iframe key={tab.reloadKey} ref={ref} className="bb-frame" src={src} title={tab.title} onLoad={onLoad} />;
 }
 
+// ——— Сайт игрока: песочница шлюза ———
+
+const SANDBOX = 'allow-scripts allow-forms allow-popups allow-modals allow-downloads';
+
+/**
+ * Сайт игрока во фрейме-песочнице (непрозрачный origin, CSP sandbox от шлюза).
+ * Shim внутри сообщает адрес, заголовок, переходы и хранилища. Сообщения принимаются только от этого фрейма
+ * и только с адресами этого же сайта — подделать адресную строку на другой домен сайт не может.
+ */
+function SiteFrame({ tab, ticket, origin, path, ctx }) {
+  const ref = useRef(null);
+  const lastUrl = useRef(tab.url);
+  const cb = useRef(ctx);
+  useEffect(() => { cb.current = ctx; });
+  const gateway = (p) => `${apiBase()}/api/net/web/${ticket}${p.startsWith('/') ? p : `/${p}`}`;
+  const [src] = useState(() => gateway(path));
+
+  useEffect(() => {
+    if (tab.url === lastUrl.current) return;
+    lastUrl.current = tab.url;
+    const p = splitUrl(tab.url);
+    if (p && ref.current) ref.current.src = gateway(p.path);
+  }, [tab.url]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const sameSite = (u) => {
+      try { return new URL(u).origin === origin; } catch { return false; }
+    };
+    const on = (e) => {
+      if (!ref.current || e.source !== ref.current.contentWindow) return;
+      const m = e.data;
+      if (!m || m.__balnet !== 1 || m.ticket !== ticket) return;
+      const c = cb.current;
+      if (m.type === 'nav' && typeof m.url === 'string' && sameSite(m.url)) {
+        lastUrl.current = m.url;
+        c.navigate(m.url, { tabId: tab.id });
+        if (m.title) c.setTitle(tab.id, String(m.title).slice(0, 200));
+      } else if (m.type === 'open' && typeof m.url === 'string') {
+        const url = parseInput(m.url);
+        if (url && !url.startsWith('balnet://')) c.navigate(url, m.newTab ? { newTab: true } : { tabId: tab.id });
+      } else if (m.type === 'jar') {
+        const jar = { cookies: m.cookies || {}, local: m.local || {} };
+        c.saveJar(origin, jar);
+        apiPost('/net/jar', { ticket, ...jar }).catch(() => {});
+      }
+    };
+    window.addEventListener('message', on);
+    return () => window.removeEventListener('message', on);
+  }, [ticket, origin, tab.id]);
+
+  return <iframe ref={ref} className="bb-frame" sandbox={SANDBOX} src={src} title={tab.title} referrerPolicy="no-referrer" />;
+}
+
 // ——— Сайт БалНета: DNS → подключение к серверу → содержимое ———
 
 function WebTab({ tab, target, ctx }) {
   const [st, setSt] = useState({ phase: 'loading' });
   const latest = useRef(null);
   latest.current = { tab, ctx };
-  // Новый запрос — только при смене хоста или перезагрузке: переходы внутри сайта DNS не трогают.
-  const key = `${target.host}|${tab.reloadKey}`;
+  // Новый запрос — только при смене хоста, схемы или перезагрузке: переходы внутри сайта DNS не трогают.
+  const key = `${target.scheme}|${target.host}|${tab.reloadKey}`;
   useEffect(() => {
     let alive = true;
     const { tab: tb, ctx: c } = latest.current;
     setSt({ phase: 'loading' });
     const t0 = performance.now();
-    openUrl(tb.url, c.net).then((r) => {
+    const origin = `${target.scheme}://${target.host}`;
+    c.loadJar(origin).then((jar) => openUrl(tb.url, c.net, jar)).then((r) => {
       if (!alive) return;
       const total = Math.round(performance.now() - t0);
       if (r.failed) {
@@ -136,12 +192,18 @@ function WebTab({ tab, target, ctx }) {
         return;
       }
       const d = r.data;
+      // Сертификата нет (сайты игроков до этапа Н5): как Chrome — откат с https на http и «Не защищено».
+      if (d.ok && d.tls === false && target.scheme === 'https') {
+        c.logNet(tb.id, { ...d, lease: r.lease, total, note: 'нет сертификата — переход на http' });
+        c.replaceUrl(tb.id, tb.url.replace(/^https:/, 'http:'));
+        return;
+      }
       setSt({ phase: 'done', d });
       c.setConn(tb.id, { ok: d.ok, gov: !!d.gov, ip: d.ip, host: target.host });
       c.logNet(tb.id, { ...d, lease: r.lease, total });
     });
     return () => { alive = false; };
-  }, [key, target.host]);
+  }, [key, target.host, target.scheme]);
 
   const reload = () => ctx.reload(tab.id);
   if (!ctx.online) return <ErrorPage code="ERR_INTERNET_DISCONNECTED" onReload={reload} ctx={ctx} />;
@@ -155,6 +217,9 @@ function WebTab({ tab, target, ctx }) {
   const d = st.d;
   if (!d.ok) return <ErrorPage code={d.code} host={target.host} onReload={reload} ctx={ctx} ip={d.ip} />;
   if (d.target === 'poisk') return <SearchPage ctx={ctx} query={searchQuery(target.path)} />;
+  if (d.target?.startsWith('site:') && d.ticket) {
+    return <SiteFrame tab={tab} ticket={d.ticket} origin={`${target.scheme}://${target.host}`} path={target.path} ctx={ctx} />;
+  }
   if (d.target?.startsWith('app:')) {
     return (
       <GovFrame
@@ -433,6 +498,15 @@ export default function App() {
   }), [update]);
 
   const setConn = useCallback((tabId, conn) => update((d) => ({ ...d, tabs: d.tabs.map((t) => (t.id === tabId ? { ...t, conn } : t)) })), [update]);
+  // Сменить адрес вкладки без новой записи в истории «Назад» (переход https → http у сайтов без сертификата).
+  const replaceUrl = useCallback((tabId, url) => update((d) => ({
+    ...d,
+    tabs: d.tabs.map((t) => (t.id === tabId ? { ...t, url, title: titleFor(url) } : t)),
+    history: d.history[0] && d.history[0].url.replace(/^https:/, 'http:') === url ? [{ ...d.history[0], url }, ...d.history.slice(1)] : d.history,
+  })), [update]);
+  // Cookies и localStorage сайтов игроков — в хранилище профиля (в инкогнито — только в памяти).
+  const loadJar = useCallback((origin) => (store ? store.get(`site:${origin}`, {}) : Promise.resolve({})), [store]);
+  const saveJar = useCallback((origin, jar) => { if (store) store.set(`site:${origin}`, jar); }, [store]);
   const logNet = useCallback((tabId, entry) => setNetLog((m) => ({
     ...m, [tabId]: [...(m[tabId] || []), { id: `${Date.now()}-${Math.random()}`, ts: Date.now(), ...entry }].slice(-NET_LOG_LIMIT),
   })), []);
@@ -543,6 +617,9 @@ export default function App() {
     net: data.settings.net,
     setNet: (n) => update((d) => ({ ...d, settings: { ...d.settings, net: { ...d.settings.net, ...n } } })),
     setConn,
+    replaceUrl,
+    loadJar,
+    saveJar,
     logNet,
     clearHistory: () => update((d) => ({ ...d, history: [] })),
     removeHistory: (h) => update((d) => ({ ...d, history: d.history.filter((x) => x !== h && !(x.ts === h.ts && x.url === h.url)) })),

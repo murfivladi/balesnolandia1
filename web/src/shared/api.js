@@ -92,6 +92,9 @@ export async function api(path, { method = 'GET', body, idem, signal, timeout = 
   return data;
 }
 
+/** Адрес API (пусто — тот же сайт). Нужен для фреймов шлюза сайтов БалНета. */
+export const apiBase = () => BASE;
+
 export const get = (p, o) => api(p, o);
 export const post = (p, body, o = {}) => api(p, { ...o, method: 'POST', body: body ?? {} });
 export const patch = (p, body, o = {}) => api(p, { ...o, method: 'PATCH', body: body ?? {} });
