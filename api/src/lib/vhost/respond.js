@@ -32,6 +32,9 @@ export function hiddenPath(urlPath, kind) {
 
 // ——— Лимит запросов в минуту ———
 const rpmCounters = new Map();
+// Сокеты сайта доступны из любого обработчика (onRequest и onCron тоже могут рассылать сообщения).
+let wsHost = null;
+export function setWsHost(fn) { wsHost = fn; }
 export function resetRateLimits() { rpmCounters.clear(); }
 function overRpm(site) {
   const limit = Number(site.rpm || 0);
@@ -53,7 +56,7 @@ async function hasServer(site) {
 }
 
 /** Выполнить обработчик сайта (onRequest, onCron, …) в очереди сайта, с базой и логами. */
-export async function runSite(site, handler, arg, { depth = 0 } = {}) {
+export async function runSite(site, handler, arg, { depth = 0, ws = null } = {}) {
   return withSite(site.id, async () => {
     const now = await gameSeconds();
     let entry = null;
@@ -74,6 +77,7 @@ export async function runSite(site, handler, arg, { depth = 0 } = {}) {
           },
           kv: (op, a) => kvOp(entry, op, a, now),
           fetch: (req) => netRequest({ fromIp: site.server_ip, ...req, depth: depth + 1 }),
+          ws: ws || (wsHost ? wsHost(site.id) : null),
         },
       });
       return r.result;
@@ -187,6 +191,28 @@ export async function netRequest({ fromIp, url, method = 'GET', headers = {}, bo
     return out;
   }
   return { error: 'ERR_TOO_MANY_REDIRECTS' };
+}
+
+/** Дойти до сайта по сети, не делая HTTP-запроса (WebSocket): { site, host } или { error }. */
+export async function reachSite({ fromIp, url }) {
+  const p = splitUrl(String(url || '').replace(/^ws(s?):/i, 'http$1:'));
+  if (!p || (p.scheme !== 'http' && p.scheme !== 'https')) return { error: 'Неверный адрес WebSocket' };
+  const dns = await resolve({ resolverIp: PUBLIC_DNS, clientIp: fromIp, clientProviderId: null, name: p.host, type: 'A' });
+  const ip = [...dns.answer].reverse().find((r) => r.type === 'A')?.data;
+  if (!ip) return { error: dnsCode(dns) };
+  const conn = connect(await netSnapshot(), fromIp, ip, p.host);
+  if (!conn.ok) return { error: conn.code };
+  if (conn.target.startsWith('app:')) return { error: 'ERR_GOV_SITE' };
+  if (p.scheme === 'https') {
+    const tls = await tlsFor({ target: conn.target, host: p.host });
+    if (!tls) return { error: 'ERR_CONNECTION_REFUSED' };
+    const v = await verifyTls({ tls, host: p.host, now: tls.time, trust: await trustStore() });
+    if (!v.ok) return { error: v.code };
+  }
+  const site = await siteByTarget(conn.target);
+  if (!site || site.account_status !== 'active') return { error: 'Сайт недоступен' };
+  if (site.kind !== 'virtual') return { error: 'Сайт на статическом тарифе не принимает WebSocket' };
+  return { site, host: p.host, path: p.path.split('?')[0], query: p.path.includes('?') ? p.path.slice(p.path.indexOf('?') + 1) : '' };
 }
 
 /** Виртуальные сайты с server.js (для cron и панели). */

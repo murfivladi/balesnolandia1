@@ -204,3 +204,54 @@ test('SQL-консоль панели и робот ВлодПоиска инд�
   assert.equal(s.results[0].url, 'http://boris.bln/');
   assert.equal(s.results[0].title, 'Пекарня с базой');
 });
+
+test('WebSocket: чат с рассылкой, отказ статическому тарифу, лимит соединений', async () => {
+  (await import('../src/lib/vhost/respond.js')).resetRateLimits();
+  await put('boris.bln', 'server.js', `export function onSocket(e) {
+    if (e.type === 'open') {
+      if (e.socket.path !== '/chat') return false;
+      kv.set('online', (kv.get('online') || 0) + 1);
+      e.socket.send('привет, ' + e.socket.ip);
+    } else if (e.type === 'message') {
+      sockets.broadcast(JSON.stringify({ from: e.socket.id, text: e.data }), { path: '/chat' });
+    } else if (e.type === 'close') {
+      kv.set('online', kv.get('online') - 1);
+    }
+  }
+  export function onRequest() { return Response.json({ online: kv.get('online'), list: sockets.list('/chat').length }); }`);
+  const o = await open('http://boris.bln/');
+  const connect = async (url, t = o.ticket) => {
+    const ws = await app.injectWS(`/api/net/sock/${t}?url=${encodeURIComponent(url)}`);
+    const msgs = [];
+    ws.on('message', (m) => msgs.push(String(m)));
+    const closed = new Promise((r) => ws.on('close', (code, reason) => r({ code, reason: String(reason) })));
+    return { ws, msgs, closed };
+  };
+  const wait = (fn) => new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    const tick = () => (fn() ? resolve() : Date.now() - t0 > 3000 ? reject(new Error('timeout')) : setTimeout(tick, 20));
+    tick();
+  });
+  const a = await connect('ws://boris.bln/chat');
+  const b = await connect('ws://boris.bln/chat');
+  await wait(() => a.msgs.length && b.msgs.length);
+  assert.match(a.msgs[0], /^привет, 60\./);
+  a.ws.send('всем хлеба!');
+  await wait(() => b.msgs.length === 2 && a.msgs.length === 2);
+  assert.equal(JSON.parse(b.msgs[1]).text, 'всем хлеба!');
+  const stat = JSON.parse((await web(o.ticket, '/')).body);
+  assert.deepEqual(stat, { online: 2, list: 2 });
+  a.ws.close();
+  await wait(() => true);
+  const other = await connect('ws://boris.bln/other');
+  assert.equal((await other.closed).code, 1008, 'onSocket вернул false — соединение отклонено');
+  const st = await connect('ws://anna.bln/');
+  assert.match((await st.closed).reason, /статическом тарифе/);
+  b.ws.close();
+  // Лимит тарифа «Сервер» — 20 соединений.
+  const many = [];
+  for (let i = 0; i < 20; i++) many.push(await connect('ws://boris.bln/chat'));
+  const extra = await connect('ws://boris.bln/chat');
+  assert.equal((await extra.closed).code, 1013);
+  for (const m of many) m.ws.close();
+});

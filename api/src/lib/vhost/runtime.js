@@ -93,6 +93,10 @@ export async function runHandler({ dir, entry = 'server.js', handler, arg, cpuMs
     def('__db', (op, sql, params) => hostCall(() => host.db(ctx.getString(op), ctx.getString(sql), JSON.parse(ctx.getString(params)))));
     def('__kv', (op, args) => hostCall(() => host.kv(ctx.getString(op), JSON.parse(ctx.getString(args)))));
     def('__now', () => ctx.newNumber(host.now()));
+    def('__ws', (op, args) => hostCall(() => {
+      if (!host.ws) throw new Error('WebSocket доступен на виртуальном тарифе');
+      return host.ws(ctx.getString(op), JSON.parse(ctx.getString(args)));
+    }));
     def('__uuid', () => ctx.newString(crypto.randomUUID()));
     def('__fetch', (reqH) => {
       const d = ctx.newPromise();

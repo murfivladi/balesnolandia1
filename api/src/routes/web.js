@@ -5,7 +5,8 @@ import { isPaused } from '../lib/clock.js';
 import {
   getTicket, securityHeaders, rewriteRootPaths, injectShim, servicePage, siteHeaders, SITE_HEADER_OK, cleanJar, applySetCookies, cookieHeader,
 } from '../lib/gateway.js';
-import { siteRespond, netRequest } from '../lib/vhost/respond.js';
+import { siteRespond, netRequest, reachSite } from '../lib/vhost/respond.js';
+import { attach } from '../lib/vhost/sockets.js';
 import { siteByTarget } from '../lib/hosting.js';
 import { SHIM_JS } from '../lib/balnet-shim.js';
 import { splitUrl } from '@bln/shared/balnet-url.js';
@@ -155,6 +156,26 @@ export async function webRoutes(app) {
     const out = {};
     for (const [k, v] of Object.entries(res.headers)) if (k !== 'set-cookie') out[k] = v;
     return { status: res.status, headers: out, body: res.buf.toString('base64'), url: res.url };
+  });
+
+  // WebSocket со страницы сайта: ws(s)://сайт/путь через шлюз. Как в браузере, соединение можно открыть
+  // к любому сайту — сервер сам решает по Origin, принимать ли его.
+  app.get('/sock/:ticket', { websocket: true }, (socket, req) => {
+    const early = [];
+    const hold = (m, bin) => early.push([m, bin]);
+    socket.on('message', hold);
+    (async () => {
+      const ticket = getTicket(req.params.ticket);
+      if (!ticket) return socket.close(4401, 'ticket');
+      if (await isPaused()) return socket.close(1013, 'maintenance');
+      const r = await reachSite({ fromIp: ticket.clientIp, url: String(req.query.url || '') });
+      if (r.error) return socket.close(4502, String(r.error).slice(0, 120));
+      socket.off('message', hold);
+      const done = attach(socket, r.site, { path: r.path, query: r.query, ip: ticket.clientIp, origin: ticket.origin });
+      for (const [m, bin] of early) socket.emit('message', m, bin); // встают в очередь после open
+      await done;
+      return undefined;
+    })().catch(() => socket.close(1011, 'error'));
   });
 
   // ВлодБраузер передаёт свежие cookies и localStorage сайта: они нужны следующим страницам этого билета.

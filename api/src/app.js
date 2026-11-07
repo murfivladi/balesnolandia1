@@ -70,7 +70,7 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
 
   // Сайты игроков работают в песочнице (Origin: null). Им открыт только шлюз БалНета —
   // остальной API (банк, услуги, касса) на такие запросы не отвечает.
-  const SANDBOX_OK = ['/api/net/web/', '/api/net/xfetch', '/api/net/shim.js', '/api/search/adnet/'];
+  const SANDBOX_OK = ['/api/net/web/', '/api/net/xfetch', '/api/net/shim.js', '/api/net/sock/', '/api/net/jar/', '/api/search/adnet/'];
   app.addHook('onRequest', async (req, reply) => {
     if (req.headers.origin === 'null' && !SANDBOX_OK.some((p) => req.url.startsWith(p))) {
       return reply.code(403).send({ error: 'sandbox_origin', message: 'Запросы со страниц сайтов БалНета к этому API запрещены' });

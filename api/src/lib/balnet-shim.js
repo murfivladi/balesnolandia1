@@ -200,6 +200,22 @@ export const SHIM_JS = String.raw`(function () {
     };
   }
 
+  // ——— WebSocket: соединение идёт через шлюз, а он — по сети БалНета до сервера сайта ———
+  var NativeWS = window.WebSocket;
+  if (NativeWS) {
+    var BalnetWS = function (url, protocols) {
+      var u = new URL(String(url), toBalnet(location.href).replace(/^http/, 'ws'));
+      if (!/^wss?:$/.test(u.protocol)) throw new SyntaxError('WebSocket: нужен адрес ws:// или wss://');
+      var gw = API.replace(/^http/, 'ws') + '/api/net/sock/' + encodeURIComponent(C.ticket) + '?url=' + encodeURIComponent(u.href);
+      var ws = protocols ? new NativeWS(gw, protocols) : new NativeWS(gw);
+      try { Object.defineProperty(ws, 'url', { value: u.href }); } catch (e) { /* только чтение */ }
+      return ws;
+    };
+    BalnetWS.CONNECTING = 0; BalnetWS.OPEN = 1; BalnetWS.CLOSING = 2; BalnetWS.CLOSED = 3;
+    BalnetWS.prototype = NativeWS.prototype;
+    window.WebSocket = BalnetWS;
+  }
+
   // ——— Рекламная сеть ВлодПоиска: <ins class="vlodads"></ins> ———
   function fillAds() {
     if (!origFetch || !document.querySelectorAll) return;

@@ -165,6 +165,14 @@ export const PRELUDE = String.raw`
       });
   };
   g.gameTime = function () { return __now(); };
+  // WebSocket-соединения посетителей с сайтом (живут между вызовами onSocket).
+  function wsData(d) { return typeof d === 'string' ? d : JSON.stringify(d); }
+  g.sockets = {
+    send: function (id, data) { return JSON.parse(__ws('send', JSON.stringify({ id: id, data: wsData(data) }))); },
+    broadcast: function (data, opt) { return JSON.parse(__ws('broadcast', JSON.stringify({ data: wsData(data), path: opt && opt.path, except: opt && opt.except }))); },
+    close: function (id, reason) { return JSON.parse(__ws('close', JSON.stringify({ id: id, reason: reason || '' }))); },
+    list: function (path) { return JSON.parse(__ws('list', JSON.stringify({ path: path || null }))); },
+  };
   g.crypto = { randomUUID: function () { return __uuid(); } };
   g.setTimeout = function (fn) { Promise.resolve().then(fn); return 0; };
 
@@ -184,6 +192,11 @@ export const PRELUDE = String.raw`
     if (typeof fn !== 'function') return Promise.resolve(JSON.stringify({ missing: true }));
     var arg = JSON.parse(json);
     if (name === 'onRequest') arg = new Request(arg);
+    if (name === 'onSocket' && arg.socket) {
+      var sid = arg.socket.id;
+      arg.socket.send = function (d) { return g.sockets.send(sid, d); };
+      arg.socket.close = function (r) { return g.sockets.close(sid, r); };
+    }
     return Promise.resolve().then(function () { return fn(arg); }).then(function (res) {
       return JSON.stringify(name === 'onRequest' ? normalize(res) : { ok: true, value: res === undefined ? null : res });
     });
