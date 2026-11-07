@@ -164,3 +164,15 @@ export function HubLogo({ size = 34 }) {
     </svg>
   );
 }
+
+/** ВлодПочта (mail.bln): конверт с печатью. */
+export function MailLogo({ size = 34 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
+      <rect width="40" height="40" rx="10" fill="#c2410c" />
+      <rect x="8" y="12" width="24" height="17" rx="2.5" fill="#fff" />
+      <path d="M9 13.5l11 8.5 11-8.5" fill="none" stroke="#c2410c" strokeWidth="2.2" strokeLinejoin="round" />
+      <circle cx="29" cy="27" r="5" fill="#f0b429" stroke="#c2410c" strokeWidth="1.6" />
+    </svg>
+  );
+}

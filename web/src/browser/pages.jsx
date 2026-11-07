@@ -1,6 +1,7 @@
 // Внутренние страницы ВлодБраузера: новая вкладка, история, закладки, настройки, о браузере,
 // страницы ошибок и «БалНет на обслуживании».
 import { useEffect, useMemo, useState } from 'react';
+import { AccountSettings, PasswordSettings } from './passwords.jsx';
 import { CoatOfArms } from '../shared/brand.jsx';
 import { DISCLAIMER } from '../shared/ui.jsx';
 import { GOV_SITES, NET_ERRORS, displayUrl, searchUrl, parseInput } from '@bln/shared/balnet-url.js';
@@ -242,11 +243,13 @@ export function SettingsPage({ ctx }) {
           </div>
         ))}
         <button className="bp-btn" onClick={ctx.addProfile}>Добавить профиль</button>
-        <p className="bp-muted">Синхронизация профиля между устройствами появится вместе с аккаунтом на ВлодПочте.</p>
+        <p className="bp-muted">У каждого профиля свой аккаунт ВлодБраузера и своя синхронизация.</p>
       </section>
+      <AccountSettings ctx={ctx} />
+      <PasswordSettings ctx={ctx} />
       <section className="bp-card">
         <h2>Конфиденциальность</h2>
-        <p>Данные профиля «{profile?.name}» хранятся только в этом браузере.</p>
+        <p>Данные профиля «{profile?.name}» хранятся в этом браузере{ctx.account?.key ? ' и в зашифрованном виде — в аккаунте ВлодБраузера' : ''}.</p>
         <button className="bp-btn" onClick={() => { if (confirm('Удалить историю этого профиля?')) ctx.clearHistory(); }}>Удалить историю</button>
       </section>
     </div>
@@ -259,7 +262,7 @@ export function AboutPage() {
       <header className="bp-page-head"><CoatOfArms size={40} /><h1>О ВлодБраузере</h1></header>
       <section className="bp-card">
         <p><b>ВлодБраузер</b> — браузер БалНета, вымышленного интернета Балесноландской Федерации.</p>
-        <p>Версия Н2: вкладки, история, закладки, профили, инкогнито; настоящий DNS БалНета (корень → TLD → серверы имён), выбор провайдера и DNS-сервера, терминал и DevTools → Network.</p>
+        <p>Версия Н8: вкладки, история, закладки, профили, инкогнито; настоящий DNS БалНета, HTTPS с проверкой сертификатов, Безопасный просмотр, терминал и DevTools → Network; аккаунт ВлодБраузера на ВлодПочте с зашифрованной синхронизацией и менеджер паролей.</p>
         <p>Значок «Госсайт БФ» в адресной строке рисует сам браузер. Сайт не может его подделать: если значка нет — это не госсайт, даже если страница выглядит так же.</p>
         <p>Горячие клавиши: Ctrl+L — адресная строка, Ctrl+D — закладка, Ctrl+H — история, Alt+← и Alt+→ — назад и вперёд, Alt+T — новая вкладка, Ctrl+R — перезагрузить, Alt+W — закрыть вкладку.</p>
       </section>

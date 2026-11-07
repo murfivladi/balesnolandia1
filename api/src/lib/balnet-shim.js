@@ -42,7 +42,13 @@ export const SHIM_JS = String.raw`(function () {
     var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
     if (!a) return;
     var raw = a.getAttribute('href') || '';
-    if (raw.charAt(0) === '#' || /^(javascript|mailto|tel|data|blob):/i.test(raw)) return;
+    if (/^mailto:/i.test(raw)) {
+      e.preventDefault();
+      var addr = raw.slice(7).split('?')[0];
+      post({ type: 'open', url: 'https://mail.bln/compose?to=' + encodeURIComponent(decodeURIComponent(addr)), newTab: true });
+      return;
+    }
+    if (raw.charAt(0) === '#' || /^(javascript|tel|data|blob):/i.test(raw)) return;
     var u = new URL(a.href, location.href);
     var newTab = a.target === '_blank' || e.ctrlKey || e.metaKey || e.shiftKey;
     if (inGateway(u) && !newTab) return;
@@ -61,6 +67,52 @@ export const SHIM_JS = String.raw`(function () {
     u.search = params.toString();
     post({ type: 'open', url: u.href, newTab: f.target === '_blank' });
   }, true);
+
+  // ——— Пароли: ВлодБраузер предлагает сохранить и подставляет сохранённые ———
+  function loginFields(f) {
+    var pw = f.querySelector('input[type=password]');
+    if (!pw) return null;
+    var user = null;
+    var inputs = f.querySelectorAll('input');
+    for (var i = 0; i < inputs.length; i++) {
+      var t = (inputs[i].type || 'text').toLowerCase();
+      if (inputs[i] === pw) break;
+      if (t === 'text' || t === 'email' || t === 'tel') user = inputs[i];
+    }
+    return { pw: pw, user: user };
+  }
+  document.addEventListener('submit', function (e) {
+    var f = e.target;
+    if (!f || f.tagName !== 'FORM') return;
+    var l = loginFields(f);
+    if (l && l.pw.value) post({ type: 'credential', username: l.user ? l.user.value : '', password: l.pw.value });
+  }, true);
+  var announced = false;
+  function findLogin() {
+    if (announced || !document.querySelector) return;
+    if (document.querySelector('input[type=password]')) { announced = true; post({ type: 'login-form' }); }
+  }
+  window.addEventListener('message', function (e) {
+    if (e.source !== parent) return;
+    var m = e.data;
+    if (!m || m.__balnet !== 1 || m.ticket !== C.ticket || m.type !== 'fill') return;
+    var pw = document.querySelector('input[type=password]');
+    if (!pw) return;
+    var l = loginFields(pw.form || document) || { pw: pw, user: null };
+    function set(el, v) {
+      var d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+      if (d && d.set) d.set.call(el, v); else el.value = v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if (l.user && m.username) set(l.user, String(m.username));
+    set(l.pw, String(m.password || ''));
+  });
+  if (window.MutationObserver) {
+    var mo = new MutationObserver(function () { findLogin(); if (announced) mo.disconnect(); });
+    if (document.documentElement) mo.observe(document.documentElement, { childList: true, subtree: true });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', findLogin); else setTimeout(findLogin, 0);
 
   window.open = function (url) {
     if (url) post({ type: 'open', url: toBalnet(String(url)), newTab: true });

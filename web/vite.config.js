@@ -20,6 +20,7 @@ export default defineConfig({
         ca: resolve(import.meta.dirname, 'ca/index.html'),
         poisk: resolve(import.meta.dirname, 'poisk/index.html'),
         hub: resolve(import.meta.dirname, 'hub/index.html'),
+        mail: resolve(import.meta.dirname, 'mail/index.html'),
         nalog: resolve(import.meta.dirname, 'nalog/index.html'),
         bank: resolve(import.meta.dirname, 'bank/index.html'),
         pos: resolve(import.meta.dirname, 'pos/index.html'),

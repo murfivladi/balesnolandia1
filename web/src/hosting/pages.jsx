@@ -429,7 +429,7 @@ function ServerCard({ accountId, site, canWrite }) {
       </div>
       <p className="small muted"><span className="mono">server.js</span> (JavaScript), <span className="mono">server.py</span> (Python) или файлы <span className="mono">.php</span> отвечают на запросы, которым не нашлось файла, и на все POST/PUT/DELETE. Их код, <span className="mono">crontab</span> и папка <span className="mono">.data</span> посетителям не видны.</p>
       <div className="tabs" role="tablist">
-        {[['logs', 'Журнал'], ['sql', 'База SQLite'], ['kv', 'Key-value'], ['cron', 'Cron']].map(([k, l]) => <button key={k} role="tab" className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{l}</button>)}
+        {[['logs', 'Журнал'], ['sql', 'База SQLite'], ['kv', 'Key-value'], ['cron', 'Cron'], ['mail', 'Почта']].map(([k, l]) => <button key={k} role="tab" className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{l}</button>)}
       </div>
       {tab === 'logs' && (
         <div className="stack-sm">
@@ -461,6 +461,7 @@ function ServerCard({ accountId, site, canWrite }) {
         <div className="table-wrap"><table className="table"><thead><tr><th>Ключ</th><th>Значение (JSON)</th><th>Истекает</th></tr></thead>
           <tbody>{kv.data.keys.map((k) => <tr key={k.key}><td className="mono">{k.key}</td><td className="mono small">{k.value}</td><td className="small">{k.exp ? gameDay(k.exp) : '—'}</td></tr>)}</tbody></table></div>
       ))}
+      {tab === 'mail' && <MailTab base={base} canWrite={canWrite} host={site.host} />}
       {tab === 'cron' && (!kv.data ? <Spinner /> : !kv.data.crontab ? <p className="muted small">Файла crontab нет. Создайте его в корне сайта: «0 9 * * * утро» — каждый игровой день в 9:00 вызовет onCron({'{'} name: 'утро' {'}'}).</p> : (
         <div className="stack-sm">
           {kv.data.crontab.errors.map((e) => <p key={e} className="err-text small">{e}</p>)}
@@ -468,6 +469,38 @@ function ServerCard({ accountId, site, canWrite }) {
           <p className="small muted">Время игровое: сейчас {gameDay(kv.data.now)}. Задачи проверяются каждые несколько секунд.</p>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Свой почтовый сервер на сайте: onMail принимает письма, mail.send отправляет; ключ DKIM и записи DNS. */
+function MailTab({ base, canWrite, host }) {
+  const d = useAsync(() => get(`${base}/dkim`), [base]);
+  const [sel, setSel] = useState('mail');
+  if (!d.data) return d.error ? <ErrorBox error={d.error} /> : <Spinner />;
+  const x = d.data;
+  return (
+    <div className="stack-sm">
+      <p className="small">Сайт может быть почтовым сервером своего домена. Письма на ваш домен придут в <span className="mono">onMail(письмо)</span> из server.js, если MX домена указывает на этот сайт. Отправка — <span className="mono">await mail.send({'{'} from, to, subject, text, dkim: 'селектор' {'}'})</span> с адреса сервера {x.ip}.</p>
+      <div className="table-wrap"><table className="table"><thead><tr><th>Запись</th><th>Имя</th><th>Тип</th><th>Значение</th></tr></thead><tbody>
+        <tr><td>Приём (MX)</td><td className="mono">@</td><td>MX</td><td className="mono small">{x.mx}</td></tr>
+        <tr><td>SPF</td><td className="mono">@</td><td>TXT</td><td className="mono small">{x.spf}</td></tr>
+        {x.keys.map((k) => <tr key={k.selector}><td>DKIM «{k.selector}»</td><td className="mono">{k.record?.name}</td><td>TXT</td><td className="mono small" style={{ overflowWrap: 'anywhere' }}>{k.error || k.record.data}</td></tr>)}
+        <tr><td>DMARC</td><td className="mono">_dmarc</td><td>TXT</td><td className="mono small">v=DMARC1; p=quarantine</td></tr>
+      </tbody></table></div>
+      {canWrite && (
+        <div className="row">
+          <input className="input" style={{ width: 160 }} value={sel} onChange={(e) => setSel(e.target.value.toLowerCase())} aria-label="Селектор DKIM" />
+          <ActionButton size="sm" okMessage="Ключ сохранён в .dkim/ — добавьте запись TXT в DNS домена" action={async () => { await post(`${base}/dkim`, { selector: sel }); d.reload(); }}>Создать ключ DKIM</ActionButton>
+        </div>
+      )}
+      <pre className="vh-code small">{`// server.js — автоответчик на ${host}
+export async function onMail(m) {
+  // m.from, m.to, m.subject, m.text, m.html, m.auth.spf / dkim / dmarc
+  if (m.auth.dmarc === 'fail') return { reject: 'Подделка отправителя' };
+  await mail.send({ from: 'robot@${host}', to: m.from.address,
+    subject: 'Re: ' + m.subject, text: 'Письмо получено', dkim: '${sel}' });
+}`}</pre>
     </div>
   );
 }

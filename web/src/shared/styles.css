@@ -731,3 +731,34 @@ body[data-app='hub'] { --brand: #24292f; --accent: #0969da; --brand-2: #eaeef2; 
 .vh-comment { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .vh-comment header { background: var(--surface-2); padding: 6px 12px; font-size: .9rem; }
 .vh-comment div { padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ВлодПочта (mail.bln) */
+body[data-app='mail'] { --brand: #c2410c; --brand-ink: #ffffff; --accent: #c2410c; --brand-2: #fff1e8; }
+:root[data-theme='dark'] body[data-app='mail'] { --brand: #fb8a4c; --brand-ink: #1b1f24; --accent: #fb8a4c; --brand-2: #33200f; }
+.ml { display: grid; grid-template-columns: 220px 1fr; gap: 16px; max-width: 1200px; margin: 0 auto; padding: 16px; }
+.ml-side { display: flex; flex-direction: column; gap: 4px; }
+.ml-side .btn { margin-bottom: 8px; }
+.ml-folder { display: flex; justify-content: space-between; padding: 7px 12px; border-radius: 999px; color: var(--text); text-decoration: none; }
+.ml-folder:hover { background: var(--surface-2); }
+.ml-folder.is-on { background: var(--brand-2); font-weight: 600; }
+.ml-main { min-width: 0; }
+.ml-tools { display: flex; gap: 8px; margin-bottom: 10px; }
+.ml-tools .input { flex: 1; }
+.ml-list { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.ml-row { display: grid; grid-template-columns: 22px minmax(90px, 200px) 1fr auto auto; gap: 10px; align-items: center; padding: 9px 12px; border-top: 1px solid var(--line); color: var(--text); text-decoration: none; }
+.ml-row:first-child { border-top: 0; }
+.ml-row:hover { background: var(--surface-2); }
+.ml-row.is-new .ml-from, .ml-row.is-new b { font-weight: 700; }
+.ml-row:not(.is-new) b { font-weight: 500; }
+.ml-ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ml-link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; font: inherit; }
+.ml-msg { min-width: 0; }
+@media (max-width: 720px) {
+  .ml { grid-template-columns: 1fr; padding: 12px; }
+  .ml-side { flex-direction: row; overflow-x: auto; }
+  .ml-side .btn { margin: 0; flex: none; }
+  .ml-folder { flex: none; }
+  .ml-row { grid-template-columns: 1fr auto; }
+  .ml-row .ml-star, .ml-row .badge { display: none; }
+  .ml-row .ml-subj { grid-column: 1 / -1; }
+}

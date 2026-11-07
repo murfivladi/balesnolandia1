@@ -176,6 +176,22 @@ const items = await r.json();`)}
   console.log('задача', job.name, 'время', job.time);
 }`)}
       <p>Тариф задаёт минимальный шаг: задача, которая срабатывает чаще, не запускается (ошибка в журнале).</p>
+      <h2>Почта: свой почтовый сервер</h2>
+      <p>Сайт принимает письма своего домена, если MX домена указывает на сайт (<code>@ MX 10 ваш-домен.</code>). Каждое письмо вызывает <code>onMail</code>; вернуть <code>{'{'} reject: 'текст' {'}'}</code> или <code>false</code> — отказать (отправитель получит ответ 550).</p>
+      {CODE(`export async function onMail(m) {
+  // m.from.address, m.to, m.subject, m.text, m.html, m.headers, m.raw
+  // m.auth: { spf, dkim, dkim_domain, dmarc } — проверки сделал сервер
+  if (m.auth.dmarc === 'fail') return { reject: 'Подделка отправителя' };
+  db.run('INSERT INTO inbox (frm, subj) VALUES (?, ?)', [m.from.address, m.subject]);
+}`)}
+      <p>Отправка — <code>mail.send</code>: письмо уходит с адреса вашего сервера по MX получателя. Чтобы письма не попадали в спам, добавьте SPF (<code>v=spf1 ip4:адрес-сервера -all</code>) и подпись DKIM: ключ создаётся в панели сайта → «Почта», он лежит в <code>.dkim/селектор.key</code>.</p>
+      {CODE(`const r = await mail.send({
+  from: { name: 'Магазин', address: 'shop@my.bln' },
+  to: 'anna@mail.bln', subject: 'Заказ принят', text: 'Спасибо!', html: '<b>Спасибо!</b>',
+  dkim: 'mail',            // селектор ключа DKIM (необязательно)
+});
+// r.results: [{ rcpt, ok, code: '250' | '550' …, text, server }]`)}
+      <p>Лимит — 30 писем в час с сайта. Подделать отправителя можно, но SPF, DKIM и DMARC получателя это увидят: письмо от bank.bln с чужого сервера ВлодПочта отклонит.</p>
       <h2>PHP 8.3</h2>
       <p>Файлы <code>.php</code> выполняются (исходник посетителям не отдаётся). Если в корне есть <code>index.php</code>, а <code>server.js</code> нет, все запросы без файла идут в него — как фронт-контроллер. Работают <code>$_GET</code>, <code>$_POST</code>, <code>$_COOKIE</code>, <code>header()</code>, <code>setcookie()</code>, сессии.</p>
       {CODE(`<?php
