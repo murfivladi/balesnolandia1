@@ -145,7 +145,10 @@ export function displayUrl(url) {
   const p = splitUrl(url);
   if (!p) return url;
   if (p.scheme === 'balnet') return url.replace(/\/$/, '');
-  const shown = p.path === '/' ? p.host : `${p.host}${p.path}`;
+  let path = p.path;
+  // Как Chrome: русские буквы и пробелы в адресе показываем как есть, а не %D0%BA…
+  try { path = decodeURI(path); } catch { /* битое кодирование — показываем как есть */ }
+  const shown = path === '/' ? p.host : `${p.host}${path}`;
   return p.scheme === 'https' ? shown : `http://${shown}`;
 }
 

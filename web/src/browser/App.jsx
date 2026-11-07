@@ -79,8 +79,8 @@ function frameUrl(loc, app, host) {
 
 function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle }) {
   const ref = useRef(null);
-  const cb = useRef({ onFrameNav, onTitle });
-  useEffect(() => { cb.current = { onFrameNav, onTitle }; });
+  const cb = useRef({ onFrameNav, onTitle, app, host });
+  useEffect(() => { cb.current = { onFrameNav, onTitle, app, host }; });
   const src = BASE + appPath(app, path);
 
   useEffect(() => {
@@ -101,8 +101,9 @@ function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle }) {
     try {
       const w = ref.current.contentWindow;
       w.document.documentElement.dataset.theme = theme;
+      // Приложение и хост берём текущие, а не из момента загрузки фрейма: вкладка могла уйти на другой сайт.
       const sync = () => {
-        const url = frameUrl(w.location, app, host);
+        const url = frameUrl(w.location, cb.current.app, cb.current.host);
         if (url) cb.current.onFrameNav(url);
         if (w.document.title) cb.current.onTitle(w.document.title);
       };
@@ -111,7 +112,7 @@ function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle }) {
     } catch { /* ignore */ }
   };
 
-  return <iframe key={tab.reloadKey} ref={ref} className="bb-frame" src={src} title={tab.title} onLoad={onLoad} />;
+  return <iframe key={`${tab.reloadKey}|${app}|${host}`} ref={ref} className="bb-frame" src={src} title={tab.title} onLoad={onLoad} />;
 }
 
 // ——— Сайт игрока: песочница шлюза ———
@@ -178,7 +179,7 @@ function WebTab({ tab, target, ctx }) {
   useEffect(() => {
     let alive = true;
     const { tab: tb, ctx: c } = latest.current;
-    setSt({ phase: 'loading' });
+    setSt({ phase: 'loading', key });
     const t0 = performance.now();
     const origin = `${target.scheme}://${target.host}`;
     c.loadJar(origin).then((jar) => openUrl(tb.url, c.net, jar)).then((r) => {
@@ -186,7 +187,7 @@ function WebTab({ tab, target, ctx }) {
       const total = Math.round(performance.now() - t0);
       if (r.failed) {
         const code = r.failed === 'maintenance' ? 'maintenance' : r.failed === 'error' ? 'ERR_BALNET_UNREACHABLE' : r.failed;
-        setSt({ phase: 'failed', code });
+        setSt({ phase: 'failed', code, key });
         c.setConn(tb.id, null);
         c.logNet(tb.id, { url: tb.url, host: target.host, failed: code, message: r.message, total });
         return;
@@ -198,7 +199,7 @@ function WebTab({ tab, target, ctx }) {
         c.replaceUrl(tb.id, tb.url.replace(/^https:/, 'http:'));
         return;
       }
-      setSt({ phase: 'done', d });
+      setSt({ phase: 'done', d, key });
       c.setConn(tb.id, { ok: d.ok, gov: !!d.gov, ip: d.ip, host: target.host });
       c.logNet(tb.id, { ...d, lease: r.lease, total });
     });
@@ -207,7 +208,8 @@ function WebTab({ tab, target, ctx }) {
 
   const reload = () => ctx.reload(tab.id);
   if (!ctx.online) return <ErrorPage code="ERR_INTERNET_DISCONNECTED" onReload={reload} ctx={ctx} />;
-  if (st.phase === 'loading') {
+  // Ответ, полученный для другого сайта (до смены адреса), не показываем — иначе старый фрейм получит новый путь.
+  if (st.phase === 'loading' || st.key !== key) {
     return <div className="bp-page bp-connecting"><span className="bp-spinner" aria-hidden /> Подключение к {target.host}…</div>;
   }
   if (st.phase === 'failed') {
