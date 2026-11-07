@@ -365,11 +365,14 @@ export async function domainView(conn, d, { withAuth = false } = {}) {
   const tld = await one('SELECT name FROM tlds WHERE id = ?', [d.tld_id], conn);
   const reg = d.registrar_org_id ? await one('SELECT name FROM organizations WHERE id = ?', [d.registrar_org_id], conn) : null;
   const pending = await one("SELECT o.id, o.kind, o.amount, i.number FROM domain_orders o LEFT JOIN invoices i ON i.id = o.invoice_id WHERE o.domain_id = ? AND o.status = 'pending' ORDER BY o.id DESC LIMIT 1", [d.id], conn);
+  const zone = d.zone_id ? await one('SELECT dnssec FROM dns_zones WHERE id = ?', [d.zone_id], conn) : null;
+  const ds = await q("SELECT data FROM dns_records WHERE domain_id = ? AND type = 'DS'", [d.id], conn);
   return {
     id: d.id, name: disp(d.name), tld: disp(tld?.name || ''), status: d.status, status_title: STATUS_TITLES[d.status],
     registrar: reg?.name || 'Госрегистратор БалНета', registrar_org_id: d.registrar_org_id,
     owner_org_id: d.owner_org_id, created_month: d.created_month, expires_month: d.expires_month, privacy: !!d.privacy,
     ns_mode: d.ns_mode, ns: (await domainNs(conn, d)).map((n) => ({ name: disp(n.name), ip: n.ip || null })), zone_id: d.zone_id,
+    dnssec: { signed: !!zone?.dnssec, ds: ds.map((r) => r.data) },
     pending_order: pending ? { kind: pending.kind, amount: Number(pending.amount), invoice: pending.number } : null,
     ...(withAuth ? { auth_code: d.auth_code } : {}),
   };

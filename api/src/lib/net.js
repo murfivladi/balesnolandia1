@@ -6,12 +6,19 @@ import { longestMatch, nthIp, parseCidr } from '@bln/shared/balnet-ip.js';
 // ——— Снимок: блоки, хосты, vhost, провайдеры, зоны и записи. Сбрасывается при любой правке в админке. ———
 let snapPromise = null;
 
+const invalidateHooks = [];
+/** Подписка на сброс снимка сети (например, DNSSEC проверяет ключи новых зон). */
+export function onNetInvalidate(fn) {
+  invalidateHooks.push(fn);
+}
+
 export function invalidateNet() {
   snapPromise = null;
+  for (const fn of invalidateHooks) fn();
 }
 
 async function build() {
-  const [blocks, hosts, vhosts, providers, zones, servers, records] = await Promise.all([
+  const [blocks, hosts, vhosts, providers, zones, servers, records, keys] = await Promise.all([
     q('SELECT * FROM net_ip_blocks'),
     q('SELECT * FROM net_hosts'),
     q('SELECT * FROM net_vhosts'),
@@ -19,6 +26,7 @@ async function build() {
     q('SELECT * FROM dns_zones'),
     q('SELECT * FROM dns_zone_servers'),
     q('SELECT id, zone_id, name, type, ttl, data FROM dns_records ORDER BY id'),
+    q('SELECT zone_id, spki, pkcs8, key_tag FROM dnssec_keys'),
   ]);
   const hostByIp = new Map(hosts.map((h) => [h.ip, { ...h, up: !!h.up }]));
   const vhostsByIp = new Map();
@@ -26,7 +34,8 @@ async function build() {
     if (!vhostsByIp.has(v.ip)) vhostsByIp.set(v.ip, new Map());
     vhostsByIp.get(v.ip).set(v.host, v.target);
   }
-  const zoneById = new Map(zones.map((z) => [z.id, { ...z, servers: [], names: new Map() }]));
+  const zoneById = new Map(zones.map((z) => [z.id, { ...z, dnssec: !!z.dnssec, servers: [], names: new Map() }]));
+  for (const k of keys) if (zoneById.has(k.zone_id)) zoneById.get(k.zone_id).key = k;
   const zonesByServer = new Map();
   for (const s of servers) {
     const z = zoneById.get(s.zone_id);

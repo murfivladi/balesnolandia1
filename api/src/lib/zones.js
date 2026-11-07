@@ -103,7 +103,8 @@ export async function ensureHostedZone(conn, domain) {
  * ns: [{ name, ip }] — ip нужен только для glue.
  */
 export async function setDelegation(conn, domain, tld, ns) {
-  await q('DELETE FROM dns_records WHERE zone_id = ? AND domain_id = ?', [tld.zone_id, domain.id], conn);
+  // DS (DNSSEC) остаётся: владелец убирает его сам, иначе домен станет «bogus» — как в жизни.
+  await q("DELETE FROM dns_records WHERE zone_id = ? AND domain_id = ? AND type <> 'DS'", [tld.zone_id, domain.id], conn);
   for (const n of ns) {
     await q("INSERT INTO dns_records (zone_id, name, type, ttl, data, domain_id) VALUES (?, ?, 'NS', 172800, ?, ?)", [tld.zone_id, domain.name, n.name, domain.id], conn);
     if (inZone(n.name, domain.name)) {

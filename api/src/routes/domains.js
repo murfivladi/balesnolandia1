@@ -1,5 +1,6 @@
 // ВлодУслуги → Организации и Домены (этап Н3). Вход — аккаунт ВлодУслуг.
 import { tx, q, one } from '../db.js';
+import { enableDomainDnssec, disableDomainDnssec } from '../lib/dnssec.js';
 import { bad, notFound, need, int, str, amount as amountArg } from '../lib/errors.js';
 import { needGov, actorOf } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
@@ -275,6 +276,21 @@ export async function domainRoutes(app) {
   app.post('/domains/:id/nameservers', auth, async (req) => {
     const b = req.body || {};
     await tx(async (conn) => setNameservers(conn, { govUserId: req.gov.id, id: int(req.params.id, 'id'), mode: b.mode === 'custom' ? 'custom' : 'hosted', ns: b.ns }));
+    return { ok: true };
+  });
+
+  // DNSSEC: подпись зоны на DNS-хостинге и запись DS в зоне TLD (её публикует регистратор).
+  app.post('/domains/:id/dnssec', auth, async (req) => {
+    await tx(async (conn) => {
+      const d = await ownDomain(conn, int(req.params.id, 'id'), req.gov.id, { lock: true });
+      need(d.status === 'active', 'Домен не активен');
+      const tld = await one('SELECT * FROM tlds WHERE id = ?', [d.tld_id], conn);
+      if (req.body?.enabled) {
+        need(d.ns_mode === 'hosted' && d.zone_id, 'DNSSEC на DNS-хостинге БалНета: переключите серверы имён на ns1/ns2.dns.bln');
+        await enableDomainDnssec(conn, d, tld);
+      } else await disableDomainDnssec(conn, d, tld);
+      await audit(conn, actorOf(req.gov), req.body?.enabled ? 'domain.dnssec_on' : 'domain.dnssec_off', 'domain', d.id);
+    });
     return { ok: true };
   });
 

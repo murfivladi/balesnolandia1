@@ -88,7 +88,7 @@ export async function netRoutes(app) {
   app.post('/resolve', limited(240), async (req) => {
     await online();
     const c = await clientCtx(req.body || {});
-    return resolve({ resolverIp: c.resolverIp, clientIp: c.ip, clientProviderId: c.provider.id, name: req.body.name, type: req.body.type || 'A' });
+    return resolve({ resolverIp: c.resolverIp, clientIp: c.ip, clientProviderId: c.provider.id, name: req.body.name, type: req.body.type || 'A', dnssec: !!req.body.dnssec, cd: !!req.body.cd });
   });
 
   app.post('/query', limited(240), async (req) => {
@@ -96,7 +96,7 @@ export async function netRoutes(app) {
     const b = req.body || {};
     const c = await clientCtx(b);
     const server = ipParam(b.server, 'Сервер') || c.resolverIp;
-    return queryServer({ serverIp: server, clientIp: c.ip, clientProviderId: c.provider.id, name: b.name, type: b.type || 'A', recurse: b.recurse !== false });
+    return queryServer({ serverIp: server, clientIp: c.ip, clientProviderId: c.provider.id, name: b.name, type: b.type || 'A', recurse: b.recurse !== false, dnssec: !!b.dnssec, cd: !!b.cd });
   });
 
   /** Хранилище доверия ВлодБраузера: корневые УЦ, журналы прозрачности, отозванные УЦ. */

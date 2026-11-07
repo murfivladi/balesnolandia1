@@ -48,19 +48,19 @@ test('резолв идёт корень → TLD → госсерверы, по�
   assert.equal(r.rcode, 'NOERROR');
   assert.deepEqual(r.answer.map((a) => a.data), ['50.1.0.10']);
   assert.equal(r.cached, false);
-  assert.deepEqual(r.trace.map((t) => [t.server_name, t.kind]), [
+  assert.deepEqual(r.trace.filter((t) => !t.dnssec).map((t) => [t.server_name, t.kind]), [
     ['a.root.bln.', 'referral'], ['a.nic.bln.', 'referral'], ['ns1.gov.bln.', 'answer'],
   ]);
   assert.ok(r.ms > 0);
   const again = await resolveA(dev, 'bank.bln');
   assert.equal(again.cached, true);
-  assert.equal(again.trace.length, 0);
+  assert.equal(again.trace.filter((t) => !t.dnssec).length, 0);
   // Соседний домен: NS зоны bln. уже в кэше — корень пропускается, сразу к TLD-серверу.
   const k = await resolveA(dev, 'kassa.bln');
-  assert.deepEqual(k.trace.map((t) => t.server_name), ['a.nic.bln.', 'ns1.gov.bln.']);
+  assert.deepEqual(k.trace.filter((t) => !t.dnssec).map((t) => t.server_name), ['a.nic.bln.', 'ns1.gov.bln.']);
   // Имя внутри уже известной зоны: сразу к её серверам.
   const w = await resolveA(dev, 'www.bank.bln');
-  assert.deepEqual(w.trace.map((t) => t.server_name), ['ns1.gov.bln.']);
+  assert.deepEqual(w.trace.filter((t) => !t.dnssec).map((t) => t.server_name), ['ns1.gov.bln.']);
 });
 
 test('TTL считается в игровых секундах', async () => {
@@ -73,7 +73,7 @@ test('TTL считается в игровых секундах', async () => {
   gameNow += 3001;
   const expired = await resolveA(dev, 'poisk.bln');
   assert.equal(expired.cached, false, 'запись устарела — резолвер снова спрашивает авторитетный сервер');
-  assert.equal(expired.trace.at(-1).server_name, 'ns1.gov.bln.');
+  assert.equal(expired.trace.filter((t) => !t.dnssec).at(-1).server_name, 'ns1.gov.bln.');
 });
 
 test('CNAME, NXDOMAIN, NODATA, обратная зона', async () => {
@@ -82,7 +82,7 @@ test('CNAME, NXDOMAIN, NODATA, обратная зона', async () => {
   const nx = await resolveA(dev, 'vasya.bln');
   assert.equal(nx.rcode, 'NXDOMAIN');
   assert.equal(nx.authority[0].type, 'SOA');
-  assert.equal(nx.trace.at(-1).server_name, 'a.nic.bln.');
+  assert.equal(nx.trace.filter((t) => !t.dnssec).at(-1).server_name, 'a.nic.bln.');
   const nx2 = await resolveA(dev, 'vasya.bln', { type: 'AAAA' });
   assert.equal(nx2.rcode, 'NXDOMAIN');
   assert.equal(nx2.cached, true, 'отрицательный ответ закэширован');
@@ -163,7 +163,7 @@ test('админ: зона, записи, проверки, делегирова
   await assert.rejects(admin.delete(`/api/admin/net/records/${soa.id}`), /SOA/);
 
   const r = await resolveA(dev, 'test.shop');
-  assert.deepEqual(r.trace.map((t) => t.server_name), ['a.root.bln.', 'a.nic.vlod.', 'ns1.gov.bln.']);
+  assert.deepEqual(r.trace.filter((t) => !t.dnssec).map((t) => t.server_name), ['a.root.bln.', 'a.nic.vlod.', 'ns1.gov.bln.']);
   assert.equal(r.answer[0].data, '50.1.0.10');
   const wild = await resolveA(dev, 'anything.test.shop');
   assert.equal(wild.answer[0].name, 'anything.test.shop.');
