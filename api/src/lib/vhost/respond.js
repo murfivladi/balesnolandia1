@@ -98,7 +98,7 @@ export async function runExternal(site, kind, payload, { depth = 0 } = {}) {
 }
 
 /** Выполнить обработчик сайта (onRequest, onCron, …) в очереди сайта, с базой и логами. */
-export async function runSite(site, handler, arg, { depth = 0, ws = null } = {}) {
+export async function runSite(site, handler, arg, { depth = 0, ws = null, script = 'server.js', onLog = null } = {}) {
   return withSite(site.id, async () => {
     const now = await gameSeconds();
     let entry = null;
@@ -107,9 +107,9 @@ export async function runSite(site, handler, arg, { depth = 0, ws = null } = {})
     const t0 = Date.now();
     try {
       const r = await runHandler({
-        dir: site.dir, handler, arg, cpuMs: Number(site.cpu_ms) || 50,
+        dir: site.dir, entry: script, handler, arg, cpuMs: Number(site.cpu_ms) || 50,
         host: {
-          log: (level, text) => addLog(site.id, level, text),
+          log: (level, text) => { addLog(site.id, level, text); onLog?.(level, text); },
           now: () => now,
           db: (op, sql, params) => {
             if (op === 'query') return sqlQuery(entry, sql, params);

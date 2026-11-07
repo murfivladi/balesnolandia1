@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { formatRR } from '@bln/shared/balnet-dns.js';
 import { isIP } from '@bln/shared/balnet-ip.js';
 import { netCall, lease, resolverOf } from './net.js';
-import { get } from '../shared/api.js';
+import { get, post } from '../shared/api.js';
 import { gameDateLabel } from '@bln/shared/time.js';
 import { checkTls, gameDate } from './certs.jsx';
 
@@ -22,6 +22,7 @@ const HELP = [
   '  traceroute <хост>          — маршрут до хоста',
   '  whois <домен|ip>           — кто владеет доменом или адресом',
   '  curl [-I] [-k] <адрес>     — запрос к сайту (-k — не проверять сертификат)',
+  '  ssh u<номер>@<сервер>      — войти на сервер хостинга (пароль задаётся в панели БалХоста)',
   '  clear                      — очистить экран',
   '',
   'Подсказка: ↑ и ↓ — история команд.',
@@ -53,6 +54,8 @@ export function TerminalPage({ ctx }) {
   const [busy, setBusy] = useState(false);
   const [hist, setHist] = useState([]);
   const [hpos, setHpos] = useState(-1);
+  const [ssh, setSsh] = useState(null); // { stage: 'password', user, host } | { session, prompt }
+  const [editor, setEditor] = useState(null); // { path, content, saved }
   const end = useRef(null);
   const inputRef = useRef(null);
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [lines]);
@@ -303,7 +306,43 @@ export function TerminalPage({ ctx }) {
     );
   }
 
+  async function sshStart(args) {
+    const target = args.filter((a, i) => !a.startsWith('-') && args[i - 1] !== '-p' && args[i - 1] !== '-l')[0];
+    const li = args.indexOf('-l');
+    if (!target) return print('usage: ssh u<номер>@<сервер>');
+    let [user, host] = target.includes('@') ? target.split('@') : [li >= 0 ? args[li + 1] : '', target];
+    if (!user) user = '';
+    setSsh({ stage: 'password', user, host });
+    return print(`${user}@${host}'s password:`);
+  }
+
+  async function sshLogin(password) {
+    const { user, host } = ssh;
+    const r = await call('/net/ssh/login', { host, user, password });
+    if (r.error) { setSsh(null); return print(r.error); }
+    setSsh({ session: r.session, prompt: r.prompt });
+    return print(r.motd, '');
+  }
+
+  async function sshExec(line) {
+    const r = await post('/net/ssh/exec', { session: ssh.session, line });
+    if (r.error) { setSsh(null); return print(r.error); }
+    if (r.out) print(r.out);
+    if (r.exit) { setSsh(null); return print(`Connection to ${ssh.prompt.split('@')[1].split(':')[0]} closed.`); }
+    if (r.edit) setEditor({ ...r.edit, saved: r.edit.content });
+    setSsh((x) => ({ ...x, prompt: r.prompt }));
+    return null;
+  }
+
+  async function saveEditor() {
+    const r = await post('/net/ssh/save', { session: ssh.session, path: editor.path, content: editor.content });
+    if (r.error) throw new Error(r.error);
+    setEditor((e) => ({ ...e, saved: e.content }));
+    print(`[ Записано ${r.bytes} байт в ${editor.path} ]`);
+  }
+
   async function run(line) {
+    if (ssh?.session) return sshExec(line);
     const [cmd, ...args] = line.trim().split(/\s+/);
     switch ((cmd || '').toLowerCase()) {
       case '': return null;
@@ -318,6 +357,7 @@ export function TerminalPage({ ctx }) {
       case 'whois': return whois(args);
       case 'curl': return curl(args);
       case 'openssl': return openssl(args);
+      case 'ssh': return sshStart(args);
       default: return print(`${cmd}: команда не найдена. Введите help.`);
     }
   }
@@ -327,21 +367,53 @@ export function TerminalPage({ ctx }) {
     const line = input;
     setInput('');
     setHpos(-1);
-    if (line.trim()) setHist((h) => [...h, line].slice(-100));
-    print(`$ ${line}`);
     setBusy(true);
-    try { await run(line); } catch (err) { print(`Ошибка: ${err.message}`); }
+    try {
+      if (ssh?.stage === 'password') {
+        await sshLogin(line);
+      } else {
+        if (line.trim()) setHist((h) => [...h, line].slice(-100));
+        print(`${ssh?.session ? ssh.prompt : '$'} ${line}`);
+        await run(line);
+      }
+    } catch (err) { print(`Ошибка: ${err.message}`); }
     setBusy(false);
     setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  if (editor) {
+    const dirty = editor.content !== editor.saved;
+    const close = () => { if (!dirty || window.confirm('Выйти без сохранения изменений?')) { setEditor(null); setTimeout(() => inputRef.current?.focus(), 0); } };
+    return (
+      <div className="bp-terminal bp-nano" role="dialog" aria-label={`Редактор ${editor.path}`}>
+        <div className="bp-nano-head">GNU nano (БалНет) · {editor.path}{dirty ? ' · изменён' : ''}</div>
+        <textarea
+          className="bp-nano-text"
+          value={editor.content}
+          autoFocus
+          spellCheck={false}
+          onChange={(e) => setEditor((x) => ({ ...x, content: e.target.value }))}
+          onKeyDown={(e) => {
+            if (e.ctrlKey && (e.key === 's' || e.key === 'o')) { e.preventDefault(); saveEditor().catch((err) => print(`Ошибка: ${err.message}`)); }
+            if (e.ctrlKey && e.key === 'x') { e.preventDefault(); close(); }
+          }}
+        />
+        <div className="bp-nano-keys">
+          <button className="bp-link" onClick={() => saveEditor().catch((err) => print(`Ошибка: ${err.message}`))}>^S Записать</button>
+          <button className="bp-link" onClick={close}>^X Выход</button>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="bp-terminal" onClick={() => inputRef.current?.focus()} role="presentation">
       <pre className="bp-term-out" aria-live="polite">{lines.join('\n')}</pre>
       <form onSubmit={submit} className="bp-term-line">
-        <span aria-hidden>{busy ? '…' : '$'}</span>
+        <span aria-hidden>{busy ? '…' : ssh?.session ? ssh.prompt : ssh?.stage === 'password' ? '' : '$'}</span>
         <input
           ref={inputRef}
+          type={ssh?.stage === 'password' ? 'password' : 'text'}
           value={input}
           disabled={busy}
           autoFocus

@@ -1,7 +1,7 @@
 // ВлодУслуги → Хостинг (этап Н4): тарифы, аккаунты, сайты, файловый менеджер, ZIP. Кабинет хостера. Админка.
 import { tx, q, one } from '../db.js';
 import { bad, notFound, need, int, str, amount as amountArg } from '../lib/errors.js';
-import { needGov, needAdmin, actorOf } from '../lib/auth.js';
+import { needGov, needAdmin, actorOf, hash } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { citizenOf, activePassport } from '../lib/gov.js';
 import { currentMonth, gameSeconds } from '../lib/clock.js';
@@ -141,6 +141,17 @@ export async function hostingRoutes(app) {
     await refreshUsage(a.id);
     await audit(null, actor(req), 'hosting.zip', 'hosting_account', a.id, { files: files.length });
     return { files };
+  });
+
+  /** Пароль SSH для аккаунта: вход ssh u<номер>@<адрес сервера> из терминала ВлодБраузера. */
+  app.post('/hosting/:id/ssh', auth, async (req) => {
+    const a = await ownAccount(null, int(req.params.id, 'id'), req.gov.id);
+    const pw = String(req.body?.password || '');
+    if (!pw) { await q('UPDATE hosting_accounts SET ssh_hash = NULL WHERE id = ?', [a.id]); return { enabled: false }; }
+    need(pw.length >= 8, 'Пароль SSH — не короче 8 символов');
+    await q('UPDATE hosting_accounts SET ssh_hash = ? WHERE id = ?', [await hash(pw), a.id]);
+    await audit(null, actor(req), 'hosting.ssh_password', 'hosting_account', a.id);
+    return { enabled: true };
   });
 
   // ——— Серверный код (виртуальный тариф): журнал, SQL-консоль, key-value, примеры ———

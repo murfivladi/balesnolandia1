@@ -78,8 +78,10 @@ async function runPhp(job) {
   try {
     p.chdir('/site');
     const r = job.req || {};
+    // Скрипт из консоли или cron: $argv/$argc как у php-cli (через загрузчик — в $_SERVER массивы нельзя).
+    const cli = job.argv ? `<?php $argv = json_decode(${JSON.stringify(JSON.stringify(job.argv))}, true); $argc = count($argv); $_SERVER['argv'] = $argv; $_SERVER['argc'] = $argc; chdir(dirname('/site/${job.entry.replace(/'/g, '')}')); require '/site/${job.entry.replace(/'/g, '')}';` : null;
     const res = await p.run({
-      scriptPath: `/site/${job.entry}`,
+      ...(cli ? { code: cli } : { scriptPath: `/site/${job.entry}` }),
       relativeUri: `${r.path || '/'}${r.search || ''}`,
       method: r.method || 'GET',
       protocol: (r.url || '').startsWith('https') ? 'https' : 'http',
@@ -87,7 +89,6 @@ async function runPhp(job) {
       body: new TextEncoder().encode(r.body || ''),
       $_SERVER: {
         REMOTE_ADDR: r.ip || '', SERVER_NAME: r.host || '', HTTP_HOST: r.host || '', BALNET_GAME_TIME: String(job.now || 0),
-        ...(job.argv ? { argv: job.argv } : {}),
       },
     });
     const headers = {};

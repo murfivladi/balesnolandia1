@@ -10,6 +10,9 @@ import { fqdn } from '@bln/shared/balnet-dns.js';
 import { whoisDomain } from '../lib/domains.js';
 import { createTicket, cleanJar } from '../lib/gateway.js';
 import { tlsFor, trustStore } from '../lib/pki.js';
+import { one } from '../db.js';
+import { verifyHash } from '../lib/auth.js';
+import { newSession, getSession, endSession, shell, saveFile, prompt } from '../lib/vhost/ssh.js';
 
 const limited = (max) => ({ config: { rateLimit: { max, timeWindow: '1 minute' } } });
 
@@ -137,6 +140,42 @@ export async function netRoutes(app) {
     const { ip, dns } = await hostToIp(c, b.host);
     if (!ip) return { host: b.host, error: dnsErrorCode(dns), dns };
     return { host: b.host, ...traceroute(await netSnapshot(), c.ip, ip) };
+  });
+
+  // ——— SSH на сервер хостинга: ssh u<номер>@<сервер> из терминала ВлодБраузера ———
+  app.post('/ssh/login', limited(10), async (req) => {
+    await online();
+    const b = req.body || {};
+    const c = await clientCtx(b);
+    const { ip, dns } = await hostToIp(c, b.host);
+    if (!ip) return { error: `ssh: Could not resolve hostname ${b.host}: ${dnsErrorCode(dns)}` };
+    const snap = await netSnapshot();
+    const reach = ping(snap, c.ip, ip, 1);
+    if (!reach.reachable || reach.replies[0].lost) return { error: `ssh: connect to host ${b.host} port 22: Connection timed out` };
+    const server = await one("SELECT * FROM hosting_servers WHERE ip = ? AND status = 'active'", [ip]);
+    if (!server) return { error: `ssh: connect to host ${b.host} port 22: Connection refused` };
+    const m = /^u(\d+)$/.exec(String(b.user || ''));
+    const acc = m ? await one("SELECT * FROM hosting_accounts WHERE id = ? AND server_id = ? AND status IN ('active','suspended')", [Number(m[1]), server.id]) : null;
+    if (!acc || !acc.ssh_hash || !(await verifyHash(String(b.password || ''), acc.ssh_hash))) return { error: `${b.user}@${b.host}: Permission denied (password).` };
+    const name = String(server.name).replace(/\.$/, '').split('.')[0];
+    const id = newSession(acc, name);
+    const s = getSession(id);
+    return { session: id, prompt: prompt(s), motd: [`Добро пожаловать на ${String(server.name).replace(/\.$/, '')} (${ip}) — хостинг БалНета.`, 'help — список команд, exit — выход.', acc.status === 'suspended' ? 'Внимание: хостинг приостановлен за неуплату.' : ''].filter(Boolean) };
+  });
+
+  app.post('/ssh/exec', limited(600), async (req) => {
+    await online();
+    const s = getSession(req.body?.session);
+    if (!s) return { error: 'Connection closed by remote host (сессия истекла)', closed: true };
+    const r = await shell(s, req.body?.line);
+    if (r.exit) endSession(req.body.session);
+    return { ...r, prompt: prompt(s) };
+  });
+
+  app.post('/ssh/save', limited(120), async (req) => {
+    const s = getSession(req.body?.session);
+    if (!s) return { error: 'Сессия истекла', closed: true };
+    return saveFile(s, req.body?.path, req.body?.content);
   });
 
   app.get('/whois', limited(60), async (req) => {

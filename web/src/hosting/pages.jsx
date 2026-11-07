@@ -115,11 +115,13 @@ export function HostingAccountPage({ id }) {
             <dt>Место</dt><dd>{mb(a.used_bytes)} из {a.disk_mb} МБ</dd>
             <dt>Оплачен до</dt><dd>{gameDateLabel(a.paid_until_month, lang)}</dd>
             <dt>Цена</dt><dd><Money value={a.price_month} /> в игровой месяц</dd>
+            {a.ssh && <><dt>SSH</dt><dd><span className="mono">ssh {a.ssh.user}@{a.ssh.host}</span> {a.ssh.enabled ? <Badge kind="ok">включён</Badge> : <Badge>нет пароля</Badge>}</dd></>}
             {a.kind === 'virtual' && a.limits && <><dt>Лимиты</dt><dd>{a.limits.rpm} запросов в минуту · CPU {a.limits.cpu_ms} мс на запрос · {a.limits.ws_limit} WebSocket · cron не чаще раза в {a.limits.cron_min} игр. мин</dd></>}
           </dl>
           <div className="meter" style={{ marginTop: 10 }} role="meter" aria-valuemin={0} aria-valuemax={a.disk_mb} aria-valuenow={Number((a.used_bytes / 1048576).toFixed(2))} aria-label="Занято места">
             <span style={{ width: `${Math.min(100, (a.used_bytes / (a.disk_mb * 1048576)) * 100)}%` }} />
           </div>
+          {a.status !== 'reserved' && <SshPassword id={id} enabled={a.ssh?.enabled} onChange={reload} />}
           {order ? <PayLink invoice={order.invoice} amount={order.amount} /> : (a.status !== 'reserved' && (
             <Form submitLabel={`Продлить — ${((a.price_month * months) / 100).toLocaleString('ru-RU')} В`} onSubmit={async () => { setOrder(await post(`/gov/hosting/${id}/renew`, { months })); reload(); }}>
               <Select label="Продлить на" value={months} onChange={(e) => setMonths(Number(e.target.value))} options={Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1} игр. мес.` }))} />
@@ -341,6 +343,18 @@ export function OrgHosting({ orgId, director, kind }) {
         </Form>
       )}
     </div>
+  );
+}
+
+/** Пароль SSH: вход из терминала ВлодБраузера (меню → Терминал → ssh u<номер>@<сервер>). */
+function SshPassword({ id, enabled, onChange }) {
+  const [pw, setPw] = useState('');
+  const [open, setOpen] = useState(false);
+  if (!open) return <p className="small" style={{ marginTop: 10 }}><button className="link-btn" onClick={() => setOpen(true)}>{enabled ? 'Сменить пароль SSH' : 'Включить доступ по SSH'}</button></p>;
+  return (
+    <Form submitLabel="Сохранить пароль" onSubmit={async () => { await post(`/gov/hosting/${id}/ssh`, { password: pw }); setPw(''); setOpen(false); onChange(); }}>
+      <Input label="Пароль SSH" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} hint="Не короче 8 символов. Пустой — отключить SSH." />
+    </Form>
   );
 }
 

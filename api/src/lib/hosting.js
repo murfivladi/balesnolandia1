@@ -268,7 +268,7 @@ export async function accountView(conn, a) {
   const pending = await one("SELECT o.amount, i.number FROM hosting_orders o LEFT JOIN invoices i ON i.id = o.invoice_id WHERE o.account_id = ? AND o.status = 'pending' ORDER BY o.id DESC LIMIT 1", [a.id], conn);
   return {
     id: a.id, status: a.status, status_title: ACCOUNT_STATUS[a.status], hoster: await hosterName(conn, a.org_id), plan: plan?.name, kind: plan?.kind || 'static', limits: plan ? { rpm: plan.rpm, cpu_ms: plan.cpu_ms, ws_limit: plan.ws_limit, cron_min: plan.cron_min } : null, disk_mb: plan?.disk_mb, max_sites: plan?.max_sites, price_month: Number(plan?.price_month || 0),
-    server_ip: server?.ip, server: disp(server?.name || ''), paid_until_month: a.paid_until_month, used_bytes: Number(a.used_bytes), owner_org_id: a.owner_org_id,
+    server_ip: server?.ip, server: disp(server?.name || ''), ssh: { user: `u${a.id}`, host: server?.ip, enabled: !!a.ssh_hash }, paid_until_month: a.paid_until_month, used_bytes: Number(a.used_bytes), owner_org_id: a.owner_org_id,
     sites, pending_order: pending ? { amount: Number(pending.amount), invoice: pending.number } : null,
   };
 }

@@ -188,6 +188,10 @@ export const PRELUDE = String.raw`
 
   g.__handle = function (name, json) {
     var mod = g.__mod || {};
+    if (name === '__script__') {
+      var main = mod.main || (mod.default && mod.default.main);
+      return Promise.resolve(typeof main === 'function' ? main(JSON.parse(json)) : null).then(function (v) { return JSON.stringify({ ok: true, value: v === undefined ? null : v }); });
+    }
     var fn = mod[name] || (mod.default && mod.default[name]);
     if (typeof fn !== 'function') return Promise.resolve(JSON.stringify({ missing: true }));
     var arg = JSON.parse(json);

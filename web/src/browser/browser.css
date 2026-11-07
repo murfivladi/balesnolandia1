@@ -292,3 +292,9 @@ body[data-app='browser'] #root { height: 100vh; height: 100dvh; min-height: 0; }
 .bp-page.bp-unsafe .bp-error-actions .bp-btn { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.5); }
 .bp-page.bp-unsafe .bp-error-actions .bp-btn-primary { background: #fff; color: #a52714; }
 .bp-unsafe .bp-link.bp-danger { color: #fff; text-decoration: underline; }
+
+/* Редактор nano в терминале (SSH) */
+.bp-nano { display: flex; flex-direction: column; gap: 0; }
+.bp-nano-head { background: #d8dee9; color: #111; padding: 2px 8px; font-family: var(--bb-mono, monospace); font-size: 13px; }
+.bp-nano-text { flex: 1; min-height: 60vh; width: 100%; resize: none; border: 0; outline: none; background: transparent; color: inherit; font: 14px/1.45 var(--bb-mono, ui-monospace, monospace); padding: 8px; box-sizing: border-box; }
+.bp-nano-keys { display: flex; gap: 18px; padding: 4px 8px; border-top: 1px solid rgba(127,127,127,.4); font-family: var(--bb-mono, monospace); }
