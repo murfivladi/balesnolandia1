@@ -151,3 +151,16 @@ export function PoiskLogo({ size = 34 }) {
     </svg>
   );
 }
+
+/** ВлодХаб (vlodhub.bln): ветки git. */
+export function HubLogo({ size = 34 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
+      <rect width="40" height="40" rx="10" fill="#24292f" />
+      <circle cx="13" cy="11" r="3.4" fill="none" stroke="#fff" strokeWidth="2.4" />
+      <circle cx="13" cy="29" r="3.4" fill="none" stroke="#fff" strokeWidth="2.4" />
+      <circle cx="27" cy="15" r="3.4" fill="none" stroke="#f0b429" strokeWidth="2.4" />
+      <path d="M13 14.5v11M27 18.5c0 5-6 5-12.5 8" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />
+    </svg>
+  );
+}

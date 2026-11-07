@@ -70,7 +70,7 @@ jobs:
         run: npm run build -w web
       - name: Проверка файлов и адресов сборки
         run: |
-          for page in index.html apps/index.html bank/index.html pos/index.html services/index.html admin/index.html reg/index.html hosting/index.html nalog/index.html ca/index.html poisk/index.html; do
+          for page in index.html apps/index.html bank/index.html pos/index.html services/index.html admin/index.html reg/index.html hosting/index.html nalog/index.html ca/index.html poisk/index.html hub/index.html; do
             test -s "web/dist/$page"
             grep -Eq 'src="/assets/[^"]+\.js"' "web/dist/$page"
           done

@@ -19,6 +19,7 @@ export default defineConfig({
         hosting: resolve(import.meta.dirname, 'hosting/index.html'),
         ca: resolve(import.meta.dirname, 'ca/index.html'),
         poisk: resolve(import.meta.dirname, 'poisk/index.html'),
+        hub: resolve(import.meta.dirname, 'hub/index.html'),
         nalog: resolve(import.meta.dirname, 'nalog/index.html'),
         bank: resolve(import.meta.dirname, 'bank/index.html'),
         pos: resolve(import.meta.dirname, 'pos/index.html'),
