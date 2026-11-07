@@ -123,5 +123,7 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
   await app.register(oauthRoutes, { prefix: '/api/oauth' });
   await app.register(adminPayRoutes, { prefix: '/api/admin/pay' });
 
+  (await import('./lib/pay/api.js')).setGovInjector((opts) => app.inject(opts));
+
   return app;
 }

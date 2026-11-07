@@ -1,3 +1,4 @@
+import { SCOPES, listTokens, createToken, deleteToken } from '../lib/apitokens.js';
 import { tx, q, one, json } from '../db.js';
 import { bad, notFound, str, need, int } from '../lib/errors.js';
 import { needGov, needRole, actorOf } from '../lib/auth.js';
@@ -56,6 +57,17 @@ function appView(a) {
 }
 
 export async function govRoutes(app) {
+  // ——— API-токены для серверов сайтов и программ (только по cookie входа, не по токену) ———
+  app.get('/api-tokens', { preHandler: needGov() }, async (req) => ({ tokens: await listTokens(req.gov.id), scopes: Object.fromEntries(Object.entries(SCOPES).map(([k, v]) => [k, v.label])) }));
+  app.post('/api-tokens', { preHandler: needGov() }, async (req) => {
+    const t = await createToken(req.gov.id, req.body || {});
+    await audit(null, actorOf(req.gov), 'gov.api_token', 'gov_api_token', t.id, { scopes: t.scopes });
+    return t;
+  });
+  app.delete('/api-tokens/:id', { preHandler: needGov() }, async (req) => {
+    await deleteToken(req.gov.id, Number(req.params.id));
+    return { ok: true };
+  });
   const auth = { preHandler: needGov() };
 
   app.get('/me', auth, async (req) => {

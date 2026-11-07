@@ -245,7 +245,7 @@ export async function netRequest({ fromIp, url, method = 'GET', headers = {}, bo
       const g = p.scheme === 'https'
         ? await govHttp(conn.target, { method, path: p.path, headers, body })
         : { status: 400, headers: { 'content-type': 'application/json; charset=utf-8' }, body: Buffer.from(JSON.stringify({ error: { code: 'https_required', message: 'API госсайтов — только по https://' } })) };
-      if (!g) return { error: 'ERR_GOV_SITE: этот адрес госсайта открывается только во ВлодБраузере (серверам доступны pay.bank.bln/api/v1 и /oauth/…)', ip, gov: true };
+      if (!g) return { error: 'ERR_GOV_SITE: этот адрес госсайта открывается только во ВлодБраузере (серверам доступны /api/… с токеном bln_…, pay.bank.bln/api/v1 и /oauth/…)', ip, gov: true };
       const res = { status: g.status, headers: g.headers, url: cur, ip, siteId: null, gov: true };
       if (binary) res.buf = g.body; else res.body = g.body.toString('utf8');
       return res;

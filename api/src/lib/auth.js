@@ -68,12 +68,17 @@ export async function session(req, kind) {
       s = { kind, id: user.id, user, roles: await rolesOf(kind, user.id), token: p };
     }
   }
+  if (!s && req.headers?.authorization) {
+    const { tokenSession } = await import('./apitokens.js');
+    s = await tokenSession(req, kind);
+  }
   req.__sess[kind] = s;
   return s;
 }
 
 /** Продлить cookie, если сессия жива (скользящее окно бездействия). */
 async function touch(req, reply, s) {
+  if (s.api) return;
   const age = Date.now() / 1000 - (s.token.iat || 0);
   if (age > 20) {
     await issue(reply, s.kind, { id: s.id });

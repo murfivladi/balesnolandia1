@@ -9,6 +9,7 @@ import {
 } from '../shared/ui.jsx';
 import { ServicesLogo, CoatOfArms, Flag } from '../shared/brand.jsx';
 import { LoginForm, AuthDisclaimer, NotificationsModal } from '../shared/auth.jsx';
+import { ApiTokensPage } from './ApiTokens.jsx';
 import { IdCard, passportBlocks, MARITAL, DOC_DISCLAIMER } from '../shared/passport.jsx';
 import { renderThermal, shareCanvas } from '../shared/thermal.js';
 import { gameDateLabel, mmYY } from '@bln/shared/time.js';
@@ -107,6 +108,7 @@ export default function App() {
             <NavLink href="#/documents" path={route.path}>{t('Документы')}</NavLink>
             <NavLink href="#/invoices" path={route.path}>{t('Квитанции')}</NavLink>
             <NavLink href="#/applications" path={route.path}>{t('Заявления')}</NavLink>
+            <NavLink href="#/api-tokens" path={route.path}>{t('Ключи API')}</NavLink>
             {isOfficial && <NavLink href="#/queue" path={route.path}>{t('Рассмотрение')}</NavLink>}
           </>
         )}
@@ -129,6 +131,7 @@ export default function App() {
           ['/links', () => <LinksPage />],
           // «Войти через ВлодУслуги» на сайтах БалНета (OAuth 2): согласие и подключённые сайты.
           ['/oauth/authorize', () => <div className="page narrow"><OAuthConsent provider="gov" query={route.query} /></div>],
+          ['/api-tokens', () => <ApiTokensPage />],
           ['/apps', () => <div className="page narrow stack"><h1>Подключённые сайты</h1><div className="card"><ConnectedApps /></div></div>],
           // Разделы переехали на отдельные сайты БалНета — старые ссылки ведут туда.
           ['/orgs', () => <Moved href="../nalog/#/orgs" site="Налоговую службу (nalog.gov.bln)" />],

@@ -138,6 +138,18 @@ async function payApi({ method, path, headers, body }) {
 }
 
 /** HTTP-ответ госсайта по сети БалНета или null (этот путь госсайт серверам не отдаёт). */
+let injector = null;
+/** Связать с приложением Fastify: остальной API госсайтов (/api/…) отвечает серверам сайтов по токену bln_…. */
+export function setGovInjector(fn) { injector = fn; }
+
+async function restApi({ method, path, headers, body }) {
+  const h = { ...headers };
+  delete h.cookie; delete h.host; delete h['content-length'];
+  const r = await injector({ method, url: path, headers: h, payload: body && body.length !== 0 ? body : undefined });
+  const keep = Object.fromEntries(Object.entries(r.headers).filter(([k]) => /^(content-type|location|cache-control)$/i.test(k)));
+  return { status: r.statusCode, headers: keep, body: r.rawPayload };
+}
+
 export async function govHttp(target, { method = 'GET', path = '/', headers = {}, body = null }) {
   const h = Object.fromEntries(Object.entries(headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
   const m = String(method).toUpperCase();
@@ -148,6 +160,7 @@ export async function govHttp(target, { method = 'GET', path = '/', headers = {}
       const r = await oauthHttp(provider, { method: m, path, headers: h, body });
       if (r) return out(r.status, r.body, r.headers || {});
     }
+    if (injector && /^\/api\/(?!auth\/|admin\/)/.test(path)) return await restApi({ method: m, path, headers: h, body });
   } catch (err) {
     if (!(err instanceof HttpError)) console.error('gov api', err);
     const e = apiError(err);
