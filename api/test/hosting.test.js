@@ -95,7 +95,7 @@ test('setup: игроки, домен boris.bln, устройство', async ()
 
 test('покупка тарифа Госхостинга: квитанция, деньги в бюджет, срок', async () => {
   const h = await boris.gov.get('/api/gov/hosting');
-  assert.deepEqual(h.offers.map((o) => `${o.hoster}:${o.name}`), ['Госхостинг БалНета:Старт', 'Госхостинг БалНета:Блог']);
+  assert.deepEqual(h.offers.map((o) => `${o.hoster}:${o.name}`), ['Госхостинг БалНета:Старт', 'Госхостинг БалНета:Блог', 'Госхостинг БалНета:Сервер', 'Госхостинг БалНета:Сервер Про']);
   const start = h.offers[0];
   assert.equal(start.ip, '50.1.0.30');
   const r = await boris.gov.post('/api/gov/hosting', { plan_id: start.id, months: 2 });

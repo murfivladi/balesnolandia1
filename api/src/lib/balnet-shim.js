@@ -96,6 +96,7 @@ export const SHIM_JS = String.raw`(function () {
     var t = Date.now();
     Object.keys(jar).forEach(function (k) {
       if (jar[k].exp && jar[k].exp < t) { delete jar[k]; return; }
+      if (jar[k].h) return; // HttpOnly: видит только сервер
       out.push(k + '=' + jar[k].v);
     });
     return out.join('; ');
@@ -116,10 +117,22 @@ export const SHIM_JS = String.raw`(function () {
       if (k === 'max-age') exp = Date.now() + Number(v) * 1000;
       if (k === 'expires' && exp === null) { var d = Date.parse(v); if (!isNaN(d)) exp = d; }
     });
+    if (jar[name] && jar[name].h) return; // HttpOnly-cookie скрипт страницы менять не может
     if (exp !== null && exp <= Date.now()) delete jar[name];
     else jar[name] = { v: value, exp: exp };
     sync();
   }
+  // Сервер сайта выставил cookies (Set-Cookie) — забираем их из шлюза и отдаём ВлодБраузеру.
+  function refreshJar() {
+    if (!origFetchJar) return;
+    origFetchJar(API + '/api/net/jar/' + encodeURIComponent(C.ticket)).then(function (r) { return r.json(); }).then(function (res) {
+      if (!res || !res.cookies) return;
+      jar = res.cookies;
+      sync();
+    }).catch(function () { /* нет связи */ });
+  }
+  var origFetchJar = window.fetch ? window.fetch.bind(window) : null;
+  if (C.jarDirty) sync();
   try { Object.defineProperty(document, 'cookie', { configurable: true, get: cookieString, set: setCookie }); } catch (e) { /* ignore */ }
 
   function makeStorage(d, persist) {
@@ -144,10 +157,25 @@ export const SHIM_JS = String.raw`(function () {
       var u = new URL(href, location.href);
       if (!/^https?:$/.test(u.protocol)) return origFetch(input, init);
       var own = ownToGateway(u.href);
-      if (own) return origFetch(typeof input === 'string' || input instanceof URL ? own : new Request(own, input), init);
-      var method = (init && init.method) || 'GET';
+      if (own) {
+        return origFetch(typeof input === 'string' || input instanceof URL ? own : new Request(own, input), init).then(function (r) {
+          if (r.headers.get('X-Balnet-Jar')) refreshJar();
+          return r;
+        });
+      }
+      var method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+      var hdrs = {};
+      var hsrc = (init && init.headers) || null;
+      if (hsrc) {
+        if (typeof hsrc.forEach === 'function' && !Array.isArray(hsrc)) hsrc.forEach(function (v, k) { hdrs[k] = v; });
+        else if (Array.isArray(hsrc)) hsrc.forEach(function (p) { hdrs[p[0]] = p[1]; });
+        else Object.keys(hsrc).forEach(function (k) { hdrs[k] = hsrc[k]; });
+      }
+      var raw = init && init.body;
+      if (raw instanceof URLSearchParams) { hdrs['content-type'] = hdrs['content-type'] || 'application/x-www-form-urlencoded;charset=UTF-8'; raw = raw.toString(); }
+      if (raw !== undefined && raw !== null && typeof raw !== 'string') raw = String(raw);
       return origFetch(API + '/api/net/xfetch', {
-        method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ ticket: C.ticket, url: u.href, method: method }),
+        method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ ticket: C.ticket, url: u.href, method: method, headers: hdrs, body: raw === undefined ? null : raw }),
       }).then(function (r) { return r.json(); }).then(function (res) {
         if (!res || res.error) {
           if (window.console) console.error('[БалНет] ' + ((res && res.message) || 'Запрос заблокирован') + ': ' + u.href);

@@ -4,7 +4,7 @@ import react from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
 
 export default [
-  { ignores: ['**/dist/**', '**/node_modules/**'] },
+  { ignores: ['**/dist/**', '**/node_modules/**', '**/balnet-sites/**'] },
   js.configs.recommended,
   {
     files: ['api/**/*.js', 'shared/**/*.js', '*.js', 'web/vite.config.js'],

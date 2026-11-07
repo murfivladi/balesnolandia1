@@ -33,6 +33,7 @@ export default function App() {
           ['/cabinet', () => gate(() => <HostingPage initialPlan={Number(route.query.plan) || null} />)],
           ['/cabinet/:id', (p) => gate(() => <HostingAccountPage id={p.id} />)],
           ['/partners', () => gate(() => <Partners />)],
+          ['/docs', () => <ServerDocs />],
           ['*', () => <Empty>Страница не найдена</Empty>],
         ], route.path)}
       </main>
@@ -75,7 +76,13 @@ function Home() {
                 <ul>
                   <li>{o.disk_mb} МБ на диске</li>
                   <li>до {o.max_sites} сайтов</li>
-                  <li>файловый менеджер и ZIP</li>
+                  {o.kind === 'virtual' ? (
+                    <>
+                      <li>серверный JavaScript, SQLite, key-value</li>
+                      <li>{o.rpm} запросов/мин, CPU {o.cpu_ms} мс</li>
+                      <li>cron, WebSocket ({o.ws_limit})</li>
+                    </>
+                  ) : <li>файловый менеджер и ZIP</li>}
                   <li>сервер {o.ip}</li>
                 </ul>
                 <a className="btn" href={`#/cabinet?plan=${o.id}`}>Заказать</a>
@@ -121,6 +128,61 @@ function Partners() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+const CODE = (t) => <pre className="mono small" style={{ whiteSpace: 'pre-wrap', background: 'var(--surface-2)', padding: 12, borderRadius: 8 }}>{t}</pre>;
+
+/** Справка по серверному коду виртуального тарифа. */
+function ServerDocs() {
+  return (
+    <div className="page narrow prose">
+      <h1>Серверный код на БалХосте</h1>
+      <p>На виртуальном тарифе в корне сайта может лежать <code>server.js</code> — JavaScript, который выполняется на сервере хостинга (движок QuickJS). Он отвечает на запросы, для которых нет файла, и на все POST, PUT, PATCH и DELETE. Статические файлы по-прежнему отдаются как есть.</p>
+      <h2>Запрос и ответ</h2>
+      {CODE(`export async function onRequest(req) {
+  // req.method, req.path, req.url, req.query.get('page'), req.headers.get('accept'),
+  // req.cookies.sid, req.ip (адрес посетителя в БалНете)
+  // await req.text(), await req.json(), (await req.form()).get('name')
+  if (req.path === '/api/hello') return Response.json({ hello: 'мир' });
+  if (req.method === 'POST') return Response.redirect('/');
+  return Response.html('<h1>Привет</h1>');
+  // или new Response('текст', { status: 404, headers: { 'x-my': '1' } })
+  //   .setCookie('sid', 'abc', { httpOnly: true, maxAge: 3600 })
+}`)}
+      <p>Модули: <code>import {'{'} x {'}'} from './lib.js'</code> — файлы своего сайта. npm нет.</p>
+      <h2>База данных SQLite</h2>
+      {CODE(`db.exec('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)');
+const { lastInsertRowid } = db.run('INSERT INTO users (name) VALUES (?)', ['Борис']);
+const rows = db.query('SELECT * FROM users WHERE id > ?', [0]);
+const one = db.get('SELECT COUNT(*) AS n FROM users');`)}
+      <p>База — настоящий SQLite в файле <code>.data/site.sqlite</code>, занимает место по тарифу. Посмотреть и изменить её можно в «Моём хостинге» → «База SQLite».</p>
+      <h2>Key-value</h2>
+      {CODE(`kv.set('counter', 5);                 // любое значение JSON
+kv.set('session:abc', { user: 1 }, { ttl: 86400 }); // живёт игровые сутки
+kv.get('counter'); kv.delete('counter'); kv.list('session:');`)}
+      <h2>Запросы к другим сайтам</h2>
+      {CODE(`const r = await fetch('https://shop.bln/api/items');
+const items = await r.json();`)}
+      <p>Запрос идёт по сети БалНета с адреса вашего сервера: DNS, проверка сертификата HTTPS. Госсайты запросов от серверов не принимают.</p>
+      <h2>Cron по игровому времени</h2>
+      <p>Файл <code>crontab</code> в корне сайта, синтаксис как у настоящего cron: минута, час, день (1–30), месяц (1–12), день недели (0–6) и имя задачи.</p>
+      {CODE(`# каждый игровой день в 9:00
+0 9 * * * утро
+# каждые 2 игровых часа
+0 */2 * * * обновить-курсы`)}
+      {CODE(`export function onCron(job) {
+  console.log('задача', job.name, 'время', job.time);
+}`)}
+      <p>Тариф задаёт минимальный шаг: задача, которая срабатывает чаще, не запускается (ошибка в журнале).</p>
+      <h2>Лимиты тарифа</h2>
+      <ul>
+        <li><b>CPU-мс на запрос</b> — время работы самого скрипта (ожидание fetch не считается). Превысили — ответ 508.</li>
+        <li><b>Запросов в минуту</b> — на сайт; сверх лимита — 429.</li>
+        <li><b>Память</b> — 32 МБ на запрос; <b>время</b> — не больше 15 секунд вместе с ожиданием.</li>
+      </ul>
+      <p>Всё, что пишет <code>console.log</code>, и все ошибки видны в «Моём хостинге» → «Журнал».</p>
     </div>
   );
 }

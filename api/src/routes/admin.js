@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { resetPkiCache } from '../lib/pki.js';
 import { resetSearch } from './search.js';
+import { closeAll } from '../lib/vhost/store.js';
 import { tx, q, one, pool, json } from '../db.js';
 import { bad, notFound, int, str, need } from '../lib/errors.js';
 import { needAdmin, actorOf, rolesOf } from '../lib/auth.js';
@@ -559,6 +560,7 @@ export async function adminRoutes(app) {
       flushResolverCache();
       resetPkiCache();
       resetSearch();
+      closeAll();
       await fs.rm(config.sitesDir, { recursive: true, force: true }).catch(() => {});
     } catch (err) {
       await conn.rollback().catch(() => {});

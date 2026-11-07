@@ -18,12 +18,15 @@
     "@fastify/cors": "^11.1.0",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/websocket": "^11.2.0",
+    "@jitl/quickjs-singlefile-mjs-release-sync": "^0.32.0",
     "bcryptjs": "^3.0.2",
     "dotenv": "^17.2.0",
     "fastify": "^5.6.0",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.15.0",
-    "nodemailer": "^7.0.6"
+    "nodemailer": "^7.0.6",
+    "quickjs-emscripten-core": "^0.32.0",
+    "sql.js": "^1.15.2"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

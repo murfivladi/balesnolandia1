@@ -115,7 +115,7 @@ export async function netRoutes(app) {
     if (p.scheme === 'https') r.tls = await tlsFor({ target: r.target, host: p.host });
     if (r.target?.startsWith('site:') && !(p.scheme === 'https' && !r.tls)) {
       const jar = cleanJar(b.jar);
-      r.ticket = createTicket({ clientId: b.client_id, resolver: c.resolverIp, target: r.target, host: p.host, scheme: p.scheme, origin: `${p.scheme}://${p.host}`, ...jar });
+      r.ticket = createTicket({ clientId: b.client_id, clientIp: c.ip, resolver: c.resolverIp, target: r.target, host: p.host, scheme: p.scheme, origin: `${p.scheme}://${p.host}`, ...jar });
     }
     return r;
   });

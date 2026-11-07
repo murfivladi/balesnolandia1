@@ -2,16 +2,10 @@
 // к серверу со своего адреса 50.1.0.20, TLS с проверкой цепочки, robots.txt и sitemap, редиректы, коды ответа.
 // Очередь по приоритету (переобход, PageRank, новые сайты) и адаптивный интервал: часто меняется — чаще заходим.
 import crypto from 'node:crypto';
-import fs from 'node:fs/promises';
 import { q, one } from '../../db.js';
-import { resolve } from '../dns.js';
-import { netSnapshot, connect } from '../net.js';
-import { tlsFor, trustStore } from '../pki.js';
-import { siteByTarget } from '../hosting.js';
-import { resolveFile, typeOf } from '../gateway.js';
+import { netRequest } from '../vhost/respond.js';
 import { gameSeconds, isPaused } from '../clock.js';
 import { getSettings } from '../settings.js';
-import { verifyTls } from '@bln/shared/balnet-pki.js';
 import { splitUrl, GOV_SITES } from '@bln/shared/balnet-url.js';
 import { parseHtml, parseRobots, robotsAllows, parseSitemap } from './text.js';
 import { GOV_PAGES } from './govpages.js';
@@ -22,7 +16,6 @@ const DAY = 86400;
 const MIN_INTERVAL = DAY / 4;
 const MAX_INTERVAL = 14 * DAY;
 const MAX_PAGES_PER_HOST = 500;
-const MAX_BODY = 2 * 1024 * 1024;
 
 export const urlHash = (url) => crypto.createHash('sha256').update(url).digest('hex');
 
@@ -31,44 +24,20 @@ const indexListeners = [];
 export function onIndexChange(fn) { indexListeners.push(fn); }
 function changed() { for (const fn of indexListeners) fn(); }
 
-function dnsCode(dns) {
-  if (dns.rcode === 'NXDOMAIN') return 'DNS_PROBE_FINISHED_NXDOMAIN';
-  if (dns.rcode === 'NOERROR') return 'ERR_NAME_NOT_RESOLVED';
-  if (dns.rcode === 'TIMEOUT') return 'DNS_PROBE_FINISHED_BAD_CONFIG';
-  return 'ERR_NAME_RESOLUTION_FAILED';
-}
-
 /**
  * Запрос робота: { status, type, body, location, error, gov, ip }.
- * status 0 — до HTTP не дошло (error — код как в Chrome).
+ * status 0 — до HTTP не дошло (error — код как в Chrome). Сайты на виртуальном тарифе отвечают своим server.js.
  */
 export async function botFetch(url, { fresh = false, binary = false } = {}) {
-  const p = splitUrl(url);
-  if (!p || (p.scheme !== 'http' && p.scheme !== 'https')) return { status: 0, error: 'ERR_INVALID_URL' };
-  const dns = await resolve({ resolverIp: BOT.resolverIp, clientIp: BOT.clientIp, clientProviderId: null, name: p.host, type: 'A', fresh });
-  const ip = [...dns.answer].reverse().find((r) => r.type === 'A')?.data;
-  if (!ip) return { status: 0, error: dnsCode(dns) };
-  const conn = connect(await netSnapshot(), BOT.clientIp, ip, p.host);
-  if (!conn.ok) return { status: conn.status || 0, error: conn.code, ip };
-  if (conn.target.startsWith('app:')) return { status: 200, gov: true, ip };
-  if (p.scheme === 'https') {
-    const tls = await tlsFor({ target: conn.target, host: p.host });
-    if (!tls) return { status: 0, error: 'ERR_CONNECTION_REFUSED', ip, note: 'на сервере нет сертификата (порт 443 закрыт)' };
-    const v = await verifyTls({ tls, host: p.host, now: tls.time, trust: await trustStore() });
-    if (!v.ok) return { status: 0, error: v.code, ip };
-  }
-  const site = await siteByTarget(conn.target);
-  if (!site || site.account_status === 'deleted' || site.account_status === 'reserved') return { status: 404, ip, type: 'text/html', body: '' };
-  if (site.account_status === 'suspended') return { status: 403, ip, type: 'text/html', body: '' };
-  const r = await resolveFile(site.dir, p.path.split('#')[0]);
-  if (r.status === 301) return { status: 301, ip, location: `${p.scheme}://${p.host}${r.location}${p.path.includes('?') ? p.path.slice(p.path.indexOf('?')) : ''}` };
-  if (!r.file) return { status: r.status, ip, type: 'text/html', body: '' };
-  const st = await fs.stat(r.file);
-  const type = typeOf(r.file);
-  if (st.size > MAX_BODY) return { status: r.status, ip, type, body: '', tooBig: true };
-  const text = type.startsWith('text/') || type.includes('xml') || type.includes('json');
-  if (binary) return { status: r.status, ip, type, buf: await fs.readFile(r.file), siteId: site.id };
-  return { status: r.status, ip, type, body: text ? await fs.readFile(r.file, 'utf8') : '', siteId: site.id };
+  const r = await netRequest({ fromIp: BOT.clientIp, url, method: 'GET', headers: { 'user-agent': BOT.agent }, follow: false, binary, fresh });
+  if (r.gov) return { status: 200, gov: true, ip: r.ip };
+  if (r.error) return { status: 0, error: r.error, note: r.note || null, ip: r.ip || null };
+  const type = r.headers['content-type'] || '';
+  const out = { status: r.notFound ? 404 : r.status, ip: r.ip, type, siteId: r.siteId };
+  if (r.headers.location) out.location = new URL(r.headers.location, url).href;
+  if (binary) out.buf = r.buf;
+  else out.body = type.startsWith('text/') || type.includes('xml') || type.includes('json') ? r.body : '';
+  return out;
 }
 
 // ——— Страницы и очередь ———
@@ -193,15 +162,15 @@ export async function crawlPage(page, now) {
     await setPage(page.id, { ...base, status: 'excluded', reason: 'Госсайт — индексируется по пререндеру', next_fetch: now + MAX_INTERVAL });
     return 'gov';
   }
-  if (r.error || r.status >= 500 || r.status === 403) {
+  if (r.error || r.status >= 500 || r.status === 403 || r.status === 429) {
     const fails = Number(page.fails) + 1;
-    const reason = r.error ? `${r.error}${r.note ? ` — ${r.note}` : ''}` : r.status === 403 ? '403 — сайт приостановлен' : `${r.status} — ошибка сервера`;
+    const reason = r.error ? `${r.error}${r.note ? ` — ${r.note}` : ''}` : r.status === 403 ? '403 — сайт приостановлен' : r.status === 429 ? '429 — сайт ограничил частоту запросов' : `${r.status} — ошибка сервера`;
     // Временная ошибка: проиндексированная страница остаётся в выдаче ещё два обхода.
     const keep = page.status === 'indexed' && fails < 3;
     await setPage(page.id, { ...base, fails, reason, status: keep ? 'indexed' : 'error', next_fetch: now + Math.min(MAX_INTERVAL, MIN_INTERVAL * 2 ** fails) });
     return 'error';
   }
-  if (r.status === 301 || r.status === 302) {
+  if ([301, 302, 303, 307, 308].includes(r.status) && r.location) {
     await setPage(page.id, { ...base, fails: 0, status: 'redirect', redirect_to: r.location, reason: `Переадресация на ${r.location}`, next_fetch: now + MAX_INTERVAL });
     await enqueue(r.location, { source: 'link', priority: Number(page.priority) || 1, now });
     await dropLinks(page.id);

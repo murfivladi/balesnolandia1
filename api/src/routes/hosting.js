@@ -4,13 +4,31 @@ import { bad, notFound, need, int, str, amount as amountArg } from '../lib/error
 import { needGov, needAdmin, actorOf } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { citizenOf, activePassport } from '../lib/gov.js';
-import { currentMonth } from '../lib/clock.js';
+import { currentMonth, gameSeconds } from '../lib/clock.js';
 import { getSettings } from '../lib/settings.js';
 import { memberOrg, hasLicense } from '../lib/orgs.js';
 import {
-  offers, buyHosting, ownAccount, renewHosting, addSite, removeSite, accountView, refreshUsage, rentServer, hostingMonth, deleteAccount, hosterName,
+  offers, buyHosting, ownAccount, renewHosting, addSite, removeSite, accountView, refreshUsage, rentServer, hostingMonth, deleteAccount, hosterName, siteByTarget,
 } from '../lib/hosting.js';
 import { accountDir, siteDir, listDir, readFile, writeFile, makeDir, removePath, renamePath, extractZip } from '../lib/sitefs.js';
+import fs from 'node:fs/promises';
+import { withSite, siteDb, flush, sqlExec, sqlQuery, closeDb } from '../lib/vhost/store.js';
+import { getLogs, clearLogs } from '../lib/vhost/logs.js';
+import { parseCrontab } from '../lib/vhost/cron.js';
+import { EXAMPLE } from '../lib/vhost/example.js';
+
+/** Вид тарифа и лимиты из формы хостера или админа. */
+function planKind(b) {
+  const kind = b.kind === 'virtual' ? 'virtual' : 'static';
+  const virt = kind === 'virtual';
+  return [
+    kind,
+    int(b.rpm ?? (virt ? 300 : 600), 'запросов в минуту', { min: 10, max: 100000 }),
+    virt ? int(b.cpu_ms ?? 100, 'CPU-мс на запрос', { min: 10, max: 2000 }) : 0,
+    virt ? int(b.ws_limit ?? 20, 'соединений WebSocket', { min: 0, max: 1000 }) : 0,
+    virt ? int(b.cron_min ?? 60, 'шаг cron, игр. мин', { min: 1, max: 43200 }) : 0,
+  ];
+}
 
 async function limits(a) {
   const s = await getSettings();
@@ -107,20 +125,78 @@ export async function hostingRoutes(app) {
   });
 
   app.delete('/hosting/:id/sites/:sid/file', auth, async (req) => {
-    const { a, dir } = await siteCtx(req);
+    const { a, s: site, dir } = await siteCtx(req);
     const r = await removePath(dir, req.query.path);
+    closeDb(site.id);
     await refreshUsage(a.id);
     return r;
   });
 
   app.post('/hosting/:id/sites/:sid/zip', auth, async (req) => {
-    const { a, dir, base } = await siteCtx(req, { write: true });
+    const { a, s: site, dir, base } = await siteCtx(req, { write: true });
     const data = String(req.body?.data || '');
     need(data.length > 0, 'Пустой архив');
     const files = await extractZip(dir, base, Buffer.from(data, 'base64'), { ...(await limits(a)), into: req.body?.path || '' });
+    closeDb(site.id);
     await refreshUsage(a.id);
     await audit(null, actor(req), 'hosting.zip', 'hosting_account', a.id, { files: files.length });
     return { files };
+  });
+
+  // ——— Серверный код (виртуальный тариф): журнал, SQL-консоль, key-value, примеры ———
+  async function vsite(req) {
+    const c = await siteCtx(req);
+    const site = await siteByTarget(`site:${c.s.id}`);
+    need(site.kind === 'virtual', 'Серверный код работает на виртуальном тарифе');
+    return { ...c, site };
+  }
+
+  app.get('/hosting/:id/sites/:sid/logs', auth, async (req) => {
+    const { s } = await siteCtx(req);
+    return { logs: getLogs(s.id) };
+  });
+  app.delete('/hosting/:id/sites/:sid/logs', auth, async (req) => {
+    const { s } = await siteCtx(req);
+    clearLogs(s.id);
+    return { ok: true };
+  });
+
+  /** SQL-консоль базы сайта (как phpMyAdmin у хостера). */
+  app.post('/hosting/:id/sites/:sid/sql', auth, async (req) => {
+    const { a, site } = await vsite(req);
+    const sql = str(req.body?.sql, 'SQL', { max: 20000 });
+    return withSite(site.id, async () => {
+      const e = await siteDb(site);
+      let result;
+      try { result = sqlExec(e, sql); } catch (err) { throw bad('sql', `SQLite: ${err.message}`); }
+      const quota = (await limits(a)).quotaBytes - (await refreshUsage(a.id));
+      await flush(site.id, { quotaLeft: quota });
+      const tables = sqlQuery(e, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").map((r) => r.name);
+      return { result: result.map((r) => ({ ...r, rows: r.rows.slice(0, 500) })), tables };
+    });
+  });
+
+  app.get('/hosting/:id/sites/:sid/kv', auth, async (req) => {
+    const { site } = await vsite(req);
+    return withSite(site.id, async () => {
+      const e = await siteDb(site);
+      const now = await gameSeconds();
+      const rows = sqlQuery(e, 'SELECT k, v, exp FROM _kv WHERE exp IS NULL OR exp > ? ORDER BY k LIMIT 500', [now]);
+      const tables = sqlQuery(e, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").map((r) => r.name);
+      return { now, keys: rows.map((r) => ({ key: r.k, value: r.v.slice(0, 500), exp: r.exp })), tables, crontab: await fs.readFile(`${site.dir}/crontab`, 'utf8').then((t) => parseCrontab(t), () => null) };
+    });
+  });
+
+  /** Готовый пример: гостевая книга на SQLite с cron. */
+  app.post('/hosting/:id/sites/:sid/example', auth, async (req) => {
+    const { a, dir, base } = await vsite(req);
+    const lim = await limits(a);
+    for (const [path, content] of Object.entries(EXAMPLE)) {
+      const exists = await fs.stat(`${dir}/${path}`).then(() => true, () => false);
+      if (!exists || req.body?.overwrite) await writeFile(dir, base, path, content, lim);
+    }
+    await refreshUsage(a.id);
+    return { files: Object.keys(EXAMPLE) };
   });
 
   // ——— Кабинет хостера ———
@@ -154,8 +230,8 @@ export async function hostingRoutes(app) {
       const server = await one("SELECT * FROM hosting_servers WHERE id = ? AND org_id = ? AND status <> 'closed'", [int(b.server_id, 'сервер'), org.id], conn);
       if (!server) throw notFound('Сервер не найден');
       const disk = int(b.disk_mb, 'место, МБ', { min: 1, max: server.disk_mb });
-      const r = await q('INSERT INTO hosting_plans (org_id, server_id, name, disk_mb, max_sites, price_month) VALUES (?, ?, ?, ?, ?, ?)', [
-        org.id, server.id, str(b.name, 'название', { max: 80 }), disk, int(b.max_sites ?? 5, 'сайтов', { min: 1, max: 100 }), amountArg(b.price_month, 'цена'),
+      const r = await q('INSERT INTO hosting_plans (org_id, server_id, name, disk_mb, max_sites, price_month, kind, rpm, cpu_ms, ws_limit, cron_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+        org.id, server.id, str(b.name, 'название', { max: 80 }), disk, int(b.max_sites ?? 5, 'сайтов', { min: 1, max: 100 }), amountArg(b.price_month, 'цена'), ...planKind(b),
       ], conn);
       await audit(conn, actor(req), 'hosting.plan_create', 'organization', org.id, { plan: r.insertId });
       return { id: r.insertId };
@@ -195,8 +271,8 @@ export async function adminHostingRoutes(app) {
     const b = req.body || {};
     const server = await one('SELECT * FROM hosting_servers WHERE id = ? AND org_id IS NULL', [int(b.server_id, 'сервер')]);
     if (!server) throw notFound('Сервер Госхостинга не найден');
-    const r = await q('INSERT INTO hosting_plans (org_id, server_id, name, disk_mb, max_sites, price_month) VALUES (NULL, ?, ?, ?, ?, ?)', [
-      server.id, str(b.name, 'название', { max: 80 }), int(b.disk_mb, 'место', { min: 1, max: server.disk_mb }), int(b.max_sites ?? 5, 'сайтов', { min: 1, max: 100 }), int(b.price_month, 'цена', { min: 0, max: 1e12 }),
+    const r = await q('INSERT INTO hosting_plans (org_id, server_id, name, disk_mb, max_sites, price_month, kind, rpm, cpu_ms, ws_limit, cron_min) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+      server.id, str(b.name, 'название', { max: 80 }), int(b.disk_mb, 'место', { min: 1, max: server.disk_mb }), int(b.max_sites ?? 5, 'сайтов', { min: 1, max: 100 }), int(b.price_month, 'цена', { min: 0, max: 1e12 }), ...planKind(b),
     ]);
     await audit(null, actor(req), 'hosting.gov_plan', 'hosting_plan', r.insertId);
     return { id: r.insertId };

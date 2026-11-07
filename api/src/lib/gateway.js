@@ -31,13 +31,46 @@ export function cleanJar(jar) {
   const add = (v) => { size += String(v).length; return size < 200_000; };
   for (const [k, v] of Object.entries(jar?.cookies || {}).slice(0, 100)) {
     if (typeof k !== 'string' || !v || typeof v.v !== 'string' || !add(k + v.v)) continue;
-    out.cookies[k.slice(0, 200)] = { v: v.v.slice(0, 4096), exp: Number.isFinite(v.exp) ? v.exp : null };
+    out.cookies[k.slice(0, 200)] = { v: v.v.slice(0, 4096), exp: Number.isFinite(v.exp) ? v.exp : null, ...(v.h ? { h: 1 } : {}) };
   }
   for (const [k, v] of Object.entries(jar?.local || {}).slice(0, 1000)) {
     if (typeof v !== 'string' || !add(k + v)) continue;
     out.local[String(k).slice(0, 500)] = v;
   }
   return out;
+}
+
+/** Заголовок Cookie для сервера сайта (все неистёкшие cookies, включая HttpOnly). */
+export function cookieHeader(jar) {
+  const t = Date.now();
+  return Object.entries(jar || {}).filter(([, c]) => !c.exp || c.exp > t).map(([k, c]) => `${k}=${c.v}`).join('; ');
+}
+
+/** Set-Cookie от сервера сайта → банка билета. true — банка изменилась. */
+export function applySetCookies(ticket, list) {
+  let changed = false;
+  for (const raw of list || []) {
+    const parts = String(raw).split(';');
+    const kv = parts.shift();
+    const i = kv.indexOf('=');
+    if (i <= 0) continue;
+    const name = kv.slice(0, i).trim().slice(0, 200);
+    const value = kv.slice(i + 1).trim().slice(0, 4096);
+    let exp = null;
+    let http = false;
+    for (const p of parts) {
+      const j = p.indexOf('=');
+      const k = (j < 0 ? p : p.slice(0, j)).trim().toLowerCase();
+      const v = j < 0 ? '' : p.slice(j + 1).trim();
+      if (k === 'max-age') exp = Date.now() + Number(v) * 1000;
+      else if (k === 'expires' && exp === null) { const d = Date.parse(v); if (!Number.isNaN(d)) exp = d; }
+      else if (k === 'httponly') http = true;
+    }
+    if (exp !== null && exp <= Date.now()) delete ticket.cookies[name];
+    else ticket.cookies[name] = { v: value, exp, ...(http ? { h: 1 } : {}) };
+    changed = true;
+  }
+  return changed;
 }
 
 export const SANDBOX_CSP = 'sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads';
@@ -48,6 +81,7 @@ export function securityHeaders(reply) {
   reply.header('Referrer-Policy', 'no-referrer');
   reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
   reply.header('Access-Control-Allow-Origin', '*');
+  reply.header('Access-Control-Expose-Headers', 'X-Balnet-Jar');
   reply.header('Cache-Control', 'no-store');
 }
 

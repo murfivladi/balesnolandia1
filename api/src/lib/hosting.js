@@ -13,6 +13,7 @@ import { orgRole, hasLicense } from './orgs.js';
 import { invalidateNet } from './net.js';
 import { setPtr } from './zones.js';
 import { accountDir, siteDir, dirSize } from './sitefs.js';
+import { closeDb } from './vhost/store.js';
 import { fqdn } from '@bln/shared/balnet-dns.js';
 import { nthIp } from '@bln/shared/balnet-ip.js';
 import { vatIncluded, formatMoney } from '@bln/shared/money.js';
@@ -38,7 +39,7 @@ export async function offers(conn, month) {
   const out = [];
   for (const p of rows) {
     if (p.org_id && !(await hasLicense(conn, p.org_id, 'hosting', month))) continue;
-    out.push({ id: p.id, org_id: p.org_id, hoster: await hosterName(conn, p.org_id), name: p.name, disk_mb: p.disk_mb, max_sites: p.max_sites, price_month: Number(p.price_month), server: disp(p.server_name), ip: p.ip });
+    out.push({ id: p.id, org_id: p.org_id, hoster: await hosterName(conn, p.org_id), name: p.name, kind: p.kind, disk_mb: p.disk_mb, max_sites: p.max_sites, price_month: Number(p.price_month), rpm: p.rpm, cpu_ms: p.cpu_ms, ws_limit: p.ws_limit, cron_min: p.cron_min, server: disp(p.server_name), ip: p.ip });
   }
   return out;
 }
@@ -162,13 +163,14 @@ export async function removeSite(conn, { account, siteId }) {
   await q('DELETE FROM net_vhosts WHERE target = ?', [`site:${s.id}`], conn);
   await q('DELETE FROM hosting_sites WHERE id = ?', [s.id], conn);
   await fs.rm(siteDir(account.id, s.host), { recursive: true, force: true });
+  closeDb(s.id);
   invalidateNet();
 }
 
 /** Сайт по цели vhost «site:<id>»: аккаунт, каталог, статус. */
 export async function siteByTarget(target) {
   const id = Number(String(target).slice(5));
-  const s = await one('SELECT s.*, a.status AS account_status, a.plan_id FROM hosting_sites s JOIN hosting_accounts a ON a.id = s.account_id WHERE s.id = ?', [id]);
+  const s = await one('SELECT s.*, a.status AS account_status, a.plan_id, a.server_id, p.kind, p.rpm, p.cpu_ms, p.ws_limit, p.cron_min, p.disk_mb, h.ip AS server_ip FROM hosting_sites s JOIN hosting_accounts a ON a.id = s.account_id JOIN hosting_plans p ON p.id = a.plan_id JOIN hosting_servers h ON h.id = a.server_id WHERE s.id = ?', [id]);
   if (!s) return null;
   return { ...s, dir: siteDir(s.account_id, s.host) };
 }
@@ -265,7 +267,7 @@ export async function accountView(conn, a) {
   }));
   const pending = await one("SELECT o.amount, i.number FROM hosting_orders o LEFT JOIN invoices i ON i.id = o.invoice_id WHERE o.account_id = ? AND o.status = 'pending' ORDER BY o.id DESC LIMIT 1", [a.id], conn);
   return {
-    id: a.id, status: a.status, status_title: ACCOUNT_STATUS[a.status], hoster: await hosterName(conn, a.org_id), plan: plan?.name, disk_mb: plan?.disk_mb, max_sites: plan?.max_sites, price_month: Number(plan?.price_month || 0),
+    id: a.id, status: a.status, status_title: ACCOUNT_STATUS[a.status], hoster: await hosterName(conn, a.org_id), plan: plan?.name, kind: plan?.kind || 'static', limits: plan ? { rpm: plan.rpm, cpu_ms: plan.cpu_ms, ws_limit: plan.ws_limit, cron_min: plan.cron_min } : null, disk_mb: plan?.disk_mb, max_sites: plan?.max_sites, price_month: Number(plan?.price_month || 0),
     server_ip: server?.ip, server: disp(server?.name || ''), paid_until_month: a.paid_until_month, used_bytes: Number(a.used_bytes), owner_org_id: a.owner_org_id,
     sites, pending_order: pending ? { amount: Number(pending.amount), invoice: pending.number } : null,
   };
