@@ -33,6 +33,7 @@ export const GOV_SITES = {
   'mail.bln': { app: 'mail', title: 'ВлодПочта', owner: 'Координационный центр БалНета' },
   'pay.bank.bln': { app: 'pay', title: 'ВлодБанк Оплата', owner: 'ВлодБанк (госбанк БФ)' },
   'push.bln': { app: 'push', title: 'БалПуш', owner: 'Координационный центр БалНета' },
+  'novosti.bln': { app: 'news', title: 'БалНовости', owner: 'Правительство БФ' },
 };
 
 const SCHEME_RE = /^([a-z][a-z0-9+.-]*):\/\//i;

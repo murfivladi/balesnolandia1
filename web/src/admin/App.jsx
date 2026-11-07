@@ -109,9 +109,14 @@ function ClockCard({ clock, onChange }) {
       <div style={{ fontSize: '1.3rem', fontWeight: 700 }}>{gameDateLabel(clock.month, lang)}</div>
       <div className="small muted">{t('Месяц №{n}', { n: clock.month })}{clock.next_tick_at ? ` · ${t('следующий')}: ${fmtDate(clock.next_tick_at)}` : ''}</div>
       <div className="row">
-        <input className="input" style={{ width: 90 }} type="number" min={1} max={1440} value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+        <input className="input" style={{ width: 100 }} type="number" min={1} max={44640} value={minutes} onChange={(e) => setMinutes(e.target.value)} />
         <span className="small muted">{t('минут = 1 игровой месяц')}</span>
         <ActionButton size="sm" kind="secondary" action={async () => { await post('/admin/clock', { minutes: Number(minutes) }); onChange(); }}>{t('Сохранить')}</ActionButton>
+      </div>
+      <div className="row small">
+        {[[60, t('час')], [1440, t('сутки')], [10080, t('неделя')], [43200, t('30 суток')]].map(([m, label]) => (
+          <button key={m} type="button" className="chip" onClick={() => setMinutes(m)}>{label}</button>
+        ))}
       </div>
       <div className="row">
         <ActionButton kind="secondary" action={async () => { await post('/admin/clock', { paused: !clock.paused }); onChange(); }}>{clock.paused ? t('Продолжить') : t('Пауза')}</ActionButton>
@@ -390,7 +395,7 @@ const SETTING_LABELS = {
   passport_approval: ['Выдача паспорта только после одобрения', 'bool'],
   start_balance: ['Стартовый баланс нового клиента', 'money'],
   idle_minutes: ['Автовыход после бездействия, минут', 'int'],
-  game_month_minutes: ['Длина игрового месяца, минут', 'int'],
+  game_month_minutes: ['Длина игрового месяца, минут (до 44640 — реальный месяц; 1440 = сутки)', 'int'],
   vat_bp: ['НДС, %', 'pct'],
   transfer_fee_bp: ['Комиссия за перевод, %', 'pct'],
   transfer_fee_min: ['Минимальная комиссия за перевод', 'money'],

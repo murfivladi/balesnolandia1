@@ -58,7 +58,7 @@ function cleanSettings(body) {
   if (out.public_web_url) need(/^https?:\/\/[^\s]+$/.test(out.public_web_url), 'Адрес сайта: https://…');
   if (out.smtp_port !== undefined) need(out.smtp_port >= 1 && out.smtp_port <= 65535, 'Порт SMTP: от 1 до 65535');
   if ('idle_minutes' in out) need(out.idle_minutes >= 1 && out.idle_minutes <= 240, 'Автовыход: от 1 до 240 минут');
-  if ('game_month_minutes' in out) need(out.game_month_minutes >= 1 && out.game_month_minutes <= 1440, 'Игровой месяц: от 1 до 1440 минут');
+  if ('game_month_minutes' in out) need(out.game_month_minutes >= 1 && out.game_month_minutes <= 44640, 'Игровой месяц: от 1 минуты до 31 реальных суток (44640 минут)');
   return out;
 }
 

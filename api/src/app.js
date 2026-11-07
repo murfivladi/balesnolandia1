@@ -33,6 +33,7 @@ import { hubRoutes } from './routes/hub.js';
 import { mailRoutes, adminMailRoutes } from './routes/mail.js';
 import { payRoutes, posOnlineRoutes, oauthRoutes, adminPayRoutes } from './routes/pay.js';
 import { pushRoutes, netPushRoutes } from './routes/push.js';
+import { newsRoutes, adminNewsRoutes } from './routes/news.js';
 
 export async function buildApp({ logger = config.env !== 'test' } = {}) {
   const app = Fastify({
@@ -114,6 +115,8 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
   await app.register(adminMailRoutes, { prefix: '/api/admin/mail' });
   await app.register(pushRoutes, { prefix: '/api/push' });
   await app.register(netPushRoutes, { prefix: '/api/net/push' });
+  await app.register(newsRoutes, { prefix: '/api/news' });
+  await app.register(adminNewsRoutes, { prefix: '/api/admin/news' });
   await app.register(adminSearchRoutes, { prefix: '/api/admin/search' });
   await app.register(payRoutes, { prefix: '/api/pay' });
   await app.register(posOnlineRoutes, { prefix: '/api/pos' });

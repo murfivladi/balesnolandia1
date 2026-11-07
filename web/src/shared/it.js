@@ -913,7 +913,7 @@ export const IT = {
   "Импорт не удался: {x}": "Importazione non riuscita: {x}",
   "Для сброса введите слово СБРОС": "Per azzerare scrivi la parola СБРОС",
   "Автовыход: от 1 до 240 минут": "Disconnessione: da 1 a 240 minuti",
-  "Игровой месяц: от 1 до 1440 минут": "Mese di gioco: da 1 a 1440 minuti",
+  "Игровой месяц: от 1 минуты до 31 реальных суток (44640 минут)": "Mese di gioco: da 1 minuto a 31 giorni reali (44640 minuti)",
   "Изображение до 350 КБ: {x}": "Immagine fino a 350 KB: {x}",
   "Неизвестный сервис": "Servizio sconosciuto",
   "Нужна роль: {x}": "Ruolo necessario: {x}",
