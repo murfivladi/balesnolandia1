@@ -1,5 +1,5 @@
 // Внутренние страницы ВлодБраузера: новая вкладка, история, закладки, настройки, о браузере,
-// временный ВлодПоиск, страницы ошибок и «БалНет на обслуживании».
+// страницы ошибок и «БалНет на обслуживании».
 import { useEffect, useMemo, useState } from 'react';
 import { CoatOfArms } from '../shared/brand.jsx';
 import { DISCLAIMER } from '../shared/ui.jsx';
@@ -7,6 +7,7 @@ import { GOV_SITES, NET_ERRORS, displayUrl, searchUrl, parseInput } from '@bln/s
 import { CourierGame } from './game.jsx';
 import { providers, lease, PUBLIC_DNS } from './net.js';
 import { isIP } from '@bln/shared/balnet-ip.js';
+import { get, post } from '../shared/api.js';
 
 export function Disclaimer() {
   return <p className="bp-disclaimer">{DISCLAIMER}</p>;
@@ -60,7 +61,7 @@ export function NewTabPage({ ctx }) {
       c.n += 1;
       counts.set(key, c);
     }
-    const top = [...counts.values()].sort((a, b) => b.n - a.n).slice(0, 8 - gov.length);
+    const top = [...counts.values()].sort((a, b) => b.n - a.n).slice(0, Math.max(2, 10 - gov.length));
     return [...gov, ...top];
   }, [ctx.history]);
   const clock = ctx.clock;
@@ -86,6 +87,7 @@ export function NewTabPage({ ctx }) {
           </button>
         ))}
       </div>
+      {!ctx.incognito && <SponsoredTile ctx={ctx} />}
       {clock && (
         <div className="bp-widget">
           <b>Игровое время БФ:</b>{' '}
@@ -94,6 +96,25 @@ export function NewTabPage({ ctx }) {
       )}
       <Disclaimer />
     </div>
+  );
+}
+
+/** Рекламная плитка рекламной сети ВлодПоиска (помечена «Реклама»). */
+function SponsoredTile({ ctx }) {
+  const [ad, setAd] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    get('/search/ads/newtab').then((r) => { if (alive) setAd(r.ad); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  if (!ad) return null;
+  const open = () => post('/search/ads/click', { token: ad.token }).then((r) => ctx.navigate(r.url), () => ctx.navigate(ad.url));
+  return (
+    <button className="bp-ad" onClick={open}>
+      <span className="bp-muted"><b>Реклама</b> · {ad.display}</span>
+      <b className="bp-ad-title">{ad.title}</b>
+      <span>{ad.text}</span>
+    </button>
   );
 }
 
@@ -242,51 +263,6 @@ export function AboutPage() {
         <p>Значок «Госсайт БФ» в адресной строке рисует сам браузер. Сайт не может его подделать: если значка нет — это не госсайт, даже если страница выглядит так же.</p>
         <p>Горячие клавиши: Ctrl+L — адресная строка, Ctrl+D — закладка, Ctrl+H — история, Alt+← и Alt+→ — назад и вперёд, Alt+T — новая вкладка, Ctrl+R — перезагрузить, Alt+W — закрыть вкладку.</p>
       </section>
-      <Disclaimer />
-    </div>
-  );
-}
-
-/** Временный ВлодПоиск (до этапа Н6): ищет по госсайтам, закладкам и истории. */
-export function SearchPage({ ctx, query }) {
-  const results = useMemo(() => {
-    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-    const pool = new Map();
-    const add = (url, title, text, w) => {
-      const prev = pool.get(url);
-      if (!prev || prev.w < w) pool.set(url, { url, title, text, w });
-    };
-    for (const [host, s] of Object.entries(GOV_SITES)) add(`https://${host}/`, s.title, `${s.owner}. Официальный сайт.`, 3);
-    for (const b of ctx.bookmarks) add(b.url, b.title, 'Из ваших закладок', 2);
-    for (const h of ctx.history) if (!h.url.startsWith('balnet://') && !h.url.includes('poisk.bln')) add(h.url, h.title, 'Вы посещали эту страницу', 1);
-    const scored = [...pool.values()].map((r) => {
-      const hay = `${r.title} ${r.url} ${r.text}`.toLowerCase();
-      const hits = words.filter((w) => hay.includes(w)).length;
-      return { ...r, score: hits * 10 + r.w };
-    }).filter((r) => r.score >= 10);
-    return scored.sort((a, b) => b.score - a.score).slice(0, 20);
-  }, [query, ctx.bookmarks, ctx.history]);
-  return (
-    <div className="bp-page bp-serp">
-      <header className="bp-serp-head">
-        <button className="bp-plain" onClick={() => ctx.navigate('https://poisk.bln/')} aria-label="ВлодПоиск"><VlodPoiskLogo size={24} /></button>
-        <SearchBox key={query} initial={query} onSearch={(q) => ctx.navigate(searchUrl(q))} />
-      </header>
-      {!query && <div className="bp-serp-empty"><VlodPoiskLogo size={48} /><p className="bp-muted">Введите запрос.</p></div>}
-      {!!query && (
-        <main>
-          <p className="bp-muted">Найдено: {results.length}</p>
-          {results.map((r) => (
-            <article key={r.url} className="bp-result">
-              <div className="bp-result-url"><Favicon url={r.url} /> {displayUrl(r.url)}</div>
-              <button className="bp-result-title" onClick={() => ctx.navigate(r.url)}>{r.title || displayUrl(r.url)}</button>
-              <p>{r.text}</p>
-            </article>
-          ))}
-          {!results.length && <p>По запросу «{query}» ничего не найдено. Проверьте написание или поищите по-другому.</p>}
-          <p className="bp-muted bp-serp-note">Пока ВлодПоиск знает госсайты, ваши закладки и историю. Полный индекс БалНета с краулером появится на этапе Н6.</p>
-        </main>
-      )}
       <Disclaimer />
     </div>
   );

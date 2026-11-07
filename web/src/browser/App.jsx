@@ -12,6 +12,7 @@ import { apiBase, post as apiPost } from '../shared/api.js';
 import { splitUrl } from '@bln/shared/balnet-url.js';
 import { DevTools } from './devtools.jsx';
 import { checkTls, isBypassed, addBypass, CertErrorPage, CertViewer } from './certs.jsx';
+import { checkSafe, isSafeBypassed, addSafeBypass, SafeBrowsingPage, reportPhishing } from './safe.jsx';
 import { HSTS_PRELOAD } from '@bln/shared/balnet-url.js';
 import { CERT_ERRORS } from '@bln/shared/balnet-pki.js';
 import { TerminalPage } from './terminal.jsx';
@@ -19,7 +20,7 @@ import {
   profileStore, loadProfiles, saveProfiles, loadActiveProfile, saveActiveProfile, removeItem, PROFILE_COLORS, HISTORY_LIMIT,
 } from './store.js';
 import {
-  NewTabPage, HistoryPage, BookmarksPage, SettingsPage, AboutPage, GamePage, SearchPage, ErrorPage, MaintenancePage, Favicon,
+  NewTabPage, HistoryPage, BookmarksPage, SettingsPage, AboutPage, GamePage, ErrorPage, MaintenancePage, Favicon,
 } from './pages.jsx';
 
 const BASE = import.meta.env.BASE_URL;
@@ -61,6 +62,7 @@ function securityOf(tab) {
   const c = tab.conn;
   const mine = t.kind === 'web' && c?.host === t.host;
   // https: решает проверка сертификата браузером. Ошибка (пропущенная вручную) — красное «Не защищено».
+  if (mine && c.unsafe) return { kind: 'danger', label: 'Опасный сайт', host: t.host, ip: c.ip, cert: c.cert, tls: c.tls, unsafe: c.unsafe };
   if (mine && t.scheme === 'https' && c.cert && !c.cert.ok) return { kind: 'danger', label: 'Не защищено', host: t.host, ip: c.ip, cert: c.cert, tls: c.tls };
   if (mine && c.gov && c.cert?.ok) {
     return { kind: 'gov', label: 'Госсайт БФ', owner: GOV_SITES[t.host]?.owner || 'Правительство БФ', host: t.host, ip: c.ip, cert: c.cert, tls: c.tls };
@@ -84,10 +86,10 @@ function frameUrl(loc, app, host) {
 
 // ——— Госсайт во фрейме ———
 
-function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle }) {
+function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle, onOpen }) {
   const ref = useRef(null);
-  const cb = useRef({ onFrameNav, onTitle, app, host });
-  useEffect(() => { cb.current = { onFrameNav, onTitle, app, host }; });
+  const cb = useRef({ onFrameNav, onTitle, onOpen, app, host });
+  useEffect(() => { cb.current = { onFrameNav, onTitle, onOpen, app, host }; });
   const src = BASE + appPath(app, path);
 
   useEffect(() => {
@@ -108,6 +110,11 @@ function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle }) {
     try {
       const w = ref.current.contentWindow;
       w.document.documentElement.dataset.theme = theme;
+      // Госсайт (ВлодПоиск и др.) открывает адреса БалНета во вкладке браузера.
+      w.__balnetOpen = (url, newTab) => {
+        const u = parseInput(String(url || ''));
+        if (u && !u.startsWith('balnet://')) cb.current.onOpen(u, !!newTab);
+      };
       // Приложение и хост берём текущие, а не из момента загрузки фрейма: вкладка могла уйти на другой сайт.
       const sync = () => {
         const url = frameUrl(w.location, cb.current.app, cb.current.host);
@@ -217,9 +224,16 @@ function WebTab({ tab, target, ctx }) {
         try { cert = await checkTls(d.tls, target.host); } catch (e) { cert = { ok: false, code: 'ERR_CERT_INVALID', message: e.message }; }
         if (!alive) return;
       }
-      const conn = { ok: d.ok, gov: !!d.gov, ip: d.ip, host: target.host, cert, tls: d.tls || null };
+      // Безопасный просмотр: префиксы хешей адреса против списка ВлодПоиска (госсайты не проверяются).
+      const sb = d.ok && !d.gov ? await checkSafe(tb.url) : null;
+      if (!alive) return;
+      const conn = { ok: d.ok, gov: !!d.gov, ip: d.ip, host: target.host, cert, tls: d.tls || null, unsafe: sb };
       c.setConn(tb.id, conn);
-      c.logNet(tb.id, { ...d, lease: r.lease, total, cert });
+      c.logNet(tb.id, { ...d, lease: r.lease, total, cert, safe: sb });
+      if (sb && !isSafeBypassed(target.host)) {
+        setSt({ phase: 'unsafe', d, sb, key });
+        return;
+      }
       if (cert && !cert.ok && !isBypassed(target.host, cert.hash)) {
         setSt({ phase: 'certerror', d, cert, key });
         return;
@@ -239,6 +253,17 @@ function WebTab({ tab, target, ctx }) {
     if (st.code === 'maintenance') return <MaintenancePage onReload={() => { ctx.refreshClock(); reload(); }} />;
     return <ErrorPage code={st.code} host={target.host} onReload={reload} ctx={ctx} />;
   }
+  if (st.phase === 'unsafe') {
+    return (
+      <SafeBrowsingPage
+        host={target.host}
+        url={tab.url}
+        verdict={st.sb}
+        onBack={() => ctx.navigate(NEW_TAB, { tabId: tab.id })}
+        onProceed={() => { addSafeBypass(target.host); ctx.reload(tab.id); }}
+      />
+    );
+  }
   if (st.phase === 'certerror') {
     return (
       <>
@@ -255,7 +280,6 @@ function WebTab({ tab, target, ctx }) {
   }
   const d = st.d;
   if (!d.ok) return <ErrorPage code={d.code} host={target.host} onReload={reload} ctx={ctx} ip={d.ip} />;
-  if (d.target === 'poisk') return <SearchPage ctx={ctx} query={searchQuery(target.path)} />;
   if (d.target?.startsWith('site:') && d.ticket) {
     return <SiteFrame tab={tab} ticket={d.ticket} origin={`${target.scheme}://${target.host}`} path={target.path} ctx={ctx} />;
   }
@@ -269,6 +293,7 @@ function WebTab({ tab, target, ctx }) {
         theme={ctx.theme}
         onFrameNav={(url) => ctx.navigate(url, { tabId: tab.id })}
         onTitle={(title) => ctx.setTitle(tab.id, title)}
+        onOpen={(url, newTab) => ctx.navigate(url, newTab ? { newTab: true } : { tabId: tab.id })}
       />
     );
   }
@@ -375,7 +400,13 @@ function AddressBar({ tab, inputRef, ctx }) {
                 <p>Сертификат действителен. Выдан: {sec.cert.issuer}.{sec.cert.org ? ` Владелец: ${sec.cert.org}${sec.cert.ev ? ' (EV)' : ''}.` : ' Проверен только домен (DV) — кто владелец, неизвестно.'}</p>
               </>
             )}
-            {sec.kind === 'danger' && (
+            {sec.kind === 'danger' && sec.unsafe && (
+              <>
+                <b className="bb-bad">⛔ Опасный сайт</b>
+                <p>Сайт в списке Безопасного просмотра ВлодПоиска ({sec.unsafe.threat === 'phishing' ? 'фишинг' : 'вредоносное ПО'}). Вы перешли на него, несмотря на предупреждение. Не вводите здесь пароли и данные карт.</p>
+              </>
+            )}
+            {sec.kind === 'danger' && !sec.unsafe && (
               <>
                 <b className="bb-bad">⚠ Подключение не защищено</b>
                 <p>{CERT_ERRORS[sec.cert.code] || 'Сертификат недействителен'} ({sec.cert.code}). Вы перешли на сайт, несмотря на предупреждение. Не вводите здесь пароли и данные карт.</p>
@@ -715,6 +746,14 @@ export default function App() {
     [devtools ? 'Закрыть инструменты разработчика' : 'Инструменты разработчика', 'F12', () => { setDevtools((v) => !v); setMenu(null); }],
     ['Курьер БалНета', '', () => navigate('balnet://game/', { newTab: true })],
     null,
+    ['Сообщить об обманном сайте', '', () => {
+      setMenu(null);
+      const t = resolveTarget(active?.url || '');
+      if (t.kind !== 'web') { window.alert('Откройте сайт, о котором хотите сообщить.'); return; }
+      const comment = window.prompt(`Сообщить ВлодПоиску, что ${t.host} — обманный сайт (фишинг)? Можно добавить комментарий:`, '');
+      if (comment === null) return;
+      reportPhishing(active.url, comment).then(() => window.alert('Спасибо! Сайт проверит администрация БалНета.'), (e) => window.alert(e.message));
+    }],
     [theme === 'dark' ? 'Светлая тема' : 'Тёмная тема', '', () => { toggleTheme(); setMenu(null); }],
     ['Настройки', '', () => navigate('balnet://settings/', { newTab: true })],
     ['Все приложения (без браузера)', '', () => { location.href = `${BASE}apps/`; }],

@@ -60,7 +60,7 @@ export async function verifySite(s, method) {
     await q('UPDATE search_sites SET verified_at = ?, method = ? WHERE id = ?', [await gameSeconds(), method, s.id]);
     await requestRecrawl(`http://${s.host}/`).catch(() => null);
   }
-  return { ok, error };
+  return { ok, error: ok ? null : error };
 }
 
 /** Права проверяются заново: TXT убрали или файл удалили — права пропадают (как у Search Console). */

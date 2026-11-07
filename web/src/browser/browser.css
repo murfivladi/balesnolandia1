@@ -282,3 +282,13 @@ body[data-app='browser'] #root { height: 100vh; height: 100dvh; min-height: 0; }
 .bb-cert-dl { grid-template-columns: minmax(110px, auto) minmax(0, 1fr); font-size: 13px; }
 .bb-break { word-break: break-all; }
 .bp-certerr .bp-link { white-space: normal; overflow: visible; text-overflow: clip; text-align: left; max-width: none; }
+
+/* Реклама на новой вкладке и страница «Опасный сайт» (Н6) */
+.bp-ad { display: flex; flex-direction: column; gap: 2px; text-align: left; max-width: 520px; width: 100%; margin: 12px auto 0; padding: 10px 14px; border: 1px solid var(--bb-line, #d6dbe4); border-radius: 12px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.bp-ad-title { color: #1f4fbf; font-size: 1.05rem; }
+.bp-unsafe { background: #a52714; color: #fff; min-height: 100%; max-width: none; }
+.bp-unsafe h1, .bp-unsafe p, .bp-unsafe b { color: #fff; }
+.bp-unsafe .bp-muted { color: #f3d3cd; }
+.bp-page.bp-unsafe .bp-error-actions .bp-btn { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.5); }
+.bp-page.bp-unsafe .bp-error-actions .bp-btn-primary { background: #fff; color: #a52714; }
+.bp-unsafe .bp-link.bp-danger { color: #fff; text-decoration: underline; }

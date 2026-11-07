@@ -671,3 +671,46 @@ ul.plain { list-style: none; padding: 0; margin: 0; }
 .prose { line-height: 1.6; }
 .prose h2 { margin-top: 1.4em; }
 .steps li.done b::after { content: ' ✔'; color: var(--ok); }
+
+/* ВлодПоиск (poisk.bln) */
+body[data-app='poisk'] { --brand: #1f4fbf; --accent: #1f4fbf; --brand-2: #e6edfb; --hero-2: #2f6fe0; --brand-ink: #fff; }
+:root[data-theme='dark'] body[data-app='poisk'] { --brand: #6b9bff; --accent: #8ab0ff; --brand-2: #172440; --hero-2: #1f4fbf; }
+.vp-word { font-weight: 800; letter-spacing: -0.02em; }
+.vp-word .a { color: #1f4fbf; } .vp-word .b { color: #c99a1d; }
+:root[data-theme='dark'] .vp-word .a { color: #8ab0ff; }
+.vp-home { min-height: 62vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 32px 16px; text-align: center; }
+.vp-home .vp-word { font-size: clamp(2.4rem, 9vw, 4rem); }
+.vp-box { position: relative; width: 100%; max-width: 640px; }
+.vp-box form { display: flex; gap: 8px; }
+.vp-box input { flex: 1; min-width: 0; font-size: 1.05rem; padding: 12px 18px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); box-shadow: 0 1px 6px rgba(32, 33, 36, .12); }
+.vp-box input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.vp-box button[type='submit'] { border-radius: 999px; }
+.vp-sugg { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px rgba(0,0,0,.14); list-style: none; margin: 0; padding: 6px 0; text-align: left; }
+.vp-sugg li button { width: 100%; text-align: left; background: none; border: 0; padding: 8px 18px; color: var(--text); font: inherit; cursor: pointer; }
+.vp-sugg li button:hover, .vp-sugg li.is-sel button { background: var(--brand-2); }
+.vp-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 640px; }
+.vp-chip { border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; background: var(--surface); color: var(--text); font: inherit; font-size: .9rem; cursor: pointer; }
+.vp-serp-head { display: flex; align-items: center; gap: 16px; padding: 14px 16px 0; flex-wrap: wrap; }
+.vp-serp-head .vp-box { max-width: 680px; flex: 1; min-width: 240px; }
+.vp-tabs { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.vp-tabs a { padding: 8px 12px; color: var(--muted); text-decoration: none; border-bottom: 3px solid transparent; white-space: nowrap; }
+.vp-tabs a.is-on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.vp-serp { max-width: 720px; padding: 12px 16px 32px; }
+.vp-meta { color: var(--muted); font-size: .85rem; margin: 4px 0 14px; }
+.vp-res { margin: 0 0 24px; }
+.vp-res .vp-url { font-size: .85rem; color: var(--muted); display: flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
+.vp-res .vp-title { display: block; font-size: 1.2rem; color: var(--accent); background: none; border: 0; padding: 2px 0; text-align: left; cursor: pointer; font-family: inherit; }
+.vp-res .vp-title:hover { text-decoration: underline; }
+.vp-res p { margin: 2px 0 0; color: var(--text); line-height: 1.5; overflow-wrap: anywhere; }
+.vp-res mark, .vp-res b.hl { background: none; color: inherit; font-weight: 700; }
+.vp-ad-label { font-weight: 700; font-size: .8rem; color: var(--text); margin-right: 4px; }
+.vp-ads { border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+.vp-fav { width: 18px; height: 18px; border-radius: 50%; display: inline-grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; flex: none; }
+.vp-pager { display: flex; gap: 6px; flex-wrap: wrap; }
+.vp-imgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; padding: 12px 16px; }
+.vp-imgs figure { margin: 0; cursor: pointer; }
+.vp-imgs img { width: 100%; height: 130px; object-fit: cover; border-radius: 8px; background: var(--brand-2); display: block; }
+.vp-imgs figcaption { font-size: .8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vp-products { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; padding: 12px 16px; }
+.vp-products .card img { width: 100%; height: 120px; object-fit: cover; border-radius: 8px; }
+.vp-bar { height: 8px; background: var(--accent); border-radius: 4px; min-width: 2px; }

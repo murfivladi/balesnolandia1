@@ -140,3 +140,14 @@ export function CaLogo({ size = 34 }) {
     </svg>
   );
 }
+
+/** ВлодПоиск (poisk.bln): лупа. */
+export function PoiskLogo({ size = 34 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
+      <rect width="40" height="40" rx="10" fill="#1f4fbf" />
+      <circle cx="17.5" cy="17.5" r="7.5" fill="none" stroke="#fff" strokeWidth="3" />
+      <path d="M23 23l7 7" stroke="#e8c15a" strokeWidth="3.6" strokeLinecap="round" />
+    </svg>
+  );
+}

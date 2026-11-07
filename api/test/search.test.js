@@ -204,7 +204,7 @@ test('реклама: пополнение, аукцион второй цены
   assert.equal((await boris.gov.get('/api/search/ads/account')).account.balance, 5000);
   await assert.rejects(boris.gov.post('/api/search/ads/campaigns', { name: 'x', title: 'x', text: 'x', url: 'http://boris.bln/', keywords: ['хлеб'], bid: 10, daily_budget: 1000 }), /Ставка/);
   borisCamp = (await boris.gov.post('/api/search/ads/campaigns', { name: 'Хлеб', title: 'Пекарня Бориса', text: 'Свежий хлеб с доставкой', url: 'http://boris.bln/', keywords: ['хлеб', 'пирожки'], negatives: ['бесплатно'], bid: 100, daily_budget: 150, network: true })).id;
-  await (anna.gov.post('/api/search/ads/campaigns', { name: 'Блог', title: 'Блог Анны', text: 'Где купить хлеб', url: 'http://anna.bln/', keywords: ['купить хлеб'], bid: 200, daily_budget: 1000, network: false })).id;
+  await anna.gov.post('/api/search/ads/campaigns', { name: 'Блог', title: 'Блог Анны', text: 'Где купить хлеб', url: 'http://anna.bln/', keywords: ['купить хлеб'], bid: 200, daily_budget: 1000, network: false });
 
   const c = client(app);
   let r = await search(c, 'где купить хлеб');

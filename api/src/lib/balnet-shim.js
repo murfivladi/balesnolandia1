@@ -172,6 +172,42 @@ export const SHIM_JS = String.raw`(function () {
     };
   }
 
+  // ——— Рекламная сеть ВлодПоиска: <ins class="vlodads"></ins> ———
+  function fillAds() {
+    if (!origFetch || !document.querySelectorAll) return;
+    var slots = document.querySelectorAll('ins.vlodads:not([data-filled])');
+    Array.prototype.forEach.call(slots, function (ins) {
+      ins.setAttribute('data-filled', '1');
+      var path = new URL(toBalnet(location.href)).pathname;
+      origFetch(API + '/api/search/adnet/serve', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ ticket: C.ticket, path: path }) })
+        .then(function (r) { return r.json(); }).then(function (res) {
+          var ad = res && res.ad;
+          if (!ad) return;
+          var box = document.createElement('a');
+          box.href = '#';
+          box.setAttribute('style', 'display:block;border:1px solid #c9d3e6;border-radius:8px;padding:10px 12px;font:14px/1.4 system-ui,sans-serif;text-decoration:none;color:#121826;background:#fff;max-width:480px');
+          var lab = document.createElement('div');
+          lab.setAttribute('style', 'font-size:11px;color:#5b6475;margin-bottom:2px');
+          lab.textContent = 'Реклама · ВлодПоиск · ' + ad.display;
+          var t = document.createElement('div');
+          t.setAttribute('style', 'color:#1f4fbf;font-size:16px;font-weight:600');
+          t.textContent = ad.title;
+          var d = document.createElement('div');
+          d.textContent = ad.text;
+          box.appendChild(lab); box.appendChild(t); box.appendChild(d);
+          box.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            origFetch(API + '/api/search/adnet/click', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ ticket: C.ticket, token: ad.token }) })
+              .then(function (r) { return r.json(); }).then(function (c) { if (c && c.url) post({ type: 'open', url: c.url, newTab: false }); });
+          });
+          ins.appendChild(box);
+        }).catch(function () { /* реклама недоступна */ });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fillAds);
+  else setTimeout(fillAds, 0);
+
   // ——— Заголовок и адрес ———
   function watchTitle() {
     var head = document.head || document.documentElement;

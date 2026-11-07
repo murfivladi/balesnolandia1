@@ -1,6 +1,7 @@
 // Админка → БалНет: провайдеры, IP-блоки и серверы, сайты на серверах, DNS-зоны и записи.
 import { useState } from 'react';
 import { PkiAdmin } from './pki.jsx';
+import { SearchAdmin } from './search.jsx';
 import { get, post, patch, del } from '../shared/api.js';
 import {
   Spinner, useAsync, Input, Select, Form, Modal, Empty, Badge, ActionButton, Tabs, ErrorBox, Button, useToast,
@@ -11,7 +12,7 @@ import { HostingAdmin } from './hosting.jsx';
 
 const KIND_LABEL = { router: 'маршрутизатор', auth: 'DNS-сервер зон', resolver: 'резолвер', web: 'веб-сервер' };
 const PURPOSE_LABEL = { infra: 'инфраструктура', datacenter: 'дата-центр', provider: 'провайдер', ix: 'точка обмена', hosting: 'хостинг' };
-const TARGET_LABEL = { 'app:bank': 'ВлодБанк', 'app:services': 'ВлодУслуги', 'app:pos': 'Касса', 'app:reg': 'БалРег', 'app:hosting': 'БалХост', 'app:nalog': 'Налоговая служба', poisk: 'ВлодПоиск' };
+const TARGET_LABEL = { 'app:bank': 'ВлодБанк', 'app:services': 'ВлодУслуги', 'app:pos': 'Касса', 'app:reg': 'БалРег', 'app:hosting': 'БалХост', 'app:nalog': 'Налоговая служба', 'app:ca': 'БалСерт', 'app:poisk': 'ВлодПоиск' };
 const strip = (n) => String(n || '').replace(/\.$/, '');
 
 export function NetSection() {
@@ -21,11 +22,12 @@ export function NetSection() {
     <div className="page">
       <h1>БалНет</h1>
       <p className="muted">Сеть ВлодБраузера: провайдеры выдают игрокам IP-адреса, DNS идёт по цепочке корень → зона верхнего уровня → серверы имён домена. TTL считается в игровых секундах (в игровом месяце 30 игровых суток).</p>
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'registry', label: 'Домены и организации' }, { value: 'hosting', label: 'Хостинг' }, { value: 'pki', label: 'Сертификаты' }, { value: 'zones', label: 'Зоны DNS' }, { value: 'hosts', label: 'Адреса и серверы' }, { value: 'providers', label: 'Провайдеры' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'registry', label: 'Домены и организации' }, { value: 'hosting', label: 'Хостинг' }, { value: 'pki', label: 'Сертификаты' }, { value: 'search', label: 'ВлодПоиск' }, { value: 'zones', label: 'Зоны DNS' }, { value: 'hosts', label: 'Адреса и серверы' }, { value: 'providers', label: 'Провайдеры' }]} />
       <ErrorBox error={ov.error} />
       {tab === 'registry' && <RegistryAdmin />}
       {tab === 'hosting' && <HostingAdmin />}
       {tab === 'pki' && <PkiAdmin />}
+      {tab === 'search' && <SearchAdmin />}
       {!ov.data ? <Spinner /> : (
         <>
           {tab === 'zones' && <Zones ov={ov.data} reload={ov.reload} />}
