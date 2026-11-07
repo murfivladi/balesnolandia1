@@ -361,7 +361,7 @@ function ServerCard({ accountId, site, canWrite }) {
         {canWrite && <ActionButton size="sm" kind="secondary" okMessage="Созданы server.js и crontab — откройте сайт" action={() => post(`${base}/example`)}>Пример: гостевая книга</ActionButton>}
         <a className="btn sm ghost" href="#/docs">Справка по API</a>
       </div>
-      <p className="small muted">Файл <span className="mono">server.js</span> в корне сайта отвечает на запросы, которым не нашлось файла, и на все POST/PUT/DELETE. Его код, <span className="mono">crontab</span> и папка <span className="mono">.data</span> посетителям не видны.</p>
+      <p className="small muted"><span className="mono">server.js</span> (JavaScript), <span className="mono">server.py</span> (Python) или файлы <span className="mono">.php</span> отвечают на запросы, которым не нашлось файла, и на все POST/PUT/DELETE. Их код, <span className="mono">crontab</span> и папка <span className="mono">.data</span> посетителям не видны.</p>
       <div className="tabs" role="tablist">
         {[['logs', 'Журнал'], ['sql', 'База SQLite'], ['kv', 'Key-value'], ['cron', 'Cron']].map(([k, l]) => <button key={k} role="tab" className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{l}</button>)}
       </div>

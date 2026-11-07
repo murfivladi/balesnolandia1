@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import { q } from '../../db.js';
 import { gameSeconds, isPaused } from '../clock.js';
 import { siteByTarget } from '../hosting.js';
-import { runSite } from './respond.js';
+import { runSite, runExternal } from './respond.js';
 import { addLog } from './logs.js';
 
 const RANGES = [[0, 59], [0, 23], [1, 30], [1, 12], [0, 6]];
@@ -88,7 +88,11 @@ export async function cronTick({ now: forced = null } = {}) {
       if (at === null) continue;
       runs++;
       try {
-        await runSite(site, 'onCron', { name: job.name, time: at });
+        const [cmd, ...argv] = job.name.split(/\s+/);
+        if (/\.php$/i.test(cmd)) await runExternal(site, 'php', { mode: 'script', entry: cmd, argv: [cmd, ...argv], req: { method: 'GET', path: `/${cmd}` } });
+        else if (/\.py$/i.test(cmd)) await runExternal(site, 'python', { mode: 'script', entry: cmd, argv });
+        else if (await fs.stat(`${site.dir}/server.js`).then(() => true, () => false)) await runSite(site, 'onCron', { name: job.name, time: at });
+        else await runExternal(site, 'python', { mode: 'handler', entry: 'server.py', handler: 'on_cron', arg: { name: job.name, time: at } });
         addLog(site.id, 'info', `cron «${job.name}» выполнен`);
       } catch (e) {
         if (!e.kind) addLog(site.id, 'error', `cron «${job.name}»: ${e.message}`);

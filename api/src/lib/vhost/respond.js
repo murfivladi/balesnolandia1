@@ -13,10 +13,11 @@ import { resolveFile, typeOf, siteHeaders } from '../gateway.js';
 import { verifyTls } from '@bln/shared/balnet-pki.js';
 import { splitUrl } from '@bln/shared/balnet-url.js';
 import { runHandler, ScriptError } from './runtime.js';
-import { withSite, siteDb, flush, sqlQuery, sqlRun, sqlExec, kvOp } from './store.js';
+import { withSite, siteDb, flush, sqlQuery, sqlRun, sqlExec, kvOp, closeDb } from './store.js';
+import { runInPool } from './pool.js';
 import { addLog } from './logs.js';
 
-export const SERVER_FILES = new Set(['server.js', 'crontab']);
+export const SERVER_FILES = new Set(['server.js', 'server.py', 'crontab']);
 const PUBLIC_DNS = '50.0.0.53';
 const MAX_DEPTH = 3;
 
@@ -39,11 +40,14 @@ export function resetRateLimits() { rpmCounters.clear(); }
 function overRpm(site) {
   const limit = Number(site.rpm || 0);
   if (!limit) return false;
-  const minute = Math.floor(Date.now() / 60000);
-  const c = rpmCounters.get(site.id);
-  if (!c || c.minute !== minute) { rpmCounters.set(site.id, { minute, n: 1 }); return false; }
-  c.n += 1;
-  return c.n > limit;
+  // Скользящее окно в 60 секунд: время каждого запроса за последнюю минуту.
+  const t = Date.now();
+  let list = rpmCounters.get(site.id);
+  if (!list) { list = []; rpmCounters.set(site.id, list); }
+  while (list.length && list[0] <= t - 60000) list.shift();
+  if (list.length >= limit) return true;
+  list.push(t);
+  return false;
 }
 
 const page = (status, title, text) => ({
@@ -51,8 +55,46 @@ const page = (status, title, text) => ({
   body: Buffer.from(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${title}</title></head><body style="font-family:system-ui;max-width:560px;margin:12vh auto;padding:0 16px"><h1>${title}</h1><p>${text}</p></body></html>`),
 });
 
+const isFile = (p) => fs.stat(p).then((s) => s.isFile(), () => false);
 async function hasServer(site) {
-  return fs.stat(`${site.dir}/server.js`).then((s) => s.isFile(), () => false);
+  return (await isFile(`${site.dir}/server.js`)) || (await isFile(`${site.dir}/server.py`)) || (await isFile(`${site.dir}/index.php`));
+}
+
+/** Кто обрабатывает запрос виртуального сайта: файл .php, server.js, server.py или index.php (фронт-контроллер). */
+async function pickHandler(site, pathOnly) {
+  let rel;
+  try { rel = decodeURIComponent(pathOnly).replace(/^\/+/, ''); } catch { rel = ''; }
+  if (/\.php$/i.test(rel) && !rel.split('/').some((p) => p === '..') && (await isFile(`${site.dir}/${rel}`))) return { kind: 'php', entry: rel };
+  if ((rel === '' || rel.endsWith('/')) && (await isFile(`${site.dir}/${rel}index.php`))) return { kind: 'php', entry: `${rel}index.php` };
+  if (await isFile(`${site.dir}/server.js`)) return { kind: 'js' };
+  if (await isFile(`${site.dir}/server.py`)) return { kind: 'python', entry: 'server.py' };
+  if (await isFile(`${site.dir}/index.php`)) return { kind: 'php', entry: 'index.php' };
+  return null;
+}
+
+/** PHP или Python в рабочем потоке. База — тот же файл SQLite: копию в памяти перед запуском сохраняем и закрываем. */
+export async function runExternal(site, kind, payload, { depth = 0 } = {}) {
+  return withSite(site.id, async () => {
+    await flush(site.id).catch(() => {});
+    closeDb(site.id);
+    const timeoutMs = Math.max(1000, (Number(site.cpu_ms) || 50) * 20);
+    let r;
+    try {
+      r = await runInPool(kind, { ...payload, dir: site.dir, now: await gameSeconds() }, {
+        timeoutMs,
+        onFetch: (req) => netRequest({ fromIp: site.server_ip, ...req, depth: depth + 1 }),
+      });
+    } catch (e) {
+      const msg = e.kind === 'timeout' ? `${kind === 'php' ? 'PHP' : 'Python'}: превышено время выполнения ${timeoutMs} мс` : `${kind}: ${e.message}`;
+      addLog(site.id, 'error', msg);
+      throw new ScriptError(msg, { kind: e.kind === 'timeout' ? 'timeout' : 'error' });
+    }
+    if (r.errors) addLog(site.id, 'error', `PHP: ${r.errors}`);
+    if (r.log) addLog(site.id, 'log', r.log.trimEnd());
+    if (r.error) { addLog(site.id, 'error', `Python: ${r.error}`); throw new ScriptError(r.error); }
+    if (r.missing) throw new ScriptError(`В ${payload.entry} нет функции ${payload.handler}`, { kind: 'missing' });
+    return r;
+  });
 }
 
 /** Выполнить обработчик сайта (onRequest, onCron, …) в очереди сайта, с базой и логами. */
@@ -110,7 +152,7 @@ export async function siteRespond(site, req, { depth = 0 } = {}) {
   if ((method === 'GET' || method === 'HEAD') && !hidden) {
     const f = await resolveFile(site.dir, urlPath);
     if (f.status === 301) return { status: 301, headers: { location: f.location + (urlPath.includes('?') ? urlPath.slice(urlPath.indexOf('?')) : '') }, body: Buffer.alloc(0) };
-    if (f.file && (f.status === 200 || !virtual || !(await hasServer(site)))) {
+    if (f.file && virtual && /\.php$/i.test(f.file)) { /* исходник PHP не отдаём — выполняем ниже */ } else if (f.file && (f.status === 200 || !virtual || !(await hasServer(site)))) {
       const headers = { 'content-type': typeOf(f.file) };
       for (const [k, v] of Object.entries(await siteHeaders(site.dir, pathOnly))) headers[k] = v;
       return { status: f.status, headers, body: method === 'HEAD' ? Buffer.alloc(0) : await fs.readFile(f.file), file: f.file };
@@ -124,15 +166,20 @@ export async function siteRespond(site, req, { depth = 0 } = {}) {
   }
   const body = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body ?? '');
   const scheme = req.scheme || 'http';
+  const handler = await pickHandler(site, pathOnly);
+  if (!handler) return { status: 404, headers: { 'content-type': 'text/html; charset=utf-8' }, body: Buffer.alloc(0), notFound: true };
+  const reqArg = {
+    method, url: `${scheme}://${req.host || site.host}${urlPath}`, path: pathOnly, search: urlPath.includes('?') ? urlPath.slice(urlPath.indexOf('?')) : '',
+    headers: req.headers || {}, body: body.slice(0, 1024 * 1024), ip: req.ip || null, host: req.host || site.host,
+  };
   try {
-    const out = await runSite(site, 'onRequest', {
-      method, url: `${scheme}://${req.host || site.host}${urlPath}`, path: pathOnly, search: urlPath.includes('?') ? urlPath.slice(urlPath.indexOf('?')) : '',
-      headers: req.headers || {}, body: body.slice(0, 1024 * 1024), ip: req.ip || null, host: req.host || site.host,
-    }, { depth });
+    const out = handler.kind === 'js'
+      ? await runSite(site, 'onRequest', reqArg, { depth })
+      : await runExternal(site, handler.kind, { mode: 'request', entry: handler.entry, handler: 'on_request', req: reqArg }, { depth });
     const headers = {};
     for (const [k, v] of Object.entries(out.headers || {})) if (/^[a-z0-9-]{1,64}$/.test(k)) headers[k] = String(v).slice(0, 2000);
     if (!headers['content-type']) headers['content-type'] = 'text/plain; charset=utf-8';
-    const buf = out.b64 ? Buffer.from(out.b64, 'base64') : Buffer.from(String(out.body ?? ''), 'utf8');
+    const buf = out.b64 === true ? Buffer.from(out.body, 'base64') : out.b64 ? Buffer.from(out.b64, 'base64') : Buffer.from(String(out.body ?? ''), 'utf8');
     const status = Number(out.status) >= 100 && Number(out.status) < 600 ? Number(out.status) : 200;
     return { status, headers, body: method === 'HEAD' ? Buffer.alloc(0) : buf, dynamic: true, setCookies: Array.isArray(out.cookies) ? out.cookies.slice(0, 20).map(String) : [] };
   } catch (e) {

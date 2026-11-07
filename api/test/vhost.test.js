@@ -255,3 +255,79 @@ test('WebSocket: чат с рассылкой, отказ статическом
   assert.equal((await extra.closed).code, 1013);
   for (const m of many) m.ws.close();
 });
+
+test('PHP 8.3: index.php, формы, PDO SQLite, key-value, исходник скрыт, бесконечный цикл прерывается', { timeout: 120000 }, async () => {
+  (await import('../src/lib/vhost/respond.js')).resetRateLimits();
+  await boris.gov.delete(`${site['boris.bln'].f}/file?path=server.js`);
+  await put('boris.bln', 'index.php', `<?php
+$db = balnet_db();
+$db->exec('CREATE TABLE IF NOT EXISTS notes (t TEXT)');
+if ($_SERVER['REQUEST_METHOD'] === 'POST') { $db->prepare('INSERT INTO notes VALUES (?)')->execute([$_POST['t']]); header('Location: /'); exit; }
+balnet_kv_set('hits', (balnet_kv_get('hits') ?? 0) + 1);
+setcookie('php_seen', 'да');
+echo '<h1>PHP ' . PHP_MAJOR_VERSION . '</h1><p>hits=' . balnet_kv_get('hits') . '</p>';
+foreach ($db->query('SELECT t FROM notes') as $r) echo '<li>' . htmlspecialchars($r['t']) . '</li>';
+echo '<p>ip=' . $_SERVER['REMOTE_ADDR'] . '</p>';`);
+  await put('boris.bln', 'loop.php', '<?php while (true) {}');
+  await put('boris.bln', 'info.php', '<?php header("Content-Type: application/json"); echo json_encode(["get" => $_GET, "net" => @file_get_contents("http://anna.bln/data.json") === false ? "закрыто" : "открыто"]);');
+  const o = await open('http://boris.bln/');
+  let res = await web(o.ticket, '/');
+  assert.equal(res.statusCode, 200, res.body);
+  assert.match(res.body, /<h1>PHP 8<\/h1><p>hits=1<\/p>/);
+  assert.match(res.body, /ip=60\./);
+  assert.equal(res.headers['x-balnet-jar'], '1', 'setcookie из PHP попадает в банку');
+  res = await web(o.ticket, '/', { method: 'POST', body: 't=%D0%B7%D0%B0%D0%BC%D0%B5%D1%82%D0%BA%D0%B0', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+  assert.equal(res.statusCode, 302);
+  res = await web(o.ticket, '/');
+  assert.match(res.body, /<li>заметка<\/li>/);
+  assert.match(res.body, /hits=2/, 'POST не считается просмотром');
+  const info = JSON.parse((await web(o.ticket, '/info.php?x=1')).body);
+  assert.deepEqual(info.get, { x: '1' });
+  assert.equal(info.net, 'закрыто', 'PHP не выходит в сеть напрямую');
+  const loop = await web(o.ticket, '/loop.php');
+  assert.equal(loop.statusCode, 504);
+  assert.match((await web(o.ticket, '/')).body, /hits=3/, 'после убитого потока PHP работает');
+  // Та же база доступна из SQL-консоли панели.
+  const sql = await boris.gov.post(`${site['boris.bln'].f}/sql`, { sql: 'SELECT t FROM notes' });
+  assert.deepEqual(sql.result[0].rows, [['заметка']]);
+  await boris.gov.delete(`${site['boris.bln'].f}/file?path=index.php`);
+});
+
+test('Python 3: server.py, balnet.fetch по сети БалНета, SQLite, cron-скрипт .py', { timeout: 180000 }, async () => {
+  (await import('../src/lib/vhost/respond.js')).resetRateLimits();
+  for (const f of ['index.php', 'server.js']) await boris.gov.delete(`${site['boris.bln'].f}/file?path=${f}`).catch(() => {});
+  await put('boris.bln', 'server.py', `import balnet
+async def on_request(req):
+    if req.path == '/proxy':
+        r = await balnet.fetch('http://anna.bln/data.json')
+        return balnet.json_response({'status': r.status, 'data': r.json()})
+    if req.method == 'POST':
+        balnet.db().execute('CREATE TABLE IF NOT EXISTS py (v TEXT)')
+        balnet.db().execute('INSERT INTO py VALUES (?)', (req.form().get('v'),))
+        return balnet.redirect('/')
+    print('лог из Python')
+    balnet.db().execute('CREATE TABLE IF NOT EXISTS py (v TEXT)')
+    rows = [r['v'] for r in balnet.db().execute('SELECT v FROM py')]
+    return balnet.html('<h1>Python</h1>' + ','.join(rows)).set_cookie('py', '1')
+`);
+  await put('boris.bln', 'job.py', "import balnet, sys\nbalnet.kv.set('py_cron', sys.argv[1:])\n");
+  const o = await open('http://boris.bln/');
+  let res = await web(o.ticket, '/');
+  assert.equal(res.statusCode, 200, res.body);
+  assert.match(res.body, /<h1>Python<\/h1>/);
+  await web(o.ticket, '/', { method: 'POST', body: 'v=питон', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+  res = await web(o.ticket, '/');
+  assert.match(res.body, /питон/);
+  assert.deepEqual(JSON.parse((await web(o.ticket, '/proxy')).body), { status: 200, data: { hello: 'anna' } });
+  const logs = (await boris.gov.get(`${site['boris.bln'].f}/logs`)).logs;
+  assert.ok(logs.some((l) => l.text.includes('лог из Python')));
+  const { cronTick } = await import('../src/lib/vhost/cron.js');
+  await put('boris.bln', 'crontab', '0 * * * * job.py a b\n');
+  const t = 86400 * 20;
+  await cronTick({ now: t - 30 });
+  await cronTick({ now: t + 30 });
+  const kv = await boris.gov.get(`${site['boris.bln'].f}/kv`);
+  assert.equal(kv.keys.find((k) => k.key === 'py_cron')?.value, '["a", "b"]');
+  const { stopPools } = await import('../src/lib/vhost/pool.js');
+  await stopPools();
+});

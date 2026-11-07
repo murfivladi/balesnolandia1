@@ -176,11 +176,34 @@ const items = await r.json();`)}
   console.log('задача', job.name, 'время', job.time);
 }`)}
       <p>Тариф задаёт минимальный шаг: задача, которая срабатывает чаще, не запускается (ошибка в журнале).</p>
+      <h2>PHP 8.3</h2>
+      <p>Файлы <code>.php</code> выполняются (исходник посетителям не отдаётся). Если в корне есть <code>index.php</code>, а <code>server.js</code> нет, все запросы без файла идут в него — как фронт-контроллер. Работают <code>$_GET</code>, <code>$_POST</code>, <code>$_COOKIE</code>, <code>header()</code>, <code>setcookie()</code>, сессии.</p>
+      {CODE(`<?php
+$db = balnet_db();                 // PDO SQLite — та же база, что у JavaScript
+$db->exec('CREATE TABLE IF NOT EXISTS notes (t TEXT)');
+balnet_kv_set('hits', (balnet_kv_get('hits') ?? 0) + 1, 86400);
+echo 'Игровое время: ' . balnet_game_time();`)}
+      <p>Выхода в сеть у PHP нет (allow_url_fopen и сокеты выключены): запросы к другим сайтам делайте из JavaScript или Python.</p>
+      <h2>Python 3</h2>
+      <p>Файл <code>server.py</code> (если нет <code>server.js</code>). Интерпретатор — Pyodide; первый запрос после простоя медленнее: интерпретатор загружается.</p>
+      {CODE(`import balnet
+
+async def on_request(req):          # req.method, req.path, req.query, req.form(), req.json(), req.cookies, req.ip
+    db = balnet.db()                 # sqlite3, та же база сайта
+    balnet.kv.set('hits', (balnet.kv.get('hits') or 0) + 1)
+    r = await balnet.fetch('https://shop.bln/api/items')
+    return balnet.json_response({'items': r.json()})
+    # или balnet.html('<h1>Привет</h1>'), balnet.redirect('/'), balnet.Response('текст', 404)
+
+def on_cron(job):
+    print('задача', job['name'])     # print пишет в журнал`)}
+      <p>В <code>crontab</code> можно запускать и скрипты: <code>0 3 * * * backup.php</code> или <code>*/30 * * * * report.py аргумент</code>.</p>
       <h2>Лимиты тарифа</h2>
       <ul>
         <li><b>CPU-мс на запрос</b> — время работы самого скрипта (ожидание fetch не считается). Превысили — ответ 508.</li>
         <li><b>Запросов в минуту</b> — на сайт; сверх лимита — 429.</li>
-        <li><b>Память</b> — 32 МБ на запрос; <b>время</b> — не больше 15 секунд вместе с ожиданием.</li>
+        <li><b>Память</b> — 32 МБ на запрос JavaScript, 64 МБ у PHP; <b>время</b> — не больше 15 секунд вместе с ожиданием.</li>
+        <li><b>PHP и Python</b> выполняются в отдельных потоках по очереди (PHP — 2 одновременно, Python — 1); их лимит — время выполнения: CPU-мс тарифа × 20.</li>
       </ul>
       <p>Всё, что пишет <code>console.log</code>, и все ошибки видны в «Моём хостинге» → «Журнал».</p>
     </div>
