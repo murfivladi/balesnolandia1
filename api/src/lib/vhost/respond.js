@@ -16,6 +16,7 @@ import { runHandler, ScriptError } from './runtime.js';
 import { withSite, siteDb, flush, sqlQuery, sqlRun, sqlExec, kvOp, closeDb } from './store.js';
 import { runInPool } from './pool.js';
 import { gitHttp, isGitPath } from '../hub/hub.js';
+import { pushService } from '../push.js';
 import { addLog } from './logs.js';
 
 export const SERVER_FILES = new Set(['server.js', 'server.py', 'crontab']);
@@ -119,7 +120,7 @@ export async function runSite(site, handler, arg, { depth = 0, ws = null, script
             throw new Error('db: неизвестная операция');
           },
           kv: (op, a) => kvOp(entry, op, a, now),
-          fetch: (req) => netRequest({ fromIp: site.server_ip, ...req, depth: depth + 1 }),
+          fetch: (req) => netRequest({ fromIp: site.server_ip, ...req, body: req.bodyB64 ? Buffer.from(String(req.bodyB64), 'base64') : req.body, depth: depth + 1 }),
           ws: ws || (wsHost ? wsHost(site.id) : null),
           mail: async (req) => {
             const { sendFromSite } = await import('../mailnet/mailbox.js');
@@ -226,6 +227,15 @@ export async function netRequest({ fromIp, url, method = 'GET', headers = {}, bo
       const g = await gitHttp({ method, path: p.path, headers, body: Buffer.isBuffer(body) ? body : Buffer.from(body || '') });
       const out = { status: g.status, headers: g.headers, url: cur, ip, siteId: null };
       if (binary) out.buf = g.body; else out.body = g.body.toString('utf8');
+      return out;
+    }
+    if (conn.target === 'app:push') {
+      // push.bln принимает сообщения Web Push от серверов сайтов (RFC 8030) — только по https.
+      if (p.scheme !== 'https') return { error: 'ERR_CONNECTION_REFUSED', ip, note: 'push.bln работает только по https' };
+      if (!(await tlsFor({ target: conn.target, host: p.host }))) return { error: 'ERR_CONNECTION_REFUSED', ip };
+      const r = await pushService({ method, path: p.path, headers, body });
+      const out = { status: r.status, headers: r.headers, url: cur, ip, siteId: null };
+      if (binary) out.buf = r.body; else out.body = r.body.toString('utf8');
       return out;
     }
     if (conn.target.startsWith('app:')) {

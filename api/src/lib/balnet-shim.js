@@ -304,6 +304,163 @@ export const SHIM_JS = String.raw`(function () {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fillAds);
   else setTimeout(fillAds, 0);
 
+  // ——— Уведомления и Push API (этап Н10) ———
+  // Разрешение и показ решает ВлодБраузер: сайт просит через postMessage, оболочка отвечает в этот фрейм.
+  // Push API — только в защищённом контексте (https), как в Chrome. Service worker сайта в БалНете не запускается:
+  // push-сервис push.bln доставляет сообщение браузеру, и тот сам показывает уведомление из JSON {title, body, url}.
+  var secure = /^https:/.test(ORIGIN);
+  var perm = secure ? (C.notif || 'default') : 'denied';
+  var waiting = {};
+  var notes = {};
+  var seqN = 0;
+  function ask(msg) {
+    var id = 'q' + (++seqN) + '_' + Date.now();
+    msg.id = id;
+    return new Promise(function (resolve, reject) {
+      waiting[id] = { resolve: resolve, reject: reject };
+      post(msg);
+    });
+  }
+  window.addEventListener('message', function (e) {
+    if (e.source !== parent) return;
+    var m = e.data;
+    if (!m || m.__balnetShell !== 1) return;
+    if (m.type === 'perm') perm = m.permission;
+    if (m.type === 'reply' && waiting[m.id]) {
+      var w = waiting[m.id];
+      delete waiting[m.id];
+      if (m.permission) perm = m.permission;
+      if (m.error) { var err = new Error(m.error); err.name = m.errorName || 'Error'; w.reject(err); } else w.resolve(m.result);
+    }
+    if (m.type === 'notif-event' && notes[m.nid]) {
+      var n = notes[m.nid];
+      var ev = new Event(m.event);
+      if (m.event === 'click' && typeof n.onclick === 'function') n.onclick(ev);
+      if (m.event === 'close' && typeof n.onclose === 'function') n.onclose(ev);
+      n.dispatchEvent(ev);
+      if (m.event === 'close') delete notes[m.nid];
+    }
+  });
+  function warn(text) { if (window.console) console.warn('[БалНет] ' + text); }
+  function showNote(title, opts, n) {
+    opts = opts || {};
+    if (perm !== 'granted') { warn('Уведомление не показано: нет разрешения (Notification.permission = "' + perm + '")'); return false; }
+    var nid = 'n' + (++seqN);
+    if (n) notes[nid] = n;
+    post({ type: 'notify', nid: nid, title: String(title).slice(0, 200), body: opts.body == null ? '' : String(opts.body).slice(0, 1000), tag: opts.tag ? String(opts.tag).slice(0, 100) : null, url: opts.data && opts.data.url ? String(opts.data.url) : null });
+    return nid;
+  }
+  var BalnetNotification = function (title, opts) {
+    if (!(this instanceof BalnetNotification)) throw new TypeError("Failed to construct 'Notification': Please use the 'new' operator");
+    if (!arguments.length) throw new TypeError("Failed to construct 'Notification': 1 argument required");
+    var et = document.createDocumentFragment ? document.createDocumentFragment() : null;
+    var self = this;
+    opts = opts || {};
+    this.title = String(title);
+    this.body = opts.body == null ? '' : String(opts.body);
+    this.tag = opts.tag ? String(opts.tag) : '';
+    this.data = opts.data === undefined ? null : opts.data;
+    this.icon = opts.icon || '';
+    this.onclick = null; this.onclose = null; this.onshow = null; this.onerror = null;
+    this.addEventListener = function (t, f, o) { if (et) et.addEventListener(t, f, o); };
+    this.removeEventListener = function (t, f, o) { if (et) et.removeEventListener(t, f, o); };
+    this.dispatchEvent = function (ev) { return et ? et.dispatchEvent(ev) : true; };
+    var nid = showNote(this.title, opts, this);
+    this.close = function () { if (nid) post({ type: 'notify-close', nid: nid }); };
+    setTimeout(function () {
+      var ev = new Event(nid ? 'show' : 'error');
+      if (nid && typeof self.onshow === 'function') self.onshow(ev);
+      if (!nid && typeof self.onerror === 'function') self.onerror(ev);
+      self.dispatchEvent(ev);
+    }, 0);
+  };
+  Object.defineProperty(BalnetNotification, 'permission', { get: function () { return perm; } });
+  BalnetNotification.maxActions = 0;
+  BalnetNotification.requestPermission = function (cb) {
+    var p;
+    if (!secure) { warn('Уведомления доступны только сайтам на https://'); p = Promise.resolve('denied'); }
+    else if (perm !== 'default') p = Promise.resolve(perm);
+    else p = ask({ type: 'perm-request' }).then(function (r) { perm = r; return r; });
+    if (typeof cb === 'function') p.then(cb);
+    return p;
+  };
+  try { Object.defineProperty(window, 'Notification', { configurable: true, writable: true, value: BalnetNotification }); } catch (e) { /* ignore */ }
+
+  function b64url(v) {
+    if (v == null) return null;
+    if (typeof v === 'string') return v.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    var bytes = v instanceof ArrayBuffer ? new Uint8Array(v) : new Uint8Array(v.buffer, v.byteOffset || 0, v.byteLength);
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function bytesOf(s) {
+    var b = atob(String(s).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(s).length + 3) % 4));
+    var out = new Uint8Array(b.length);
+    for (var i = 0; i < b.length; i++) out[i] = b.charCodeAt(i);
+    return out.buffer;
+  }
+  function makeSub(j) {
+    if (!j) return null;
+    return {
+      endpoint: j.endpoint,
+      expirationTime: null,
+      options: { userVisibleOnly: true, applicationServerKey: j.applicationServerKey ? bytesOf(j.applicationServerKey) : null },
+      getKey: function (name) { return j.keys && j.keys[name] ? bytesOf(j.keys[name]) : null; },
+      toJSON: function () { return { endpoint: j.endpoint, expirationTime: null, keys: { p256dh: j.keys.p256dh, auth: j.keys.auth } }; },
+      unsubscribe: function () { return ask({ type: 'push-unsubscribe' }); },
+    };
+  }
+  var pushManager = {
+    subscribe: function (opts) {
+      opts = opts || {};
+      if (!opts.userVisibleOnly) {
+        var e = new Error('Chrome и ВлодБраузер требуют userVisibleOnly: true — каждое push-сообщение показывается пользователю');
+        e.name = 'NotAllowedError';
+        return Promise.reject(e);
+      }
+      return ask({ type: 'push-subscribe', applicationServerKey: b64url(opts.applicationServerKey) }).then(makeSub);
+    },
+    getSubscription: function () { return ask({ type: 'push-get' }).then(makeSub); },
+    permissionState: function () { return Promise.resolve(perm === 'default' ? 'prompt' : perm); },
+  };
+  var registration = {
+    scope: ORIGIN + '/',
+    active: { state: 'activated', scriptURL: ORIGIN + '/sw.js' },
+    installing: null,
+    waiting: null,
+    pushManager: pushManager,
+    showNotification: function (title, opts) {
+      return showNote(title, opts, null) ? Promise.resolve() : Promise.reject(new TypeError('No notification permission has been granted for this origin.'));
+    },
+    getNotifications: function () { return Promise.resolve([]); },
+    update: function () { return Promise.resolve(registration); },
+    unregister: function () { return Promise.resolve(true); },
+    addEventListener: function () {},
+    removeEventListener: function () {},
+  };
+  if (secure) {
+    var swNote = false;
+    var container = {
+      controller: null,
+      ready: Promise.resolve(registration),
+      register: function (url, o) {
+        registration.active.scriptURL = new URL(String(url), ORIGIN + '/').href;
+        if (o && o.scope) registration.scope = new URL(String(o.scope), ORIGIN + '/').href;
+        if (!swNote) { swNote = true; if (window.console) console.info('[БалНет] Service worker сайта не запускается: push-сообщения показывает ВлодБраузер (JSON {title, body, url})'); }
+        return Promise.resolve(registration);
+      },
+      getRegistration: function () { return Promise.resolve(registration); },
+      getRegistrations: function () { return Promise.resolve([registration]); },
+      addEventListener: function () {},
+      removeEventListener: function () {},
+      startMessages: function () {},
+    };
+    try { Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: container }); } catch (e) { /* ignore */ }
+  } else {
+    try { Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: undefined }); } catch (e) { /* ignore */ }
+  }
+
   // ——— Заголовок и адрес ———
   function watchTitle() {
     var head = document.head || document.documentElement;

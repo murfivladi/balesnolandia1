@@ -176,3 +176,15 @@ export function MailLogo({ size = 34 }) {
     </svg>
   );
 }
+
+/** БалПуш (push.bln): колокольчик с волнами. */
+export function PushLogo({ size = 34 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
+      <rect width="40" height="40" rx="10" fill="#7c3aed" />
+      <path d="M13 26h14l-1.6-2.4V18a5.4 5.4 0 0 0-10.8 0v5.6z" fill="#fff" />
+      <path d="M17.6 28.4a2.6 2.6 0 0 0 4.8 0" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+      <path d="M28.5 12.5a8 8 0 0 1 2 5M11.5 12.5a8 8 0 0 0-2 5" fill="none" stroke="#f0b429" strokeWidth="2.2" strokeLinecap="round" />
+    </svg>
+  );
+}

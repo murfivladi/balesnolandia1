@@ -96,7 +96,7 @@ export async function webRoutes(app) {
         }
         const html = rewriteRootPaths(r.body.toString('utf8'), prefix, 'html');
         return reply.send(injectShim(html, {
-          ticket: ticketId, prefix, origin: ticket.origin, cookies: ticket.cookies, local: ticket.local, jarDirty: jarChanged,
+          ticket: ticketId, prefix, origin: ticket.origin, cookies: ticket.cookies, local: ticket.local, jarDirty: jarChanged, notif: ticket.notif || 'default',
         }));
       }
       if (type.startsWith('text/css')) return reply.send(rewriteRootPaths(r.body.toString('utf8'), prefix, 'css'));
@@ -188,9 +188,13 @@ export async function webRoutes(app) {
   app.post('/jar', async (req) => {
     const t = getTicket(req.body?.ticket);
     if (!t) throw bad('ticket', 'Билет устарел');
-    const jar = cleanJar(req.body);
-    t.cookies = jar.cookies;
-    t.local = jar.local;
+    if (req.body.cookies || req.body.local) {
+      const jar = cleanJar(req.body);
+      t.cookies = jar.cookies;
+      t.local = jar.local;
+    }
+    // Разрешение на уведомления меняет только ВлодБраузер (сайт из песочницы сюда не достаёт).
+    if (['granted', 'denied', 'default'].includes(req.body?.notifications)) t.notif = t.scheme === 'https' ? req.body.notifications : 'denied';
     return { ok: true };
   });
 

@@ -155,7 +155,7 @@ export const PRELUDE = String.raw`
   g.fetch = function (url, init) {
     init = init || {};
     var headers = init.headers instanceof Headers ? init.headers.toObject() : (init.headers || {});
-    return __fetch(JSON.stringify({ url: String(url), method: init.method || 'GET', headers: headers, body: init.body === undefined ? null : String(init.body) }))
+    return __fetch(JSON.stringify({ url: String(url), method: init.method || 'GET', headers: headers, body: init.body === undefined || init.body === null ? null : String(init.body), bodyB64: init.bodyB64 || undefined }))
       .then(function (s) {
         var r = JSON.parse(s);
         if (r.error) throw new TypeError('fetch: ' + r.error);
@@ -193,6 +193,23 @@ export const PRELUDE = String.raw`
       if (a.length !== b.length) return false;
       var r = 0; for (var i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
       return r === 0;
+    },
+  };
+  // Web Push (этап Н10): API как у npm-пакета web-push. Шифрование aes128gcm и подпись VAPID делает хост.
+  g.webpush = {
+    generateVAPIDKeys: function () { return JSON.parse(__webpush('keys', '{}')); },
+    sendNotification: function (subscription, payload, options) {
+      var p = JSON.parse(__webpush('prepare', JSON.stringify({ subscription: subscription, payload: payload === undefined || payload === null ? null : typeof payload === 'string' ? payload : JSON.stringify(payload), options: options || {} })));
+      return g.fetch(p.endpoint, { method: 'POST', headers: p.headers, bodyB64: p.bodyB64 }).then(function (res) {
+        return res.text().then(function (text) {
+          if (res.status >= 400) {
+            var e = new Error('Push-сервис ответил ' + res.status + ': ' + text.trim());
+            e.name = 'WebPushError'; e.statusCode = res.status; e.body = text; e.endpoint = p.endpoint;
+            throw e;
+          }
+          return { statusCode: res.status, body: text, headers: res.headers.toObject ? res.headers.toObject() : {} };
+        });
+      });
     },
   };
   g.setTimeout = function (fn) { Promise.resolve().then(fn); return 0; };

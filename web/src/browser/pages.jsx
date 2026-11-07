@@ -227,6 +227,11 @@ export function SettingsPage({ ctx }) {
       </section>
       <NetworkSettings ctx={ctx} />
       <section className="bp-card">
+        <h2>Уведомления</h2>
+        <p>Сайты на https могут попросить разрешение показывать уведомления и подписаться на push. Разрешения хранятся в профиле.</p>
+        <button className="bp-btn" onClick={() => ctx.navigate('balnet://notifications/')}>Уведомления и push…</button>
+      </section>
+      <section className="bp-card">
         <h2>Поисковая система</h2>
         <p>ВлодПоиск (poisk.bln) — официальный поисковик БФ.</p>
       </section>

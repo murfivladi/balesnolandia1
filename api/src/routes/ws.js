@@ -1,8 +1,10 @@
 import { session, posSession } from '../lib/auth.js';
 import { subscribe, unsubscribe, dropSocket, publish } from '../lib/hub.js';
 import { one, q } from '../db.js';
+import { deviceOk } from '../lib/push.js';
 
-/** WebSocket /ws. Клиент шлёт {op:'sub'|'unsub', channel}; сервер — события каналов. */
+/** WebSocket /ws. Клиент шлёт {op:'sub'|'unsub', channel}; сервер — события каналов.
+ * push:<устройство> — сообщения push БалНета для ВлодБраузера, подписка с секретом устройства (token). */
 export async function wsRoutes(app) {
   app.get('/ws', { websocket: true }, (socket, req) => {
     // Обработчики вешаем синхронно, иначе ранние сообщения потеряются.
@@ -13,10 +15,11 @@ export async function wsRoutes(app) {
       socket.send(JSON.stringify({ op: 'hello', bank: bank?.id || null, gov: gov?.id || null, shop: pos?.shopId || null }));
     }).catch(() => socket.close());
 
-    async function allowed(channel) {
+    async function allowed(channel, msg) {
       if (channel === 'clock') return true;
       // Страница оплаты: статус своего платежа (id платежа длинный и случайный).
       if (channel.startsWith('pay:pay_')) return channel.length > 16;
+      if (channel.startsWith('push:')) return /^push:\d+$/.test(channel) && deviceOk(channel.slice(5), String(msg.token || ''));
       if (channel === 'admin') return isAdmin;
       if (channel.startsWith('user:b')) return bank && `user:b${bank.id}` === channel;
       if (channel.startsWith('user:g')) return gov && `user:g${gov.id}` === channel;
@@ -37,7 +40,7 @@ export async function wsRoutes(app) {
       if (msg.op === 'ping') return socket.send(JSON.stringify({ op: 'pong' }));
       const ch = String(msg.channel || '');
       if (msg.op === 'sub') {
-        if (await allowed(ch)) {
+        if (await allowed(ch, msg)) {
           subscribe(socket, ch);
           socket.send(JSON.stringify({ op: 'subscribed', channel: ch }));
           if (ch.startsWith('terminal:') && msg.role === 'terminal') {

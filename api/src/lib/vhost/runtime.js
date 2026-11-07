@@ -8,6 +8,7 @@ import { newQuickJSWASMModuleFromVariant } from 'quickjs-emscripten-core';
 import variant from '@jitl/quickjs-singlefile-mjs-release-sync';
 import { safeJoin } from '../sitefs.js';
 import { PRELUDE } from './prelude.js';
+import { webpushPrepare, newKeyPair } from '../webpush-crypto.js';
 
 let QJ = null;
 const quickjs = () => QJ || (QJ = newQuickJSWASMModuleFromVariant(variant));
@@ -98,6 +99,12 @@ export async function runHandler({ dir, entry = 'server.js', handler, arg, cpuMs
       return host.ws(ctx.getString(op), JSON.parse(ctx.getString(args)));
     }));
     def('__uuid', () => ctx.newString(crypto.randomUUID()));
+    // Web Push для серверного кода (как npm-пакет web-push): ключи VAPID и подготовка запроса к push-сервису.
+    def('__webpush', (op, args) => hostCall(() => {
+      const a = JSON.parse(ctx.getString(args));
+      if (ctx.getString(op) === 'keys') return newKeyPair();
+      return webpushPrepare(a.subscription, a.payload, a.options || {});
+    }));
     // Хеши и HMAC для подписей (вебхуки эквайринга, токены): hex-строка.
     def('__hash', (alg, key, data) => {
       const a = ctx.getString(alg);

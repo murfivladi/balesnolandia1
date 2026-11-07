@@ -18,6 +18,7 @@ import { CERT_ERRORS } from '@bln/shared/balnet-pki.js';
 import { TerminalPage } from './terminal.jsx';
 import { syncAll, createPhrase, unlock } from './sync.js';
 import { PasswordPrompt } from './passwords.jsx';
+import { useBalnetPush, PermissionPrompt, PushToasts, NotificationsPage } from './push.jsx';
 import {
   profileStore, loadProfiles, saveProfiles, loadActiveProfile, saveActiveProfile, removeItem, PROFILE_COLORS, HISTORY_LIMIT,
 } from './store.js';
@@ -26,7 +27,7 @@ import {
 } from './pages.jsx';
 
 const BASE = import.meta.env.BASE_URL;
-const DEFAULT_SETTINGS = { home: NEW_TAB, bookmarksBar: true, restoreSession: true, net: DEFAULT_NET };
+const DEFAULT_SETTINGS = { home: NEW_TAB, bookmarksBar: true, restoreSession: true, net: DEFAULT_NET, notifPerms: {} };
 const NET_LOG_LIMIT = 200;
 const MAX_BACK = 50;
 
@@ -181,6 +182,8 @@ function SiteFrame({ tab, ticket, origin, path, ctx }) {
       const m = e.data;
       if (!m || m.__balnet !== 1 || m.ticket !== ticket) return;
       const c = cb.current;
+      // Оболочка знает открытые фреймы сайта: им приходит новое разрешение на уведомления.
+      c.push.seenFrame(tab.id, { win: e.source, origin, ticket });
       if (m.type === 'nav' && typeof m.url === 'string' && sameSite(m.url)) {
         lastUrl.current = m.url;
         c.navigate(m.url, { tabId: tab.id });
@@ -196,10 +199,13 @@ function SiteFrame({ tab, ticket, origin, path, ctx }) {
         const jar = { cookies: m.cookies || {}, local: m.local || {} };
         c.saveJar(origin, jar);
         apiPost('/net/jar', { ticket, ...jar }).catch(() => {});
+      } else if (typeof m.type === 'string') {
+        // Уведомления и Push API сайта решает оболочка (разрешение по сайту, показ, подписка в push.bln).
+        c.push.onFrameMessage(m, { tabId: tab.id, origin, ticket, win: e.source });
       }
     };
     window.addEventListener('message', on);
-    return () => window.removeEventListener('message', on);
+    return () => { window.removeEventListener('message', on); cb.current.push.dropFrame(tab.id); };
   }, [ticket, origin, tab.id]);
 
   return <iframe ref={ref} className="bb-frame" sandbox={SANDBOX} src={src} title={tab.title} referrerPolicy="no-referrer" />;
@@ -219,7 +225,7 @@ function WebTab({ tab, target, ctx }) {
     setSt({ phase: 'loading', key });
     const t0 = performance.now();
     const origin = `${target.scheme}://${target.host}`;
-    c.loadJar(origin).then((jar) => openUrl(tb.url, c.net, jar, tb.ref)).then(async (r) => {
+    c.loadJar(origin).then((jar) => openUrl(tb.url, c.net, jar, tb.ref, c.push.permOf(origin))).then(async (r) => {
       if (!alive) return;
       const total = Math.round(performance.now() - t0);
       if (r.failed) {
@@ -337,6 +343,7 @@ function TabContent({ tab, ctx }) {
       if (t.page === 'settings') return <SettingsPage key={tab.reloadKey} ctx={ctx} />;
       if (t.page === 'about') return <AboutPage key={tab.reloadKey} />;
       if (t.page === 'terminal') return <TerminalPage key={tab.reloadKey} ctx={ctx} />;
+      if (t.page === 'notifications') return <NotificationsPage key={tab.reloadKey} ctx={ctx} />;
       return <GamePage key={tab.reloadKey} />;
     case 'web':
       return <WebTab tab={tab} target={t} ctx={ctx} />;
@@ -629,6 +636,27 @@ export default function App() {
     setGrid(false);
   }, [update, incognito]);
 
+  // Уведомления и push сайтов (этап Н10): разрешения — в настройках профиля.
+  const selectRef = useRef(null);
+  const setPerms = useCallback((perms) => update((d) => ({ ...d, settings: { ...d.settings, notifPerms: perms } })), [update]);
+  const selectById = useCallback((id) => selectRef.current?.(id), []);
+  const push = useBalnetPush({
+    store: data && data.owner === storeKey ? store : null,
+    incognito,
+    perms: data?.settings.notifPerms,
+    setPerms,
+    navigate,
+    selectTab: selectById,
+    label: profiles?.find((p) => p.id === profileId)?.name,
+  });
+
+  // Клик по системному уведомлению открывает /#<адрес> — открываем его в новой вкладке.
+  useEffect(() => {
+    const on = () => { const u = takeUrlFromHash(); if (u) navigate(u, { newTab: true }); };
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, [navigate]);
+
   const setTitle = useCallback((tabId, title) => update((d) => {
     const tab = d.tabs.find((t) => t.id === tabId);
     if (!tab || tab.title === title) return d;
@@ -766,6 +794,7 @@ export default function App() {
   });
 
   const selectTab = (tabId) => { update((d) => ({ ...d, activeId: tabId })); setGrid(false); };
+  selectRef.current = selectTab;
 
   // Закладки
   const setBookmarks = (fn) => update((d) => ({ ...d, bookmarks: fn(d.bookmarks) }));
@@ -870,6 +899,8 @@ export default function App() {
       [c[i], c[j]] = [c[j], c[i]];
       return c;
     }),
+    push,
+    selectTab,
     profiles,
     profileId,
     switchProfile,
@@ -889,6 +920,7 @@ export default function App() {
     ['История', 'Ctrl+H', () => navigate('balnet://history/', { newTab: true })],
     ['Закладки', '', () => navigate('balnet://bookmarks/', { newTab: true })],
     ['Терминал', '', () => navigate('balnet://terminal/', { newTab: true })],
+    ['Уведомления', push.unread ? <span className="bb-menu-badge">{push.unread}</span> : '', () => navigate('balnet://notifications/', { newTab: true })],
     [devtools ? 'Закрыть инструменты разработчика' : 'Инструменты разработчика', 'F12', () => { setDevtools((v) => !v); setMenu(null); }],
     ['Курьер БалНета', '', () => navigate('balnet://game/', { newTab: true })],
     null,
@@ -977,6 +1009,12 @@ export default function App() {
         <button className="bb-icon" onClick={() => reload(active.id)} aria-label="Перезагрузить">↻</button>
         <button className="bb-icon" onClick={() => setMenu('main')} aria-label="Меню">⋮</button>
       </nav>
+
+      {(() => {
+        const pr = push.prompts.find((x) => x.tabId === active.id);
+        return pr ? <PermissionPrompt prompt={pr} onAnswer={push.answerPrompt} /> : null;
+      })()}
+      <PushToasts items={push.toasts} onClick={push.clickToast} onClose={push.dropToast} />
 
       {menu && <div className="bb-backdrop" onClick={() => setMenu(null)} />}
       {menu === 'main' && (

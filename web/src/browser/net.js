@@ -59,5 +59,5 @@ export async function netCall(path, body, net) {
   }
 }
 
-/** Открыть адрес. jar — cookies и localStorage сайта из профиля (для сайтов игроков). */
-export const openUrl = (url, net, jar, referrer) => netCall('/net/open', { url, jar, referrer: referrer || undefined }, net);
+/** Открыть адрес. jar — cookies и localStorage сайта из профиля (для сайтов игроков), notifications — разрешение сайта. */
+export const openUrl = (url, net, jar, referrer, notifications) => netCall('/net/open', { url, jar, referrer: referrer || undefined, notifications }, net);

@@ -16,6 +16,12 @@ import { newSession, getSession, endSession, shell, saveFile, prompt } from '../
 
 const limited = (max) => ({ config: { rateLimit: { max, timeWindow: '1 minute' } } });
 
+/** Разрешение сайта на уведомления (решает ВлодБраузер). На http Push и уведомления недоступны — как в Chrome. */
+function notifPermission(v, scheme) {
+  if (scheme !== 'https') return 'denied';
+  return v === 'granted' || v === 'denied' ? v : 'default';
+}
+
 async function online() {
   if (await isPaused()) throw new HttpError(503, 'balnet_maintenance', 'БалНет на обслуживании: игровое время на паузе');
 }
@@ -123,7 +129,7 @@ export async function netRoutes(app) {
     if (p.scheme === 'https') r.tls = await tlsFor({ target: r.target, host: p.host });
     if (r.target?.startsWith('site:') && !(p.scheme === 'https' && !r.tls)) {
       const jar = cleanJar(b.jar);
-      r.ticket = createTicket({ clientId: b.client_id, clientIp: c.ip, referrer: refOrigin(b.referrer), resolver: c.resolverIp, target: r.target, host: p.host, scheme: p.scheme, origin: `${p.scheme}://${p.host}`, ...jar });
+      r.ticket = createTicket({ clientId: b.client_id, clientIp: c.ip, referrer: refOrigin(b.referrer), resolver: c.resolverIp, target: r.target, host: p.host, scheme: p.scheme, origin: `${p.scheme}://${p.host}`, notif: notifPermission(b.notifications, p.scheme), ...jar });
     }
     return r;
   });

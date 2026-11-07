@@ -304,3 +304,20 @@ body[data-app='browser'] #root { height: 100vh; height: 100dvh; min-height: 0; }
 .bp-mono { font-family: var(--mono, monospace); font-size: 13px; }
 .bb-pwbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 12px; background: var(--surface-2, #eef2f8); border-bottom: 1px solid var(--line); font-size: 14px; }
 .bb-keys { right: auto; min-width: 240px; }
+
+/* Уведомления и push (этап Н10) */
+.bb-perm { top: 84px; left: 8px; width: min(340px, calc(100vw - 16px)); padding: 14px 16px; font-size: 14px; }
+.bb-perm p { margin: 0 0 8px; padding-right: 20px; }
+.bb-perm-what { color: var(--muted); }
+.bb-perm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.bb-perm-close { position: absolute; top: 8px; right: 8px; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; }
+.bb-toasts { position: fixed; right: 12px; bottom: 12px; z-index: 60; display: flex; flex-direction: column; gap: 8px; width: min(360px, calc(100vw - 24px)); }
+.bb-toast { display: flex; align-items: flex-start; gap: 4px; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 10px 8px 10px 12px; animation: bb-toast-in .18s ease-out; }
+.bb-toast-main { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: flex-start; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; padding: 0; font: inherit; }
+.bb-toast-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.bb-toast-text b { font-size: 14px; }
+.bp-row-btn { width: 100%; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit; align-items: flex-start; }
+.bp-row-btn:hover { background: var(--surface-2); }
+.bb-menu-badge { background: var(--err); color: #fff; border-radius: 9px; padding: 0 6px; font-size: 12px; }
+@keyframes bb-toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (max-width: 700px) { .bb-toasts { bottom: 64px; } .bb-perm { top: 56px; } }
