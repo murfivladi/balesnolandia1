@@ -9,6 +9,7 @@ import { getSettings } from '../lib/settings.js';
 import { memberOrg, hasLicense } from '../lib/orgs.js';
 import {
   offers, buyHosting, ownAccount, renewHosting, addSite, removeSite, accountView, refreshUsage, rentServer, hostingMonth, deleteAccount, hosterName, siteByTarget,
+  provisionHosting, extendByHoster,
 } from '../lib/hosting.js';
 import { accountDir, siteDir, listDir, readFile, writeFile, makeDir, removePath, renamePath, extractZip } from '../lib/sitefs.js';
 import fs from 'node:fs/promises';
@@ -42,7 +43,8 @@ export async function hostingRoutes(app) {
   const actor = (req) => actorOf(req.gov);
 
   // Публично: тарифы всех хостеров (витрина сайта БалХоста).
-  app.get('/hosting/plans', async () => ({ offers: await offers(null, await currentMonth()) }));
+  // ?org_id=N — все тарифы хостера, в том числе скрытые с витрины (для его собственного сайта).
+  app.get('/hosting/plans', async (req) => ({ offers: await offers(null, await currentMonth(), { orgId: req.query?.org_id ? int(req.query.org_id, 'организация') : null }) }));
 
   app.get('/hosting', auth, async (req) => {
     const month = await currentMonth();
@@ -276,8 +278,8 @@ export async function hostingRoutes(app) {
       const server = await one("SELECT * FROM hosting_servers WHERE id = ? AND org_id = ? AND status <> 'closed'", [int(b.server_id, 'сервер'), org.id], conn);
       if (!server) throw notFound('Сервер не найден');
       const disk = int(b.disk_mb, 'место, МБ', { min: 1, max: server.disk_mb });
-      const r = await q('INSERT INTO hosting_plans (org_id, server_id, name, disk_mb, max_sites, price_month, kind, rpm, cpu_ms, ws_limit, cron_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [
-        org.id, server.id, str(b.name, 'название', { max: 80 }), disk, int(b.max_sites ?? 5, 'сайтов', { min: 1, max: 100 }), amountArg(b.price_month, 'цена'), ...planKind(b),
+      const r = await q('INSERT INTO hosting_plans (org_id, server_id, name, disk_mb, max_sites, price_month, listed, kind, rpm, cpu_ms, ws_limit, cron_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+        org.id, server.id, str(b.name, 'название', { max: 80 }), disk, int(b.max_sites ?? 5, 'сайтов', { min: 1, max: 100 }), amountArg(b.price_month, 'цена'), b.listed ? 1 : 0, ...planKind(b),
       ], conn);
       await audit(conn, actor(req), 'hosting.plan_create', 'organization', org.id, { plan: r.insertId });
       return { id: r.insertId };
@@ -290,8 +292,74 @@ export async function hostingRoutes(app) {
       const org = await memberOrg(conn, int(req.params.id, 'id'), req.gov.id, { directorOnly: true });
       const p = await one('SELECT * FROM hosting_plans WHERE id = ? AND org_id = ?', [int(req.params.pid, 'тариф'), org.id], conn);
       if (!p) throw notFound('Тариф не найден');
-      await q('UPDATE hosting_plans SET active = ?, price_month = ? WHERE id = ?', [b.active !== undefined ? (b.active ? 1 : 0) : p.active, b.price_month !== undefined ? amountArg(b.price_month, 'цена') : p.price_month, p.id], conn);
+      await q('UPDATE hosting_plans SET active = ?, price_month = ?, listed = ? WHERE id = ?', [b.active !== undefined ? (b.active ? 1 : 0) : p.active, b.price_month !== undefined ? amountArg(b.price_month, 'цена') : p.price_month, b.listed !== undefined ? (b.listed ? 1 : 0) : p.listed, p.id], conn);
     });
+    return { ok: true };
+  });
+
+  // ——— API хостера: выдача хостинга клиентам со своего сайта ———
+  const clientView = (a) => ({
+    id: a.id, plan_id: a.plan_id, plan: a.plan_name, status: a.status, paid_until_month: a.paid_until_month, owner_gov_user_id: a.owner_gov_user_id,
+    owner_name: a.owner_name, note: a.hoster_note, server_ip: a.ip, ssh_user: `u${a.id}`, sites: a.sites ? String(a.sites).split(',') : [], used_bytes: Number(a.used_bytes), created_month: a.created_month,
+  });
+  const CLIENTS = `SELECT a.*, p.name AS plan_name, h.ip, g.display_name AS owner_name,
+      (SELECT GROUP_CONCAT(s.host) FROM hosting_sites s WHERE s.account_id = a.id) AS sites
+    FROM hosting_accounts a JOIN hosting_plans p ON p.id = a.plan_id JOIN hosting_servers h ON h.id = a.server_id LEFT JOIN gov_users g ON g.id = a.owner_gov_user_id`;
+  const clientOf = async (conn, org, aid) => {
+    const a = await one(`${CLIENTS} WHERE a.id = ? AND a.org_id = ? AND a.status <> 'deleted'`, [int(aid, 'аккаунт'), org.id], conn);
+    if (!a) throw notFound('Клиентский аккаунт не найден');
+    return a;
+  };
+  /** Клиент по номеру паспорта БФ или по email ВлодУслуг. */
+  const customerOf = async (conn, b) => {
+    let row = null;
+    if (b.passport_no) row = await one("SELECT c.gov_user_id AS id FROM passports p JOIN citizens c ON c.id = p.citizen_id WHERE p.number = ? AND p.status = 'active'", [String(b.passport_no).trim()], conn);
+    else if (b.email) row = await one('SELECT id FROM gov_users WHERE email = ?', [String(b.email).trim().toLowerCase()], conn);
+    else if (b.gov_user_id) row = await one('SELECT id FROM gov_users WHERE id = ?', [int(b.gov_user_id, 'клиент')], conn);
+    if (!row) throw notFound('Клиент не найден: укажите passport_no, email или gov_user_id');
+    const citizen = await citizenOf(row.id, conn);
+    if (!citizen || !(await activePassport(citizen.id, conn))) throw bad('no_passport', 'У клиента нет действующего паспорта БФ');
+    return row.id;
+  };
+
+  app.get('/orgs/:id/hosting/accounts', auth, async (req) => {
+    const org = await memberOrg(null, int(req.params.id, 'id'), req.gov.id);
+    const rows = await q(`${CLIENTS} WHERE a.org_id = ? AND a.status <> 'deleted' ORDER BY a.id DESC`, [org.id]);
+    return { accounts: rows.map(clientView), month: await currentMonth() };
+  });
+  app.get('/orgs/:id/hosting/accounts/:aid', auth, async (req) => {
+    const org = await memberOrg(null, int(req.params.id, 'id'), req.gov.id);
+    return { account: clientView(await clientOf(null, org, req.params.aid)) };
+  });
+  app.post('/orgs/:id/hosting/accounts', auth, async (req) => {
+    const b = req.body || {};
+    return tx(async (conn) => {
+      const org = await memberOrg(conn, int(req.params.id, 'id'), req.gov.id, { directorOnly: true });
+      const owner = await customerOf(conn, b);
+      const r = await provisionHosting(conn, { orgId: org.id, planId: int(b.plan_id, 'тариф'), ownerGovUserId: owner, months: b.months, note: b.note ? str(b.note, 'заметка', { max: 200 }) : null });
+      await audit(conn, actor(req), 'hosting.provision', 'hosting_account', r.account_id, { org: org.id, owner });
+      return r;
+    });
+  });
+  app.post('/orgs/:id/hosting/accounts/:aid/extend', auth, async (req) => tx(async (conn) => {
+    const org = await memberOrg(conn, int(req.params.id, 'id'), req.gov.id, { directorOnly: true });
+    return extendByHoster(conn, { account: await clientOf(conn, org, req.params.aid), months: req.body?.months });
+  }));
+  app.post('/orgs/:id/hosting/accounts/:aid/status', auth, async (req) => tx(async (conn) => {
+    const org = await memberOrg(conn, int(req.params.id, 'id'), req.gov.id, { directorOnly: true });
+    const a = await clientOf(conn, org, req.params.aid);
+    const want = req.body?.status;
+    need(want === 'active' || want === 'suspended', 'status: active или suspended');
+    if (want === 'active') need(a.paid_until_month > (await currentMonth(conn)), 'Срок истёк — сначала продлите (extend)');
+    await q('UPDATE hosting_accounts SET status = ? WHERE id = ?', [want, a.id], conn);
+    (await import('../lib/net.js')).invalidateNet();
+    return { status: want };
+  }));
+  app.delete('/orgs/:id/hosting/accounts/:aid', auth, async (req) => {
+    const org = await memberOrg(null, int(req.params.id, 'id'), req.gov.id, { directorOnly: true });
+    const a = await clientOf(null, org, req.params.aid);
+    await deleteAccount(await one('SELECT * FROM hosting_accounts WHERE id = ?', [a.id]));
+    await audit(null, actor(req), 'hosting.client_delete', 'hosting_account', a.id);
     return { ok: true };
   });
 }

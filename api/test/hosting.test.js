@@ -242,7 +242,7 @@ test('хостер: лицензия, аренда сервера со счёт�
   const srv = await anna.gov.post(`/api/gov/orgs/${org.id}/servers`);
   assert.match(srv.ip, /^50\.2\.0\.\d+$/);
   assert.equal(await bal(orgAcc.account_id), 10000 - srv.rent);
-  const plan = await anna.gov.post(`/api/gov/orgs/${org.id}/plans`, { server_id: srv.id, name: 'Анна-Про', disk_mb: 50, max_sites: 5, price_month: 1200 });
+  const plan = await anna.gov.post(`/api/gov/orgs/${org.id}/plans`, { server_id: srv.id, name: 'Анна-Про', disk_mb: 50, max_sites: 5, price_month: 1200, listed: true });
   const offers = (await boris.gov.get('/api/gov/hosting')).offers;
   assert.ok(offers.some((x) => x.id === plan.id && x.hoster === 'АннаХост'));
   const before = await bal(orgAcc.account_id);
@@ -253,6 +253,31 @@ test('хостер: лицензия, аренда сервера со счёт�
   assert.equal(h.server_ip, srv.ip);
   const ptr = await dev.post('/api/net/resolve', { client_id: DEV, name: `${srv.ip.split('.').reverse().join('.')}.in-addr.arpa`, type: 'PTR' });
   assert.equal(ptr.answer[0].data, `s${srv.id}.dc.bln.`);
+  assert.equal(await totalBalance(), 0);
+
+  // Свой хостинг на своём сайте: скрытый тариф и выдача клиентам через API хостера.
+  const hidden = await anna.gov.post(`/api/gov/orgs/${org.id}/plans`, { server_id: srv.id, name: 'Тайный', disk_mb: 10, max_sites: 2, price_month: 500 });
+  assert.ok(!(await boris.gov.get('/api/gov/hosting')).offers.some((x) => x.id === hidden.id), 'скрытый тариф не на витрине hosting.bln');
+  const own = (await boris.gov.get(`/api/gov/hosting/plans?org_id=${org.id}`)).offers;
+  assert.ok(own.some((x) => x.id === hidden.id && x.listed === false), 'тарифы хостера для его сайта');
+  const bp = (await boris.gov.get('/api/gov/me')).passport.number;
+  await assert.rejects(boris.gov.post(`/api/gov/orgs/${org.id}/hosting/accounts`, { plan_id: hidden.id, passport_no: bp }), /директор|сотрудник|not_found/);
+  const month = (await anna.gov.get(`/api/gov/orgs/${org.id}/hosting/accounts`)).month;
+  const prov = await anna.gov.post(`/api/gov/orgs/${org.id}/hosting/accounts`, { plan_id: hidden.id, passport_no: bp, months: 2, note: 'заказ №1' });
+  assert.equal(prov.paid_until_month, month + 2);
+  const mine = (await boris.gov.get('/api/gov/hosting')).accounts.find((x) => x.id === prov.account_id);
+  assert.equal(mine.status, 'active', 'клиент видит хостинг у себя');
+  await boris.gov.post(`/api/gov/hosting/${prov.account_id}/sites`, { host: 'shop.boris.bln' });
+  let cl = (await anna.gov.get(`/api/gov/orgs/${org.id}/hosting/accounts/${prov.account_id}`)).account;
+  assert.deepEqual([cl.note, cl.sites], ['заказ №1', ['shop.boris.bln']]);
+  assert.equal((await anna.gov.post(`/api/gov/orgs/${org.id}/hosting/accounts/${prov.account_id}/extend`, { months: 1 })).paid_until_month, month + 3);
+  await anna.gov.post(`/api/gov/orgs/${org.id}/hosting/accounts/${prov.account_id}/status`, { status: 'suspended' });
+  cl = (await anna.gov.get(`/api/gov/orgs/${org.id}/hosting/accounts/${prov.account_id}`)).account;
+  assert.equal(cl.status, 'suspended');
+  await anna.gov.post(`/api/gov/orgs/${org.id}/hosting/accounts/${prov.account_id}/status`, { status: 'active' });
+  await anna.gov.delete(`/api/gov/orgs/${org.id}/hosting/accounts/${prov.account_id}`);
+  assert.ok(!(await boris.gov.get('/api/gov/hosting')).accounts.some((x) => x.id === prov.account_id));
+  await assert.rejects(anna.gov.post(`/api/gov/orgs/${org.id}/hosting/accounts`, { plan_id: hidden.id, passport_no: 'НЕТ-0000' }), /Клиент не найден/);
   assert.equal(await totalBalance(), 0);
 });
 

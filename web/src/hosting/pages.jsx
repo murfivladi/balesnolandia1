@@ -318,9 +318,10 @@ export function OrgHosting({ orgId, director, kind }) {
       <div className="list">
         {data.plans.map((p) => (
           <div key={p.id} className="list-item">
-            <div className="li-main"><div className="li-title">«{p.name}» {p.kind === 'virtual' && <Badge kind="ok">виртуальный</Badge>}</div><div className="li-sub">{p.disk_mb} МБ · до {p.max_sites} сайтов{p.kind === 'virtual' ? ` · ${p.rpm} запр./мин · CPU ${p.cpu_ms} мс · WS ${p.ws_limit} · cron ${p.cron_min} мин` : ''}</div></div>
+            <div className="li-main"><div className="li-title">«{p.name}» {p.kind === 'virtual' && <Badge kind="ok">виртуальный</Badge>} {p.listed ? <Badge>на витрине hosting.bln</Badge> : <Badge kind="warn">только на вашем сайте</Badge>}</div><div className="li-sub">id {p.id} · {p.disk_mb} МБ · до {p.max_sites} сайтов{p.kind === 'virtual' ? ` · ${p.rpm} запр./мин · CPU ${p.cpu_ms} мс · WS ${p.ws_limit} · cron ${p.cron_min} мин` : ''}</div></div>
             <Money value={p.price_month} />
             {director && <ActionButton size="sm" kind="ghost" action={async () => { await patch(`/gov/orgs/${orgId}/plans/${p.id}`, { active: !p.active }); reload(); }}>{p.active ? 'Снять с продажи' : 'Продавать'}</ActionButton>}
+            {director && <ActionButton size="sm" kind="ghost" action={async () => { await patch(`/gov/orgs/${orgId}/plans/${p.id}`, { listed: !p.listed }); reload(); }}>{p.listed ? 'Убрать с витрины' : 'На витрину'}</ActionButton>}
           </div>
         ))}
       </div>
@@ -342,6 +343,7 @@ export function OrgHosting({ orgId, director, kind }) {
             )}
           </div>
           <MoneyInput label="Цена в игровой месяц (с НДС)" value={plan.price_month} onChange={(v) => setPlan({ ...plan, price_month: v })} />
+          <label className="row small"><input type="checkbox" checked={!!plan.listed} onChange={(e) => setPlan({ ...plan, listed: e.target.checked })} /> Показывать на витрине hosting.bln (иначе тариф продаётся только с вашего сайта через API)</label>
         </Form>
       )}
     </div>

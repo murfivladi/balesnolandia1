@@ -34,12 +34,17 @@ export async function hosterName(conn, orgId) {
 }
 
 /** Тарифы на продажу: Госхостинг + хостеры с действующей лицензией и работающим сервером. */
-export async function offers(conn, month) {
-  const rows = await q("SELECT p.*, s.status AS server_status, s.name AS server_name, s.ip FROM hosting_plans p JOIN hosting_servers s ON s.id = p.server_id WHERE p.active = 1 AND s.status = 'active' ORDER BY p.org_id IS NOT NULL, p.price_month", [], conn);
+/**
+ * Тарифы в продаже. По умолчанию — витрина hosting.bln: госхостинг и тарифы хостеров с listed = 1.
+ * orgId — все тарифы этого хостера (для его сайта); all — любой продаваемый тариф (покупка по id).
+ */
+export async function offers(conn, month, { orgId = null, all = false } = {}) {
+  const where = orgId ? 'p.org_id = ?' : all ? '1 = 1' : '(p.org_id IS NULL OR p.listed = 1)';
+  const rows = await q(`SELECT p.*, s.status AS server_status, s.name AS server_name, s.ip FROM hosting_plans p JOIN hosting_servers s ON s.id = p.server_id WHERE p.active = 1 AND s.status = 'active' AND ${where} ORDER BY p.org_id IS NOT NULL, p.price_month`, orgId ? [orgId] : [], conn);
   const out = [];
   for (const p of rows) {
     if (p.org_id && !(await hasLicense(conn, p.org_id, 'hosting', month))) continue;
-    out.push({ id: p.id, org_id: p.org_id, hoster: await hosterName(conn, p.org_id), name: p.name, kind: p.kind, disk_mb: p.disk_mb, max_sites: p.max_sites, price_month: Number(p.price_month), rpm: p.rpm, cpu_ms: p.cpu_ms, ws_limit: p.ws_limit, cron_min: p.cron_min, server: disp(p.server_name), ip: p.ip });
+    out.push({ id: p.id, org_id: p.org_id, hoster: await hosterName(conn, p.org_id), name: p.name, kind: p.kind, disk_mb: p.disk_mb, max_sites: p.max_sites, price_month: Number(p.price_month), listed: p.org_id ? !!p.listed : true, rpm: p.rpm, cpu_ms: p.cpu_ms, ws_limit: p.ws_limit, cron_min: p.cron_min, server: disp(p.server_name), ip: p.ip });
   }
   return out;
 }
@@ -103,7 +108,7 @@ onInvoicePaid('hosting_order', async (conn, inv) => {
 
 export async function buyHosting(conn, { govUserId, planId, months, ownerOrgId = null }) {
   const month = await currentMonth(conn);
-  const plan = (await offers(conn, month)).find((p) => p.id === Number(planId));
+  const plan = (await offers(conn, month, { all: true })).find((p) => p.id === Number(planId));
   if (!plan) throw notFound('Тариф не найден или не продаётся');
   if (ownerOrgId && !(await orgRole(conn, ownerOrgId, govUserId))) throw forbidden('Вы не сотрудник этой организации');
   const m = await checkMonths(months);
@@ -116,6 +121,39 @@ export async function buyHosting(conn, { govUserId, planId, months, ownerOrgId =
   const account = await one('SELECT * FROM hosting_accounts WHERE id = ?', [r.insertId], conn);
   const order = await createOrder(conn, { account, govUserId, months: m, amount: Number(row.price_month) * m });
   return { account_id: account.id, ...order };
+}
+
+/**
+ * Хостер выдаёт хостинг клиенту сам (деньги он уже получил на своём сайте, например через эквайринг):
+ * аккаунт сразу работает на N месяцев, без квитанции. Клиент — гражданин с паспортом.
+ */
+export async function provisionHosting(conn, { orgId, planId, ownerGovUserId, months, note = null }) {
+  const month = await currentMonth(conn);
+  const plan = (await offers(conn, month, { orgId })).find((p) => p.id === Number(planId));
+  if (!plan) throw notFound('Тариф не найден или не продаётся (нужны лицензия, активный тариф и оплаченный сервер)');
+  const m = await checkMonths(months);
+  const row = await one('SELECT * FROM hosting_plans WHERE id = ?', [plan.id], conn);
+  await one('SELECT id FROM hosting_servers WHERE id = ? FOR UPDATE', [row.server_id], conn);
+  if ((await freeDiskMb(conn, row.server_id)) < row.disk_mb) throw bad('server_full', 'На сервере закончилось место — арендуйте ещё сервер');
+  const r = await q("INSERT INTO hosting_accounts (plan_id, server_id, org_id, owner_gov_user_id, status, paid_until_month, created_month, hoster_note) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)", [
+    row.id, row.server_id, orgId, ownerGovUserId, month + m, month, note,
+  ], conn);
+  await fs.mkdir(accountDir(r.insertId), { recursive: true });
+  invalidateNet();
+  await notify(conn, 'gov', ownerGovUserId, { title: `Хостинг «${row.name}» подключён`, body: `${await hosterName(conn, orgId)}: работает до ${month + m}-го игрового месяца`, link: `${LINK}/${r.insertId}` });
+  return { account_id: r.insertId, paid_until_month: month + m };
+}
+
+/** Хостер продлевает аккаунт своего клиента (оплата — на его стороне). */
+export async function extendByHoster(conn, { account, months }) {
+  need(['active', 'suspended'].includes(account.status), 'Аккаунт нельзя продлить');
+  const month = await currentMonth(conn);
+  const m = await checkMonths(months);
+  const until = Math.max(account.paid_until_month, month) + m;
+  await q("UPDATE hosting_accounts SET status = 'active', paid_until_month = ? WHERE id = ?", [until, account.id], conn);
+  invalidateNet();
+  if (account.owner_gov_user_id) await notify(conn, 'gov', account.owner_gov_user_id, { title: 'Хостинг продлён', body: `Работает до ${until}-го игрового месяца`, link: `${LINK}/${account.id}` });
+  return { paid_until_month: until };
 }
 
 export async function canManageAccount(conn, a, govUserId) {
