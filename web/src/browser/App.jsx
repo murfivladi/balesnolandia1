@@ -184,7 +184,8 @@ function SiteFrame({ tab, ticket, origin, path, ctx }) {
       const c = cb.current;
       // Оболочка знает открытые фреймы сайта: им приходит новое разрешение на уведомления.
       c.push.seenFrame(tab.id, { win: e.source, origin, ticket });
-      if (m.type === 'nav' && typeof m.url === 'string' && sameSite(m.url)) {
+      // Служебная страница переадресации шлюза — не адрес сайта: её nav не должен перебить переход.
+      if (m.type === 'nav' && typeof m.url === 'string' && sameSite(m.url) && !new URL(m.url).pathname.startsWith('/__balnet_redirect')) {
         lastUrl.current = m.url;
         c.navigate(m.url, { tabId: tab.id });
         if (m.title) c.setTitle(tab.id, String(m.title).slice(0, 200));

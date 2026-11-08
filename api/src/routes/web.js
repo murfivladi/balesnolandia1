@@ -108,7 +108,9 @@ export async function webRoutes(app) {
       const to = String(req.query.to || '');
       const ticket = getTicket(req.params.ticket);
       if (!ticket || !/^https?:\/\//.test(to)) return page(reply, 400, 'Неверная переадресация', '');
-      return reply.type('text/html; charset=utf-8').send(injectShim(`<!doctype html><html><head><title>Переадресация</title></head><body><script>parent.postMessage({__balnet:1,ticket:${JSON.stringify(req.params.ticket)},type:'open',url:${JSON.stringify(to).replace(/</g, '\\u003c')}},'*')</script></body></html>`, { ticket: req.params.ticket, prefix: `/api/net/web/${req.params.ticket}`, origin: ticket.origin, cookies: ticket.cookies, local: ticket.local }));
+      // Без shim: он сообщил бы браузеру адрес этой служебной страницы (nav) сразу после open,
+      // и вкладка вернулась бы на сайт вместо перехода (например, на страницу входа ВлодУслуг).
+      return reply.type('text/html; charset=utf-8').send(`<!doctype html><html><head><meta charset="utf-8"><title>Переадресация</title></head><body><script>parent.postMessage({__balnet:1,ticket:${JSON.stringify(req.params.ticket)},type:'open',url:${JSON.stringify(to).replace(/</g, '\\u003c')}},'*')</script></body></html>`);
     });
     sub.route({ method: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: '/web/:ticket/*', handler: serve });
     sub.get('/web/:ticket', async (req, reply) => reply.redirect(`/api/net/web/${req.params.ticket}/`));
