@@ -58,5 +58,23 @@ test('поломка DNS, vhost, доверия и сертификата — в
   }
   assert.ok(await one("SELECT id FROM dns_records WHERE zone_id = ? AND type = 'MX'", [mz.id]));
   assert.ok(!(await one("SELECT id FROM net_vhosts WHERE host = 'mail.bln' AND target = 'site:999'")));
-  assert.deepEqual((await admin.post('/api/admin/pki/gov-restore')).changes, [], 'повтор — без изменений');
+  const again = await admin.post('/api/admin/pki/gov-restore');
+  assert.deepEqual(again.changes, [], 'повтор — без изменений');
+  assert.deepEqual(again.problems, []);
+});
+
+test('DNSSEC: испорченный DS у bank.bln — восстановление чинит, подпись проверяется', async () => {
+  const { resolve, flushResolverCache } = await import('../src/lib/dns.js');
+  const ask = () => resolve({ resolverIp: '50.0.0.53', clientIp: '50.1.0.20', clientProviderId: null, name: 'pay.bank.bln', type: 'A', fresh: true });
+  const bln = await one("SELECT id FROM dns_zones WHERE name = 'bln.'");
+  await q("UPDATE dns_records SET data = '11111 13 2 00000000000000000000000000000000000000000000000000000000000000ff' WHERE zone_id = ? AND name = 'bank.bln.' AND type = 'DS'", [bln.id]);
+  await q('UPDATE dns_zones SET serial = serial + 1 WHERE id = ?', [bln.id]);
+  (await import('../src/lib/net.js')).invalidateNet();
+  flushResolverCache();
+  const r = await admin.post('/api/admin/pki/gov-restore');
+  assert.deepEqual(r.problems, []);
+  assert.equal((await one("SELECT data FROM dns_records WHERE zone_id = ? AND name = 'bank.bln.' AND type = 'DS'", [bln.id])).data.startsWith('11111'), false);
+  const ok = await ask();
+  assert.equal(ok.rcode, 'NOERROR');
+  assert.equal(ok.dnssec, 'secure');
 });

@@ -276,7 +276,7 @@ export function AboutPage() {
   );
 }
 
-export function ErrorPage({ code, host, onReload, ctx, ip }) {
+export function ErrorPage({ code, host, onReload, ctx, ip, dns }) {
   const e = NET_ERRORS[code] || NET_ERRORS.ERR_INVALID_URL;
   const [game, setGame] = useState(code === 'ERR_INTERNET_DISCONNECTED');
   return (
@@ -286,6 +286,13 @@ export function ErrorPage({ code, host, onReload, ctx, ip }) {
       <p>{e.text(host || '')}</p>
       <ul>{e.tips.map((t) => <li key={t}>{t}</li>)}</ul>
       {ip && <p className="bp-muted">IP-адрес сервера: {ip}</p>}
+      {dns && dns.rcode && dns.rcode !== 'NOERROR' && (
+        <p className="bp-muted">
+          Ответ DNS: <b>{dns.rcode}</b>{dns.resolver ? ` от ${dns.resolver.name ? `${dns.resolver.name.replace(/\.$/, '')} ` : ''}(${dns.resolver.ip})` : ''}
+          {dns.rcode === 'REFUSED' && ' — этот резолвер не обслуживает ваш адрес. В настройках выберите «DNS провайдера» или ВлодDNS 50.0.0.53.'}
+          {dns.ede && <><br />{dns.ede}</>}
+        </p>
+      )}
       <p className="bp-code">{code}</p>
       <div className="bp-error-actions">
         <button className="bp-btn bp-btn-primary" onClick={onReload}>Перезагрузить</button>

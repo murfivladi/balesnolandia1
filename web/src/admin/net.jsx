@@ -316,12 +316,14 @@ function RestoreGov() {
     <>
       <ActionButton kind="danger" confirm="Восстановить DNS-зоны и записи, привязки серверов, доверие корневому УЦ и сертификаты всех госсайтов? Чужие записи на именах госсайтов будут удалены." action={async () => {
         const r = await post('/admin/pki/gov-restore');
-        setRes(r.changes);
-        toast(r.changes.length ? `Исправлено: ${r.changes.length}` : 'Всё уже в порядке', 'ok');
+        setRes(r);
+        toast(r.problems.length ? `Остались проблемы: ${r.problems.length}` : r.changes.length ? `Исправлено: ${r.changes.length}` : 'Всё уже в порядке', r.problems.length ? 'err' : 'ok');
       }}>Восстановить госсервисы</ActionButton>
       {res && (
         <Modal title="Восстановление госсервисов" onClose={() => setRes(null)} footer={<Button onClick={() => setRes(null)}>Закрыть</Button>}>
-          {res.length ? <ul className="small mono">{res.map((x, i) => <li key={i}>{x}</li>)}</ul> : <p>Всё уже было в порядке: DNS, серверы и сертификаты госсайтов исправны.</p>}
+          {res.changes.length ? <ul className="small mono">{res.changes.map((x, i) => <li key={i}>{x}</li>)}</ul> : <p>Ничего чинить не пришлось.</p>}
+          <h3>Проверка: госсайты через ВлодDNS</h3>
+          {res.problems.length ? <ul className="small mono form-error">{res.problems.map((x, i) => <li key={i}>{x}</li>)}</ul> : <p className="form-ok">Все госсайты резолвятся, DNSSEC проверен.</p>}
         </Modal>
       )}
     </>

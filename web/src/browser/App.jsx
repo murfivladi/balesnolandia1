@@ -308,7 +308,7 @@ function WebTab({ tab, target, ctx }) {
     );
   }
   const d = st.d;
-  if (!d.ok) return <ErrorPage code={d.code} host={target.host} onReload={reload} ctx={ctx} ip={d.ip} />;
+  if (!d.ok) return <ErrorPage code={d.code} host={target.host} onReload={reload} ctx={ctx} ip={d.ip} dns={d.dns} />;
   if (d.target?.startsWith('site:') && d.ticket) {
     return <SiteFrame tab={tab} ticket={d.ticket} origin={`${target.scheme}://${target.host}`} path={target.path} ctx={ctx} />;
   }

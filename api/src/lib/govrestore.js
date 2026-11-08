@@ -3,7 +3,8 @@
 // Чужие записи на именах госсайтов (подмена A/CNAME, лишние NS, чужой vhost) удаляются.
 import { q, one } from '../db.js';
 import { invalidateNet } from './net.js';
-import { flushResolverCache } from './dns.js';
+import { flushResolverCache, resolve } from './dns.js';
+import { resetDnssecCache, ensureDnssec } from './dnssec.js';
 import { renewGovCerts, ensurePki, resetPkiCache } from './pki.js';
 
 const GOV_NS = ['ns1.gov.bln.', 'ns2.gov.bln.'];
@@ -135,6 +136,20 @@ export async function restoreGovServices() {
   }
   for (const id of touched) await q('UPDATE dns_zones SET serial = serial + 1 WHERE id = ?', [id]);
 
+  // ——— DNSSEC: госзоны подписаны, у каждой есть ключ, DS у родителя совпадает с ключом ———
+  // (если зону удалили и создали заново или DS испорчен, резолверы видят «bogus» и отвечают SERVFAIL)
+  const names = ['bln.', ...OWN_ZONES];
+  const off = await q(`UPDATE dns_zones SET dnssec = 1 WHERE dnssec = 0 AND name IN (${names.map(() => '?').join(',')})`, names);
+  if (off.affectedRows) log.push(`DNSSEC снова включён на госзонах: ${off.affectedRows}`);
+  const dsBefore = await q("SELECT name, data FROM dns_records WHERE type = 'DS' ORDER BY name, data");
+  resetDnssecCache();
+  invalidateNet();
+  await ensureDnssec();
+  const dsAfter = await q("SELECT name, data FROM dns_records WHERE type = 'DS' ORDER BY name, data");
+  const key = (r) => `${r.name} ${r.data}`;
+  const was = new Set(dsBefore.map(key));
+  for (const r of dsAfter) if (!was.has(key(r))) log.push(`${r.name} DS: исправлена подпись у родительской зоны`);
+
   // ——— Привязки сайтов к госсерверам ———
   for (const [host, , ips, target] of SITES) {
     for (const h of [host, `www.${host}`]) {
@@ -163,6 +178,15 @@ export async function restoreGovServices() {
   if (after > before) log.push(`выпущено сертификатов госсайтов: ${after - before}`);
 
   invalidateNet();
+  resetDnssecCache();
   flushResolverCache();
-  return { changes: log, ok: true };
+
+  // ——— Самопроверка: каждый госсайт резолвится через ВлодDNS с проверкой DNSSEC ———
+  const problems = [];
+  for (const [host] of SITES) {
+    const r = await resolve({ resolverIp: '50.0.0.53', clientIp: '50.1.0.20', clientProviderId: null, name: host, type: 'A', fresh: true });
+    if (r.rcode !== 'NOERROR' || !r.answer.some((x) => x.type === 'A')) problems.push(`${host}: ${r.rcode}${r.ede ? ` — ${r.ede}` : ''}`);
+  }
+  flushResolverCache();
+  return { changes: log, problems, ok: !problems.length };
 }
