@@ -54,7 +54,19 @@ struct BrowserView: View {
             ProfilesView().environment(browser)
         }
         .alert(browser.dialogs.current.map { "Сайт \($0.host) сообщает" } ?? "", isPresented: Binding(get: { browser.dialogs.current != nil }, set: { if !$0 { browser.dialogs.finish(false, nil) } })) {
-            DialogButtons(dialogs: browser.dialogs)
+            if let d = browser.dialogs.current {
+                switch d.kind {
+                case .alert:
+                    Button("OK") { browser.dialogs.finish(true, nil) }
+                case .confirm:
+                    Button("Отмена", role: .cancel) { browser.dialogs.finish(false, nil) }
+                    Button("OK") { browser.dialogs.finish(true, nil) }
+                case .prompt:
+                    TextField("", text: $promptText)
+                    Button("Отмена", role: .cancel) { browser.dialogs.finish(false, nil) }
+                    Button("OK") { browser.dialogs.finish(true, promptText) }
+                }
+            }
         } message: {
             Text(browser.dialogs.current?.message ?? "")
         }
