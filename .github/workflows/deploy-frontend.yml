@@ -8,6 +8,7 @@ on:
     paths:
       - 'web/**'
       - 'shared/**'
+      - 'ios/**'
       - 'package.json'
       - 'package-lock.json'
       - '.nvmrc'
@@ -68,9 +69,15 @@ jobs:
           TEST_DB_NAME: bln_test
       - name: Сборка сайта
         run: npm run build -w web
+      - name: Архив ВлодБраузера для iOS (Swift Playgrounds) на страницу /ios/
+        run: |
+          cd ios
+          zip -qr -X ../web/dist/ios/VlodBrowser.swiftpm.zip VlodBrowser.swiftpm -x '*/.DS_Store' '*/.build/*' '*/.swiftpm/*'
       - name: Проверка файлов и адресов сборки
         run: |
-          for page in index.html apps/index.html bank/index.html pos/index.html services/index.html admin/index.html reg/index.html hosting/index.html nalog/index.html ca/index.html poisk/index.html hub/index.html mail/index.html pay/index.html push/index.html; do
+          test -s web/dist/ios/VlodBrowser.swiftpm.zip
+          unzip -l web/dist/ios/VlodBrowser.swiftpm.zip | grep -q 'VlodBrowser.swiftpm/Package.swift'
+          for page in index.html apps/index.html ios/index.html bank/index.html pos/index.html services/index.html admin/index.html reg/index.html hosting/index.html nalog/index.html ca/index.html poisk/index.html hub/index.html mail/index.html pay/index.html push/index.html; do
             test -s "web/dist/$page"
             grep -Eq 'src="/assets/[^"]+\.js"' "web/dist/$page"
           done

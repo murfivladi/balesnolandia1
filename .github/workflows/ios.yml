@@ -1,0 +1,60 @@
+name: iOS
+
+# Сборка ВлодБраузера для iOS (ios/VlodBrowser.swiftpm) под симулятор — ловит ошибки компиляции до того,
+# как проект откроют в Swift Playgrounds на iPad. Подпись не нужна, на устройство ничего не ставится.
+on:
+  push:
+    branches-ignore: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ios/VlodBrowser.swiftpm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode
+        run: |
+          latest=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
+          xcodebuild -version
+      - name: Схема проекта
+        id: scheme
+        run: |
+          xcodebuild -list -json > list.json
+          cat list.json
+          scheme=$(python3 -c "import json; d=json.load(open('list.json')); w=d.get('workspace') or d.get('project'); print(w['schemes'][0])")
+          echo "name=$scheme" >> "$GITHUB_OUTPUT"
+      - name: Сборка под симулятор iOS
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -scheme "${{ steps.scheme.outputs.name }}" \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ../../.build-ios \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build.log | grep -E '(error|warning): |BUILD (SUCCEEDED|FAILED)' || true
+          grep -q 'BUILD SUCCEEDED' build.log
+      - name: Журнал сборки
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: ios/VlodBrowser.swiftpm/build.log

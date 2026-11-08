@@ -271,4 +271,10 @@ test('admin: addresses and SMTP live in settings, secrets are hidden', async () 
   await assert.rejects(admin.patch('/api/admin/settings', { public_web_url: 'not a url' }), /invalid/);
   const srv = await admin.get('/api/admin/server');
   assert.equal(srv.web_url, 'https://example.bf/game');
+  // ВлодБраузер для iOS узнаёт последнюю версию и где её скачать — без входа.
+  const { IOS_APP } = await import('@bln/shared/app-versions.js');
+  const ios = await client(app).get('/api/app/ios');
+  assert.equal(ios.version, IOS_APP.version);
+  assert.equal(ios.build, IOS_APP.build);
+  assert.equal(ios.url, 'https://example.bf/game/ios/');
 });
