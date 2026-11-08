@@ -23,7 +23,7 @@ export function NetSection() {
   const ov = useAsync(() => get('/admin/net/overview'), []);
   return (
     <div className="page">
-      <h1>БалНет</h1>
+      <div className="row"><h1 style={{ flex: 1 }}>БалНет</h1><RestoreGov /></div>
       <p className="muted">Сеть ВлодБраузера: провайдеры выдают игрокам IP-адреса, DNS идёт по цепочке корень → зона верхнего уровня → серверы имён домена. TTL считается в игровых секундах (в игровом месяце 30 игровых суток).</p>
       <Tabs value={tab} onChange={setTab} tabs={[{ value: 'registry', label: 'Домены и организации' }, { value: 'hosting', label: 'Хостинг' }, { value: 'pki', label: 'Сертификаты' }, { value: 'search', label: 'ВлодПоиск' }, { value: 'mail', label: 'Почта' }, { value: 'pay', label: 'Эквайринг' }, { value: 'news', label: 'Новости' }, { value: 'zones', label: 'Зоны DNS' }, { value: 'hosts', label: 'Адреса и серверы' }, { value: 'providers', label: 'Провайдеры' }]} />
       <ErrorBox error={ov.error} />
@@ -305,5 +305,25 @@ function ZoneEditor({ id, types, onBack }) {
         </Modal>
       )}
     </div>
+  );
+}
+
+/** Одна кнопка: вернуть DNS, vhost, доверие и сертификаты всех госсервисов и госсайтов. */
+function RestoreGov() {
+  const toast = useToast();
+  const [res, setRes] = useState(null);
+  return (
+    <>
+      <ActionButton kind="danger" confirm="Восстановить DNS-зоны и записи, привязки серверов, доверие корневому УЦ и сертификаты всех госсайтов? Чужие записи на именах госсайтов будут удалены." action={async () => {
+        const r = await post('/admin/pki/gov-restore');
+        setRes(r.changes);
+        toast(r.changes.length ? `Исправлено: ${r.changes.length}` : 'Всё уже в порядке', 'ok');
+      }}>Восстановить госсервисы</ActionButton>
+      {res && (
+        <Modal title="Восстановление госсервисов" onClose={() => setRes(null)} footer={<Button onClick={() => setRes(null)}>Закрыть</Button>}>
+          {res.length ? <ul className="small mono">{res.map((x, i) => <li key={i}>{x}</li>)}</ul> : <p>Всё уже было в порядке: DNS, серверы и сертификаты госсайтов исправны.</p>}
+        </Modal>
+      )}
+    </>
   );
 }

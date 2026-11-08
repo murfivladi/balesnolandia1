@@ -192,6 +192,13 @@ export async function adminPkiRoutes(app) {
     await audit(null, actor(req), 'cert.revoke', 'cert', c.id);
     return { ok: true, reissued: !!c.gov_site };
   });
+  // Восстановить всё: DNS госсайтов, делегирование, vhost, доверие корню, сертификаты.
+  app.post('/gov-restore', async (req) => {
+    const { restoreGovServices } = await import('../lib/govrestore.js');
+    const r = await restoreGovServices();
+    await audit(null, actor(req), 'gov.restore', null, null, { changes: r.changes.length });
+    return r;
+  });
   // Выпустить недостающие сертификаты госсайтов (после отзыва, сбоя и т. п.).
   app.post('/gov-certs/renew', async (req) => {
     await renewGovCerts();
