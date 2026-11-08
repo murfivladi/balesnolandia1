@@ -78,3 +78,18 @@ test('DNSSEC: испорченный DS у bank.bln — восстановлен
   assert.equal(ok.rcode, 'NOERROR');
   assert.equal(ok.dnssec, 'secure');
 });
+
+test('чужое делегирование pay.bank.bln (NS внутри bank.bln) — SERVFAIL, восстановление чинит', async () => {
+  const { resolve, flushResolverCache } = await import('../src/lib/dns.js');
+  const ask = () => resolve({ resolverIp: '50.0.0.53', clientIp: '50.1.0.20', clientProviderId: null, name: 'pay.bank.bln', type: 'A', fresh: true });
+  const bank = await one("SELECT id FROM dns_zones WHERE name = 'bank.bln.'");
+  await q("INSERT INTO dns_records (zone_id, name, type, ttl, data) VALUES (?, 'pay.bank.bln.', 'NS', 3600, 'ns.nowhere.bln.')", [bank.id]);
+  await q('UPDATE dns_zones SET serial = serial + 1 WHERE id = ?', [bank.id]);
+  (await import('../src/lib/net.js')).invalidateNet();
+  flushResolverCache();
+  assert.equal((await ask()).rcode, 'SERVFAIL');
+  const r = await admin.post('/api/admin/pki/gov-restore');
+  assert.ok(r.changes.some((c) => /чужое делегирование/.test(c)), r.changes.join('\n'));
+  assert.deepEqual(r.problems, []);
+  assert.equal((await ask()).rcode, 'NOERROR');
+});

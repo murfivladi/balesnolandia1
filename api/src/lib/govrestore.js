@@ -102,6 +102,29 @@ export async function restoreGovServices() {
   await exact(zones['gov.bln.'], 'web1.dc.gov.bln.', 'A', [WEB]);
   await exact(zones['gov.bln.'], 'poisk1.dc.gov.bln.', 'A', [POISK]);
 
+  // Чужие делегирования на именах госсайтов: NS/DS у имени сайта или под ним (кроме вершин госзон)
+  // уводят запросы на чужие серверы имён — резолвер отвечает SERVFAIL. Удаляем их и посторонние зоны.
+  for (const [host] of SITES) {
+    const name = `${host}.`;
+    for (const n of [name, `www.${name}`]) {
+      if (OWN_ZONES.includes(n)) continue;
+      const del = await q("SELECT r.id, r.zone_id, r.name, r.type, r.data FROM dns_records r JOIN dns_zones z ON z.id = r.zone_id WHERE r.type IN ('NS','DS') AND (r.name = ? OR r.name LIKE ?) AND z.name <> r.name", [n, `%.${n}`]);
+      for (const r of del) {
+        await q('DELETE FROM dns_records WHERE id = ?', [r.id]);
+        log.push(`${r.name} ${r.type}: удалено чужое делегирование «${r.data}»`);
+        touched.add(r.zone_id);
+      }
+      const foreign = await q('SELECT id, name FROM dns_zones WHERE name = ? OR name LIKE ?', [n, `%.${n}`]);
+      for (const z of foreign) {
+        if (OWN_ZONES.includes(z.name)) continue;
+        await q('DELETE FROM dns_records WHERE zone_id = ?', [z.id]);
+        await q('DELETE FROM dns_zone_servers WHERE zone_id = ?', [z.id]);
+        await q('DELETE FROM dns_zones WHERE id = ?', [z.id]);
+        log.push(`удалена посторонняя зона ${z.name}`);
+      }
+    }
+  }
+
   // Сайты: A/AAAA и www → CNAME.
   for (const [host, zn, ips] of SITES) {
     const z = zones[zn];
@@ -185,7 +208,11 @@ export async function restoreGovServices() {
   const problems = [];
   for (const [host] of SITES) {
     const r = await resolve({ resolverIp: '50.0.0.53', clientIp: '50.1.0.20', clientProviderId: null, name: host, type: 'A', fresh: true });
-    if (r.rcode !== 'NOERROR' || !r.answer.some((x) => x.type === 'A')) problems.push(`${host}: ${r.rcode}${r.ede ? ` — ${r.ede}` : ''}`);
+    if (r.rcode !== 'NOERROR' || !r.answer.some((x) => x.type === 'A')) {
+      const last = [...(r.trace || [])].reverse().find((t) => t.rcode !== 'NOERROR' || t.kind === 'referral');
+      const where = last ? ` (последний шаг: ${last.server_name || last.server} → ${last.rcode}${last.kind ? `, ${last.kind}` : ''})` : '';
+      problems.push(`${host}: ${r.rcode}${r.ede ? ` — ${r.ede}` : ''}${where}`);
+    }
   }
   flushResolverCache();
   return { changes: log, problems, ok: !problems.length };
