@@ -53,29 +53,70 @@ export const PRELUDE = String.raw`
   USP.prototype.get = function (k) { for (var i = 0; i < this._l.length; i++) if (this._l[i][0] === k) return this._l[i][1]; return null; };
   USP.prototype.getAll = function (k) { return this._l.filter(function (x) { return x[0] === k; }).map(function (x) { return x[1]; }); };
   USP.prototype.has = function (k) { return this.get(k) !== null; };
-  USP.prototype.set = function (k, v) { this.delete(k); this._l.push([k, String(v)]); };
-  USP.prototype.append = function (k, v) { this._l.push([k, String(v)]); };
-  USP.prototype.delete = function (k) { this._l = this._l.filter(function (x) { return x[0] !== k; }); };
-  USP.prototype.entries = function () { return this._l.slice()[Symbol.iterator](); };
+  // Изменения searchParams сразу видны в url.search и url.href — как в браузере.
+  USP.prototype._sync = function () { if (this._url) { var q = this.toString(); this._url._search = q ? '?' + q : ''; } };
+  USP.prototype.set = function (k, v) {
+    k = String(k); var done = false;
+    this._l = this._l.filter(function (x) { if (x[0] !== k) return true; if (done) return false; done = true; x[1] = String(v); return true; });
+    if (!done) this._l.push([k, String(v)]);
+    this._sync();
+  };
+  USP.prototype.append = function (k, v) { this._l.push([String(k), String(v)]); this._sync(); };
+  USP.prototype.delete = function (k) { k = String(k); this._l = this._l.filter(function (x) { return x[0] !== k; }); this._sync(); };
+  USP.prototype.sort = function () { this._l.sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; }); this._sync(); };
+  USP.prototype.keys = function () { return this._l.map(function (x) { return x[0]; })[Symbol.iterator](); };
+  USP.prototype.values = function () { return this._l.map(function (x) { return x[1]; })[Symbol.iterator](); };
+  USP.prototype.entries = function () { return this._l.map(function (x) { return [x[0], x[1]]; })[Symbol.iterator](); };
   USP.prototype[Symbol.iterator] = USP.prototype.entries;
-  USP.prototype.forEach = function (fn) { this._l.forEach(function (x) { fn(x[1], x[0]); }); };
+  USP.prototype.forEach = function (fn) { var self = this; this._l.forEach(function (x) { fn(x[1], x[0], self); }); };
   USP.prototype.toString = function () { return this._l.map(function (x) { return enc(x[0]) + '=' + enc(x[1]); }).join('&'); };
-  g.URLSearchParams = USP;
-  g.URL = function (u, base) {
-    var m = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/i.exec(String(u));
-    if (!m && base) {
-      var b = new g.URL(base);
+  Object.defineProperty(USP.prototype, 'size', { get: function () { return this._l.length; } });
+  g.URLSearchParams = function (init) {
+    USP.call(this, init instanceof USP ? init.toString() : Array.isArray(init) ? '' : init);
+    if (Array.isArray(init)) for (var i = 0; i < init.length; i++) this._l.push([String(init[i][0]), String(init[i][1])]);
+  };
+  g.URLSearchParams.prototype = USP.prototype;
+  USP.prototype.constructor = g.URLSearchParams;
+  var URL_RE = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/i;
+  function parseUrl(u, base) {
+    var m = URL_RE.exec(String(u));
+    if (!m && base !== undefined) {
+      var b = base instanceof g.URL ? base : new g.URL(base);
       var s = String(u);
-      var path = s.charAt(0) === '/' ? s : b.pathname.replace(/[^/]*$/, '') + s;
-      m = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/i.exec(b.protocol + '//' + b.host + path);
+      var path;
+      if (s.charAt(0) === '?') path = b.pathname + s;
+      else if (s.charAt(0) === '#') path = b.pathname + b.search + s;
+      else if (s.slice(0, 2) === '//') return parseUrl(b.protocol + s);
+      else path = s.charAt(0) === '/' ? s : b.pathname.replace(/[^/]*$/, '') + s;
+      m = URL_RE.exec(b.protocol + '//' + b.host + path);
     }
     if (!m) throw new TypeError('Неверный адрес: ' + u);
-    this.protocol = m[1].toLowerCase() + ':'; this.host = m[2].toLowerCase(); this.hostname = this.host.replace(/:\d+$/, '');
-    this.pathname = m[3] || '/'; this.search = m[4] || ''; this.hash = m[5] || '';
-    this.origin = this.protocol + '//' + this.host; this.searchParams = new USP(this.search);
-    this.href = this.origin + this.pathname + this.search + this.hash;
+    return m;
+  }
+  g.URL = function (u, base) {
+    var m = parseUrl(u, base);
+    this.protocol = m[1].toLowerCase() + ':'; this.host = m[2].toLowerCase();
+    this.pathname = m[3] || '/'; this.hash = m[5] || '';
+    this._search = m[4] && m[4] !== '?' ? m[4] : '';
+    this._sp = new USP(this._search);
+    this._sp._url = this;
   };
+  Object.defineProperties(g.URL.prototype, {
+    hostname: { get: function () { return this.host.replace(/:\d+$/, ''); }, set: function (v) { var p = /:\d+$/.exec(this.host); this.host = String(v).toLowerCase() + (p ? p[0] : ''); } },
+    port: { get: function () { var p = /:(\d+)$/.exec(this.host); return p ? p[1] : ''; }, set: function (v) { this.host = this.hostname + (v ? ':' + v : ''); } },
+    origin: { get: function () { return this.protocol + '//' + this.host; } },
+    search: {
+      get: function () { return this._search; },
+      set: function (v) { v = String(v); if (v && v.charAt(0) !== '?') v = '?' + v; this._search = v === '?' ? '' : v; this._sp._l = new USP(this._search)._l; },
+    },
+    searchParams: { get: function () { return this._sp; } },
+    href: {
+      get: function () { return this.protocol + '//' + this.host + this.pathname + this._search + this.hash; },
+      set: function (v) { g.URL.call(this, v); },
+    },
+  });
   g.URL.prototype.toString = function () { return this.href; };
+  g.URL.prototype.toJSON = function () { return this.href; };
 
   // ——— Headers, Request, Response ———
   function Headers(init) {
