@@ -45,7 +45,8 @@ export function PkiAdmin() {
         <p className="small muted">Журналы прозрачности: {cas.data.logs.map((l) => `${l.name} — ${l.entries} записей`).join('; ')}</p>
       </div>
       <div className="card">
-        <h2>Сертификаты</h2>
+        <div className="row"><h2 style={{ flex: 1 }}>Сертификаты</h2>
+          <ActionButton size="sm" kind="secondary" okMessage="Сертификаты госсайтов в порядке" action={async () => { await post('/admin/pki/gov-certs/renew'); certs.reload(); }}>Перевыпустить сертификаты госсайтов</ActionButton></div>
         <input className="input mono" placeholder="поиск по имени: boris.bln" value={q} onChange={(e) => setQ(e.target.value)} />
         {!certs.data ? <Spinner /> : (
           <div className="table-wrap" style={{ marginTop: 8 }}>

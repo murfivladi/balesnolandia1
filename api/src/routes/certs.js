@@ -10,7 +10,7 @@ import { ownAccount } from '../lib/hosting.js';
 import { invalidateNet } from '../lib/net.js';
 import {
   ensurePki, caList, ctSearch, createChallenge, challengeView, validateChallenge, orderCert, selfSigned, ownCert, certView,
-  revokeCert, installCert, autoSsl, createOrgCa, setCaPrices, govCa, POLICIES, REVOKE_REASONS, resetPkiCache,
+  revokeCert, renewGovCerts, installCert, autoSsl, createOrgCa, setCaPrices, govCa, POLICIES, REVOKE_REASONS, resetPkiCache,
 } from '../lib/pki.js';
 
 const parse = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
@@ -186,8 +186,17 @@ export async function adminPkiRoutes(app) {
     const c = await one('SELECT * FROM pki_certs WHERE id = ?', [int(req.params.id, 'id')]);
     if (!c) throw notFound('Сертификат не найден');
     await tx((conn) => revokeCert(conn, c, String(req.body?.reason || 'unspecified')));
+    // Госсайт не должен остаться без HTTPS: сразу выпускаем ему новый сертификат.
+    if (c.gov_site) await renewGovCerts();
     invalidateNet();
     await audit(null, actor(req), 'cert.revoke', 'cert', c.id);
+    return { ok: true, reissued: !!c.gov_site };
+  });
+  // Выпустить недостающие сертификаты госсайтов (после отзыва, сбоя и т. п.).
+  app.post('/gov-certs/renew', async (req) => {
+    await renewGovCerts();
+    invalidateNet();
+    await audit(null, actor(req), 'cert.gov_renew', null, null);
     return { ok: true };
   });
 }

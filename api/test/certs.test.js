@@ -284,3 +284,12 @@ test('госсертификаты перевыпускаются заранее
   assert.ok(Number((await one('SELECT COUNT(*) AS n FROM pki_certs WHERE gov_site = 1 AND replaced_by IS NOT NULL')).n) >= Number(before.n));
   assert.equal((await check('https://bank.bln/', 'bank.bln')).ok, true);
 });
+
+test('отзыв сертификата госсайта админом — сразу выпускается новый', async () => {
+  const cur = await one("SELECT id FROM pki_certs WHERE gov_site = 1 AND status = 'valid' AND replaced_by IS NULL AND JSON_CONTAINS(names, '\"pay.bank.bln\"')");
+  const r = await admin.post(`/api/admin/pki/certs/${cur.id}/revoke`, { reason: 'unspecified' });
+  assert.equal(r.reissued, true);
+  const fresh = await one("SELECT id FROM pki_certs WHERE gov_site = 1 AND status = 'valid' AND replaced_by IS NULL AND JSON_CONTAINS(names, '\"pay.bank.bln\"')");
+  assert.ok(fresh && fresh.id !== cur.id);
+  assert.equal((await admin.post('/api/admin/pki/gov-certs/renew')).ok, true);
+});
