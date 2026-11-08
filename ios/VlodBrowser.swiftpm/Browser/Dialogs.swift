@@ -1,10 +1,9 @@
 import Foundation
-import Observation
+import Combine
 
 /// alert / confirm / prompt страниц: показывает браузер, страница ждёт ответа.
-@Observable
 @MainActor
-final class Dialogs {
+final class Dialogs: ObservableObject {
     struct Item: Identifiable {
         enum Kind { case alert, confirm, prompt }
         let id = UUID()
@@ -14,8 +13,8 @@ final class Dialogs {
         var text: String
     }
 
-    var current: Item?
-    @ObservationIgnored private var resume: ((Bool, String?) -> Void)?
+    @Published var current: Item?
+    private var resume: ((Bool, String?) -> Void)?
 
     private func show(_ item: Item) async -> (Bool, String?) {
         finish(false, nil)

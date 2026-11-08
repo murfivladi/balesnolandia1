@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Новая вкладка: ВлодПоиск, госсайты, часто посещаемые, игровое время.
 struct NewTabView: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     @State private var query = ""
 
     private struct Tile: Identifiable { var id: String { url }; let url: String; let title: String }
@@ -91,7 +91,7 @@ struct NewTabView: View {
 }
 
 struct HistoryView: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     @State private var filter = ""
 
     private var items: [HistoryItem] {
@@ -132,7 +132,7 @@ struct HistoryView: View {
 }
 
 struct BookmarksView: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
 
     var body: some View {
         List {
@@ -163,12 +163,11 @@ struct BookmarksView: View {
 }
 
 struct SettingsView: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     @State private var providers: [Provider] = []
     @State private var net = NetSettings()
 
     var body: some View {
-        @Bindable var b = browser
         Form {
             Section("Подключение") {
                 Picker("Провайдер", selection: $net.provider) {
@@ -197,11 +196,11 @@ struct SettingsView: View {
                     .disabled(net == browser.profile.net || (net.dnsMode == "custom" && !Balnet.isIP(net.dns)))
             }
             Section("Вид") {
-                Picker("Тема", selection: $b.settings.theme) {
+                Picker("Тема", selection: $browser.settings.theme) {
                     ForEach(ThemeMode.allCases) { Text($0.label).tag($0) }
                 }
-                Toggle("Адресная строка внизу (iPhone)", isOn: $b.settings.addressBarBottom)
-                Toggle("Восстанавливать вкладки при запуске", isOn: $b.settings.restoreSession)
+                Toggle("Адресная строка внизу (iPhone)", isOn: $browser.settings.addressBarBottom)
+                Toggle("Восстанавливать вкладки при запуске", isOn: $browser.settings.restoreSession)
             }
             Section("Профиль") {
                 LabeledContent("Профиль", value: browser.profile.name)
@@ -212,7 +211,7 @@ struct SettingsView: View {
             }
         }
         .onAppear { net = browser.profile.net }
-        .onChange(of: browser.settings) { _, _ in browser.saveSettings() }
+        .onChange(of: browser.settings) { _ in browser.saveSettings() }
         .task { providers = (try? await NetClient.shared.providers()) ?? [] }
     }
 }
@@ -240,7 +239,7 @@ struct AboutView: View {
 }
 
 struct ProfilesView: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     @Environment(\.dismiss) private var dismiss
     @State private var newName = ""
 
@@ -268,7 +267,11 @@ struct ProfilesView: View {
                         }
                     }
                 } footer: {
-                    Text("У каждого профиля свои вкладки, история, закладки, вход на госсайты и IP-адрес в БалНете.")
+                    if #available(iOS 17.0, *) {
+                        Text("У каждого профиля свои вкладки, история, закладки, вход на госсайты и IP-адрес в БалНете.")
+                    } else {
+                        Text("У каждого профиля свои вкладки, история, закладки и IP-адрес в БалНете. Вход на госсайты на iOS 16 общий для всех профилей — выходите из аккаунта вручную.")
+                    }
                 }
                 Section("Новый профиль") {
                     TextField("Имя", text: $newName)

@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 5.8
 
 // ВлодБраузер для iOS — приложение Swift Playgrounds (iPad) и Xcode.
 // Открыть на iPad: «Файлы» → VlodBrowser.swiftpm → Swift Playgrounds → ▶︎.
@@ -9,7 +9,7 @@ import AppleProductTypes
 let package = Package(
     name: "VlodBrowser",
     platforms: [
-        .iOS("17.0")
+        .iOS("16.0")
     ],
     products: [
         .iOSApplication(
@@ -17,8 +17,8 @@ let package = Package(
             targets: ["AppModule"],
             bundleIdentifier: "io.qzz.vladislavb.vlodbrowser",
             teamIdentifier: "",
-            displayVersion: "0.1.0",
-            bundleVersion: "1",
+            displayVersion: "0.2.0",
+            bundleVersion: "2",
             appIcon: .asset("AppIcon"),
             accentColor: .presetColor(.blue),
             supportedDeviceFamilies: [

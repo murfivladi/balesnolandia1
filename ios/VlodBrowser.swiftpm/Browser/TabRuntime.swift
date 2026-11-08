@@ -1,5 +1,5 @@
 import Foundation
-import Observation
+import Combine
 import UIKit
 import WebKit
 
@@ -58,27 +58,26 @@ struct ConsoleLine: Identifiable {
 }
 
 /// Состояние вкладки, которое не сохраняется: WebView, подключение, журналы DevTools.
-@Observable
 @MainActor
-final class TabRuntime {
+final class TabRuntime: ObservableObject {
     let id: String
-    var phase: Phase = .page
-    var conn: Conn?
-    var session: SiteSession?
+    @Published var phase: Phase = .page
+    @Published var conn: Conn?
+    @Published var session: SiteSession?
     /// scheme|host|номер перезагрузки — новый запрос в сеть только при смене хоста или перезагрузке.
     var key: String?
     var reloadCount = 0
     var loadToken = UUID()
-    var progress: Double = 0
-    var isLoading = false
-    var netLog: [NetEntry] = []
-    var console: [ConsoleLine] = []
-    var snapshot: UIImage?
+    @Published var progress: Double = 0
+    @Published var isLoading = false
+    @Published var netLog: [NetEntry] = []
+    @Published var console: [ConsoleLine] = []
+    @Published var snapshot: UIImage?
     /// Приложение госсайта, которое сейчас открыто в WebView (папка: bank, services…).
-    var govApp: String?
+    @Published var govApp: String?
 
     /// Терминал вкладки balnet://terminal — живёт, пока открыта вкладка.
-    @ObservationIgnored private var terminalEngine: TerminalEngine?
+    private var terminalEngine: TerminalEngine?
     var terminal: TerminalEngine {
         if let t = terminalEngine { return t }
         let t = TerminalEngine()
@@ -86,11 +85,11 @@ final class TabRuntime {
         return t
     }
 
-    @ObservationIgnored var webView: WKWebView?
-    @ObservationIgnored var webKind: WebKind?
-    @ObservationIgnored var coordinator: WebCoordinator?
+    var webView: WKWebView?
+    var webKind: WebKind?
+    var coordinator: WebCoordinator?
     /// Меняется, когда WebView вкладки заменён — SwiftUI перерисовывает контейнер.
-    var webGeneration = 0
+    @Published var webGeneration = 0
 
     init(id: String) {
         self.id = id

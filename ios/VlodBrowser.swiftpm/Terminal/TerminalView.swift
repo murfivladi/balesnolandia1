@@ -2,9 +2,8 @@ import SwiftUI
 
 /// balnet://terminal — нативный терминал с панелью клавиш (Tab, ↑, ↓, Ctrl+C) и редактором nano для SSH.
 struct TerminalView: View {
-    @Environment(Browser.self) private var browser
-    let tabId: String
-    private var engine: TerminalEngine { browser.runtime(tabId).terminal }
+    @EnvironmentObject private var browser: Browser
+    @ObservedObject var engine: TerminalEngine
     @State private var input = ""
     @State private var hpos = -1
     @FocusState private var focused: Bool
@@ -58,7 +57,7 @@ struct TerminalView: View {
                     }
                     .padding(10)
                 }
-                .onChange(of: engine.lines.count) { _, _ in withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
+                .onChange(of: engine.lines.count) { _ in withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
             }
             keys
         }
@@ -132,7 +131,7 @@ struct TerminalView: View {
 
 /// GNU nano (БалНет): правка файла на сервере хостинга по SSH.
 private struct NanoView: View {
-    let engine: TerminalEngine
+    @ObservedObject var engine: TerminalEngine
     @State private var confirmExit = false
 
     var body: some View {

@@ -2,14 +2,14 @@ import SwiftUI
 
 @main
 struct VlodBrowserApp: App {
-    @State private var browser = Browser()
+    @StateObject private var browser = Browser()
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
         WindowGroup {
             RootView()
-                .environment(browser)
-                .onChange(of: phase) { _, p in
+                .environmentObject(browser)
+                .onChange(of: phase) { p in
                     if p == .background || p == .inactive { browser.saveNow() }
                     if p == .active { browser.refreshStatus() }
                 }
@@ -18,7 +18,7 @@ struct VlodBrowserApp: App {
 }
 
 struct RootView: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
 
     var body: some View {
         Group {

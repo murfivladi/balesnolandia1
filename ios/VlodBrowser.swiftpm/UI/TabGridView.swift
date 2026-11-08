@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Сетка вкладок (как в Chrome для iOS): миниатюры, свайп закрывает, переключатель обычные / инкогнито.
 struct TabGridView: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     @Binding var isPresented: Bool
     @State private var mode = 0
 
@@ -13,7 +13,7 @@ struct TabGridView: View {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 14) {
                     ForEach(browser.tabs) { t in
-                        TabCard(tab: t, active: t.id == browser.activeId) {
+                        TabCard(tab: t, runtime: browser.runtime(t.id), active: t.id == browser.activeId) {
                             browser.select(t.id)
                             isPresented = false
                         } onClose: {
@@ -33,10 +33,10 @@ struct TabGridView: View {
                     .pickerStyle(.segmented)
                     .frame(width: 140)
                 }
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .navigationBarLeading) {
                     Button("Закрыть все", role: .destructive) { browser.closeAll() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Готово") { isPresented = false }.bold()
                 }
                 ToolbarItem(placement: .bottomBar) {
@@ -53,15 +53,16 @@ struct TabGridView: View {
         }
         .environment(\.colorScheme, browser.incognito ? .dark : colorScheme)
         .onAppear { mode = browser.incognito ? 1 : 0 }
-        .onChange(of: mode) { _, m in browser.setIncognito(m == 1) }
+        .onChange(of: mode) { m in browser.setIncognito(m == 1) }
     }
 
     @Environment(\.colorScheme) private var colorScheme
 }
 
 private struct TabCard: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     let tab: Tab
+    @ObservedObject var runtime: TabRuntime
     let active: Bool
     let onOpen: () -> Void
     let onClose: () -> Void
@@ -82,7 +83,7 @@ private struct TabCard: View {
             .padding(8)
             ZStack {
                 Color(uiColor: .secondarySystemBackground)
-                if let img = browser.runtimes[tab.id]?.snapshot {
+                if let img = runtime.snapshot {
                     Image(uiImage: img).resizable().scaledToFill()
                 } else {
                     VStack(spacing: 6) {
@@ -106,7 +107,7 @@ private struct TabCard: View {
             DragGesture(minimumDistance: 20)
                 .onChanged { v in if abs(v.translation.width) > abs(v.translation.height) { offset = v.translation.width } }
                 .onEnded { v in
-                    if abs(v.translation.width) > 110 { onClose() } else { withAnimation(.spring) { offset = 0 } }
+                    if abs(v.translation.width) > 110 { onClose() } else { withAnimation(.spring()) { offset = 0 } }
                 }
         )
     }

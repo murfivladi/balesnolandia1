@@ -1,43 +1,41 @@
 import Foundation
-import Observation
+import Combine
 import SwiftUI
 import WebKit
 
 /// ВлодБраузер: профили, вкладки, переходы и сеть БалНета. Логика — как в web/src/browser/App.jsx.
-@Observable
 @MainActor
-final class Browser {
+final class Browser: ObservableObject {
     static let historyLimit = 2000
     static let maxBack = 50
 
-    var settings: AppSettings
-    var profiles: [Profile]
-    var incognito = false
-    private(set) var normal: Session
-    private(set) var incognitoSession: Session
-    var history: [HistoryItem]
-    var bookmarks: [Bookmark]
+    @Published var settings: AppSettings
+    @Published var profiles: [Profile]
+    @Published var incognito = false
+    @Published private(set) var normal: Session
+    @Published private(set) var incognitoSession: Session
+    @Published var history: [HistoryItem]
+    @Published var bookmarks: [Bookmark]
     /// cookies и localStorage сайтов игроков по origin: { cookies, local }.
-    @ObservationIgnored private var jars: [String: JSON]
-    @ObservationIgnored private var incognitoJars: [String: JSON] = [:]
+    private var jars: [String: JSON]
+    private var incognitoJars: [String: JSON] = [:]
     /// У инкогнито — своё временное устройство и IP.
-    @ObservationIgnored private var incognitoClientId = NetClient.newClientId()
-    var runtimes: [String: TabRuntime] = [:]
+    private var incognitoClientId = NetClient.newClientId()
+    @Published var runtimes: [String: TabRuntime] = [:]
     let dialogs = Dialogs()
 
     // Строка состояния
-    var lease: Lease?
-    var clockMonth: Int?
-    var paused = false
-    var latency: Int?
-    var online = true
-    var update: (version: String, url: String)?
+    @Published var lease: Lease?
+    @Published var clockMonth: Int?
+    @Published var paused = false
+    @Published var latency: Int?
+    @Published var online = true
+    @Published var update: (version: String, url: String)?
 
     /// Исключения «Перейти на сайт (небезопасно)» — до закрытия приложения, как в Chrome.
-    @ObservationIgnored private var certBypass: Set<String> = []
-    @ObservationIgnored private lazy var siteStore = WKWebsiteDataStore.nonPersistent()
-    @ObservationIgnored private lazy var incognitoGovStore = WKWebsiteDataStore.nonPersistent()
-    @ObservationIgnored private var saveTask: Task<Void, Never>?
+    private var certBypass: Set<String> = []
+    private lazy var siteStore = WKWebsiteDataStore.nonPersistent()
+    private var saveTask: Task<Void, Never>?
 
     init() {
         var s = Storage.load(AppSettings.self, "settings") ?? AppSettings()
@@ -55,7 +53,6 @@ final class Browser {
         for t in sess.tabs { rts[t.id] = TabRuntime(id: t.id) }
         let incog = Session()
         for t in incog.tabs { rts[t.id] = TabRuntime(id: t.id) }
-        // @Observable: свойства присваиваются целиком, без чтения до конца инициализации.
         settings = s
         profiles = list
         normal = sess
@@ -166,7 +163,7 @@ final class Browser {
         profiles.removeAll { $0.id == id }
         for k in ["session", "history", "bookmarks", "jars"] { Storage.remove("\(id)-\(k)") }
         if let store = removed?.dataStoreId {
-            WKWebsiteDataStore.remove(forIdentifier: store) { _ in }
+            if #available(iOS 17.0, *) { WKWebsiteDataStore.remove(forIdentifier: store) { _ in } }
         }
         if settings.activeProfile == id { switchProfile(profiles[0].id) } else { saveSettings() }
     }
@@ -450,13 +447,20 @@ final class Browser {
     private func ensureWebView(_ rt: TabRuntime, kind: WebKind) {
         if rt.webView != nil && rt.webKind == kind { return }
         rt.dropWebView()
-        let store: WKWebsiteDataStore = kind == .gov ? WKWebsiteDataStore(forIdentifier: profile.dataStoreId) : siteStore
+        let store: WKWebsiteDataStore = kind == .gov ? govStore() : siteStore
         let (wv, co) = WebCoordinator.makeWebView(kind: kind, browser: self, tabId: rt.id, dataStore: store, theme: themeName)
         wv.overrideUserInterfaceStyle = settings.theme == .system ? .unspecified : (settings.theme == .dark ? .dark : .light)
         rt.webView = wv
         rt.webKind = kind
         rt.coordinator = co
         rt.webGeneration += 1
+    }
+
+    /// Хранилище госсайтов профиля. Отдельное хранилище на профиль есть с iOS 17;
+    /// на iOS 16 у всех профилей общий вход на госсайты (как у инкогнито).
+    private func govStore() -> WKWebsiteDataStore {
+        if #available(iOS 17.0, *) { return WKWebsiteDataStore(forIdentifier: profile.dataStoreId) }
+        return .default()
     }
 
     /// Тема поменялась — передать госсайтам.

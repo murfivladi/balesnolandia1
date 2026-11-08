@@ -2,13 +2,12 @@ import SwiftUI
 
 /// Оболочка браузера в стиле Chrome для iOS: на iPhone — адрес сверху или снизу и панель кнопок, на iPad — полоса вкладок.
 struct BrowserView: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     @Environment(\.horizontalSizeClass) private var hSize
     @State private var showGrid = false
     @State private var showDevTools = false
     @State private var sourceText: String?
     @State private var showProfiles = false
-    @State private var promptText = ""
 
     private var wide: Bool { hSize == .regular }
 
@@ -37,39 +36,23 @@ struct BrowserView: View {
         .background(Color(uiColor: .systemBackground))
         .fullScreenCover(isPresented: $showGrid) {
             TabGridView(isPresented: $showGrid)
-                .environment(browser)
+                .environmentObject(browser)
         }
         .sheet(isPresented: $showDevTools) {
             if let t = browser.activeTab {
                 DevToolsView(tab: t, runtime: browser.runtime(t.id))
-                    .environment(browser)
+                    .environmentObject(browser)
                     .presentationDetents([.medium, .large])
-                    .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                    .interactiveSheetBackground()
             }
         }
         .sheet(item: Binding(get: { sourceText.map { SourceText(text: $0) } }, set: { sourceText = $0?.text })) { s in
             SourceView(text: s.text, url: browser.activeTab?.url ?? "")
         }
         .sheet(isPresented: $showProfiles) {
-            ProfilesView().environment(browser)
+            ProfilesView().environmentObject(browser)
         }
-        .alert(browser.dialogs.current.map { "Сайт \($0.host) сообщает" } ?? "", isPresented: Binding(get: { browser.dialogs.current != nil }, set: { if !$0 { browser.dialogs.finish(false, nil) } })) {
-            if let d = browser.dialogs.current {
-                switch d.kind {
-                case .alert:
-                    Button("OK") { browser.dialogs.finish(true, nil) }
-                case .confirm:
-                    Button("Отмена", role: .cancel) { browser.dialogs.finish(false, nil) }
-                    Button("OK") { browser.dialogs.finish(true, nil) }
-                case .prompt:
-                    TextField("", text: $promptText)
-                    Button("Отмена", role: .cancel) { browser.dialogs.finish(false, nil) }
-                    Button("OK") { browser.dialogs.finish(true, promptText) }
-                }
-            }
-        } message: {
-            Text(browser.dialogs.current?.message ?? "")
-        }
+        .modifier(DialogHost(dialogs: browser.dialogs))
         .onAppear {
             browser.activateCurrent()
             browser.refreshStatus()
@@ -81,8 +64,7 @@ struct BrowserView: View {
                 browser.refreshStatus()
             }
         }
-        .onChange(of: browser.settings.theme) { _, _ in browser.applyTheme() }
-        .onChange(of: browser.dialogs.current?.id) { _, _ in promptText = browser.dialogs.current?.text ?? "" }
+        .onChange(of: browser.settings.theme) { _ in browser.applyTheme() }
     }
 
     // MARK: Содержимое активной вкладки
@@ -220,6 +202,34 @@ struct BrowserView: View {
 private struct SourceText: Identifiable {
     var id: String { String(text.hashValue) }
     let text: String
+}
+
+/// alert / confirm / prompt страниц. Отдельный модификатор следит за Dialogs.
+private struct DialogHost: ViewModifier {
+    @ObservedObject var dialogs: Dialogs
+    @State private var promptText = ""
+
+    func body(content: Content) -> some View {
+        content
+            .alert(dialogs.current.map { "Сайт \($0.host) сообщает" } ?? "", isPresented: Binding(get: { dialogs.current != nil }, set: { if !$0 { dialogs.finish(false, nil) } })) {
+                if let d = dialogs.current {
+                    switch d.kind {
+                    case .alert:
+                        Button("OK") { dialogs.finish(true, nil) }
+                    case .confirm:
+                        Button("Отмена", role: .cancel) { dialogs.finish(false, nil) }
+                        Button("OK") { dialogs.finish(true, nil) }
+                    case .prompt:
+                        TextField("", text: $promptText)
+                        Button("Отмена", role: .cancel) { dialogs.finish(false, nil) }
+                        Button("OK") { dialogs.finish(true, promptText) }
+                    }
+                }
+            } message: {
+                Text(dialogs.current?.message ?? "")
+            }
+            .onChange(of: dialogs.current?.id) { _ in promptText = dialogs.current?.text ?? "" }
+    }
 }
 
 /// Новая версия приложения на сайте игры.

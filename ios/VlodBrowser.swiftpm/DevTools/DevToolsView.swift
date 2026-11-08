@@ -3,9 +3,9 @@ import WebKit
 
 /// Инструменты разработчика: Network, Консоль, Элементы, Хранилище.
 struct DevToolsView: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     let tab: Tab
-    let runtime: TabRuntime
+    @ObservedObject var runtime: TabRuntime
     @State private var section = 0
 
     var body: some View {
@@ -35,7 +35,7 @@ struct DevToolsView: View {
 // MARK: Network
 
 private struct NetworkPanel: View {
-    let runtime: TabRuntime
+    @ObservedObject var runtime: TabRuntime
 
     var body: some View {
         List {
@@ -137,7 +137,7 @@ private struct NetDetails: View {
 // MARK: Консоль
 
 private struct ConsolePanel: View {
-    let runtime: TabRuntime
+    @ObservedObject var runtime: TabRuntime
     @State private var code = ""
 
     var body: some View {
@@ -154,7 +154,7 @@ private struct ConsolePanel: View {
                     }
                 }
                 .listStyle(.plain)
-                .onChange(of: runtime.console.count) { _, _ in
+                .onChange(of: runtime.console.count) { _ in
                     if let last = runtime.console.last { proxy.scrollTo(last.id) }
                 }
             }
@@ -218,7 +218,7 @@ private struct DomNode: Identifiable {
 }
 
 private struct ElementsPanel: View {
-    let runtime: TabRuntime
+    @ObservedObject var runtime: TabRuntime
     @State private var root: DomNode?
     @State private var error: String?
 
@@ -236,7 +236,7 @@ private struct ElementsPanel: View {
             }
             Spacer(minLength: 0)
         }
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { load() } label: { Image(systemName: "arrow.clockwise") } } }
+        .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button { load() } label: { Image(systemName: "arrow.clockwise") } } }
         .onAppear(perform: load)
     }
 
@@ -272,9 +272,9 @@ private struct ElementsPanel: View {
 // MARK: Хранилище
 
 private struct StoragePanel: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     let tab: Tab
-    let runtime: TabRuntime
+    @ObservedObject var runtime: TabRuntime
     @State private var page: JSON?
     @State private var cookies: [HTTPCookie] = []
 

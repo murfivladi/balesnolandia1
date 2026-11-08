@@ -1,10 +1,9 @@
 import Foundation
-import Observation
+import Combine
 
 /// Терминал ВлодБраузера: сетевые утилиты БалНета с выводом как у настоящих (порт web/src/browser/terminal.jsx).
-@Observable
 @MainActor
-final class TerminalEngine {
+final class TerminalEngine: ObservableObject {
     struct SSHState: Equatable {
         var session: String?
         var prompt: String = ""
@@ -20,13 +19,13 @@ final class TerminalEngine {
         var dirty: Bool { content != saved }
     }
 
-    var lines: [String] = ["ВлодБраузер — терминал БалНета. Введите help, чтобы увидеть команды.", ""]
-    var busy = false
-    var history: [String] = []
-    var ssh: SSHState?
-    var editor: Editor?
+    @Published var lines: [String] = ["ВлодБраузер — терминал БалНета. Введите help, чтобы увидеть команды.", ""]
+    @Published var busy = false
+    @Published var history: [String] = []
+    @Published var ssh: SSHState?
+    @Published var editor: Editor?
 
-    @ObservationIgnored weak var browser: Browser?
+    weak var browser: Browser?
 
     static let help = [
         "Команды:",

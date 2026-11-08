@@ -16,7 +16,7 @@ function IosPage() {
           <img src="icon.png" alt="" width={72} height={72} style={{ borderRadius: 16 }} />
           <div>
             <h1 style={{ margin: 0 }}>ВлодБраузер для iPhone и iPad</h1>
-            <span className="muted">Версия {IOS_APP.version} · iOS 17 и новее</span>
+            <span className="muted">Версия {IOS_APP.version} · iOS 16 и новее</span>
           </div>
         </div>
 

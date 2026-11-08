@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Игровая строка состояния: провайдер и «сигнал», IP БалНета, игровая дата.
 struct StatusStrip: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     @State private var showIP = false
 
     private var bars: Int {
@@ -84,7 +84,7 @@ struct SecurityBadge: View {
                 }
                 .padding()
                 .frame(minWidth: 260)
-                .presentationCompactAdaptation(.popover)
+                .compactPopover()
             }
     }
 
@@ -142,9 +142,9 @@ struct SecurityBadge: View {
 
 /// Адресная строка: без фокуса — короткий адрес и значок, при вводе — полный адрес.
 struct AddressBar: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     let tab: Tab
-    let runtime: TabRuntime
+    @ObservedObject var runtime: TabRuntime
     @State private var text = ""
     @FocusState private var focused: Bool
 
@@ -195,7 +195,7 @@ struct AddressBar: View {
                 .padding(.horizontal, 14)
             }
         }
-        .onChange(of: focused) { _, f in
+        .onChange(of: focused) { f in
             if f { text = tab.url == Balnet.newTab ? "" : tab.url }
         }
     }
@@ -211,7 +211,7 @@ struct AddressBar: View {
 
 /// Полоса вкладок iPad (как в десктопном Chrome).
 struct TabStrip: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     @Binding var showGrid: Bool
 
     var body: some View {
@@ -230,7 +230,7 @@ struct TabStrip: View {
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
             }
-            .onChange(of: browser.activeId) { _, id in
+            .onChange(of: browser.activeId) { id in
                 if let id { withAnimation { proxy.scrollTo(id) } }
             }
         }
@@ -239,7 +239,7 @@ struct TabStrip: View {
 }
 
 private struct TabChip: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     let tab: Tab
     let active: Bool
 
@@ -259,7 +259,7 @@ private struct TabChip: View {
         .padding(.horizontal, 10)
         .frame(height: 30)
         .background(
-            UnevenRoundedRectangle(topLeadingRadius: 8, topTrailingRadius: 8)
+            TopRoundedRectangle(radius: 8)
                 .fill(active ? (browser.incognito ? Theme.incognito : Color(uiColor: .secondarySystemBackground)) : Color.clear)
         )
         .foregroundStyle(browser.incognito ? Color.white : Color.primary)
@@ -301,5 +301,35 @@ struct Favicon: View {
         case "about": return "info"
         default: return "globe"
         }
+    }
+}
+
+/// Прямоугольник со скруглёнными верхними углами (вкладка на iPad).
+struct TopRoundedRectangle: Shape {
+    var radius: CGFloat
+
+    func path(in r: CGRect) -> Path {
+        let c = min(radius, r.width / 2, r.height)
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.minX, y: r.minY + c))
+        p.addQuadCurve(to: CGPoint(x: r.minX + c, y: r.minY), control: CGPoint(x: r.minX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX - c, y: r.minY))
+        p.addQuadCurve(to: CGPoint(x: r.maxX, y: r.minY + c), control: CGPoint(x: r.maxX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
+extension View {
+    /// Поповер и на iPhone (iOS 16.4+); на старых версиях — как решит система.
+    @ViewBuilder func compactPopover() -> some View {
+        if #available(iOS 16.4, *) { presentationCompactAdaptation(.popover) } else { self }
+    }
+
+    /// Страница под шторкой DevTools остаётся доступной (iOS 16.4+).
+    @ViewBuilder func interactiveSheetBackground() -> some View {
+        if #available(iOS 16.4, *) { presentationBackgroundInteraction(.enabled(upThrough: .medium)) } else { self }
     }
 }

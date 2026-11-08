@@ -3,9 +3,9 @@ import WebKit
 
 /// Содержимое вкладки: внутренняя страница, подключение, ошибка или сайт в WebView.
 struct TabContentView: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     let tab: Tab
-    let runtime: TabRuntime
+    @ObservedObject var runtime: TabRuntime
 
     var body: some View {
         switch runtime.phase {
@@ -40,7 +40,7 @@ struct TabContentView: View {
             case "bookmarks": BookmarksView()
             case "settings": SettingsView()
             case "about": AboutView()
-            case "terminal": TerminalView(tabId: tab.id)
+            case "terminal": TerminalView(engine: runtime.terminal)
             default: ErrorPageView(code: "ERR_INVALID_URL", host: "", ip: nil, dns: nil) {}
             }
         default:

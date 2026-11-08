@@ -1,6 +1,6 @@
 # ВлодБраузер для iOS
 
-Нативный браузер БалНета для iPhone и iPad (SwiftUI + WKWebView, iOS 17+). Проект Swift Playgrounds: `VlodBrowser.swiftpm`.
+Нативный браузер БалНета для iPhone и iPad (SwiftUI + WKWebView, iOS 16+). Проект Swift Playgrounds: `VlodBrowser.swiftpm`.
 ТЗ — `docs/ios-tz.md`, ответы владельца — `docs/ios-interview.md`.
 
 ## Запуск

@@ -6,7 +6,7 @@
 1. Устройства: iPhone и iPad.
 2. Первая раздача — Swift Playgrounds (проект `.swiftpm`). Swift Playgrounds есть только на iPad и Mac, поэтому iPhone ждёт TestFlight.
 3. Mac нет, только iPad: собираем и запускаем в Swift Playgrounds на iPad.
-4. Минимальная версия — iOS 17 (SwiftUI, `@Observable`, SwiftData).
+4. Минимальная версия — iOS 17 (SwiftUI, `@Observable`, SwiftData). Позже изменено владельцем: iOS 16 (ObservableObject вместо `@Observable`).
 5. В будущем App Store — скрыто, только по ссылке (unlisted).
 6. Код — в папке `ios/` этого репозитория.
 7. Проект на iPad забирают со страницы `/ios/` сайта игры: она публичная, с кнопкой «Скачать .swiftpm» и инструкцией для Swift Playgrounds.

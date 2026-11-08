@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Первый запуск: «договор» с провайдером БалНета и выбор DNS.
 struct OnboardingView: View {
-    @Environment(Browser.self) private var browser
+    @EnvironmentObject private var browser: Browser
     @State private var providers: [Provider] = []
     @State private var selected = "baltelecom"
     @State private var dnsMode = "provider"
