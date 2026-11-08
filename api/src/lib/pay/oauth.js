@@ -140,8 +140,11 @@ function parseScope(provider, raw) {
 export async function checkRequest(provider, p) {
   providerOf(provider);
   if (p.response_type && p.response_type !== 'code') throw bad('unsupported_response_type', 'Поддерживается только response_type=code');
-  const client = await one("SELECT * FROM oauth_clients WHERE client_id = ? AND status = 'active'", [String(p.client_id || '')]);
-  if (!client) throw bad('invalid_client', 'Приложение не найдено или заблокировано');
+  const cid = String(p.client_id || '').trim();
+  if (!cid) throw bad('invalid_client', 'Сайт не передал client_id: проверьте настройки входа на сайте');
+  const client = await one('SELECT * FROM oauth_clients WHERE client_id = ?', [cid]);
+  if (!client) throw bad('invalid_client', `Приложение с client_id «${cid.slice(0, 60)}» не найдено. Владельцу сайта: скопируйте client_id из ВлодПочты → «Вход для сайтов»`);
+  if (client.status !== 'active') throw bad('invalid_client', `Приложение «${client.name}» заблокировано администратором БалНета`);
   const uri = normalizeUrl(String(p.redirect_uri || ''));
   if (!uri || !json(client.redirect_uris, []).includes(uri)) throw bad('invalid_redirect', 'Адрес возврата не зарегистрирован у приложения');
   const scopes = parseScope(provider, p.scope);
