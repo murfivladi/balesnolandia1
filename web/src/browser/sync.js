@@ -54,7 +54,27 @@ export const COLLECTIONS = {
   bookmarks: { id: (x) => x.url, limit: 2000 },
   history: { id: (x) => `${x.ts}|${x.url}`, limit: 1000 },
   passwords: { id: (x) => `${x.origin}|${x.username}`, limit: 1000 },
+  // Открытые вкладки каждого устройства: своё устройство пишет только свои, чужие видны в «Вкладки с других устройств».
+  tabs: { id: (x) => `${x.device}|${x.url}`, limit: 500 },
+  // Общие настройки браузера (веб и iOS): { k, v }.
+  settings: { id: (x) => x.k, limit: 50 },
 };
+
+/** Вкладки других устройств, которые не обновлялись дольше этого, не показываются. */
+export const TABS_STALE_DAYS = 30;
+
+/** Чужие вкладки для показа: свежие, по устройствам. */
+export function remoteTabsByDevice(list, ownDevice, now = Date.now()) {
+  const out = new Map();
+  for (const t of list || []) {
+    if (t.device === ownDevice || now - (t.ts || 0) > TABS_STALE_DAYS * 86400000) continue;
+    if (!out.has(t.device)) out.set(t.device, { device: t.device, name: t.deviceName || 'Устройство', ts: 0, tabs: [] });
+    const d = out.get(t.device);
+    d.tabs.push(t);
+    d.ts = Math.max(d.ts, t.ts || 0);
+  }
+  return [...out.values()].sort((a, b) => b.ts - a.ts);
+}
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
@@ -81,6 +101,7 @@ export function merge(name, local, base, doc, now = Date.now()) {
   let list = Object.values(items);
   if (name === 'bookmarks') list.sort((a, b) => a.pos - b.pos);
   else if (name === 'history') list.sort((a, b) => b.v.ts - a.v.ts);
+  else if (name === 'tabs') list.sort((a, b) => (b.v.ts || 0) - (a.v.ts || 0));
   list = list.slice(0, c.limit);
   const kept = new Set(list.map((e) => c.id(e.v)));
   for (const id of Object.keys(items)) if (!kept.has(id)) delete items[id];

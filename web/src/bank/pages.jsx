@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { get, post, newIdemKey } from '../shared/api.js';
 import { t, fmtDate, useLang } from '../shared/i18n.js';
 import { navigate } from '../shared/router.js';
+import { nativeConfirm } from '../shared/native.js';
 import {
   Spinner, useAsync, Money, MoneyInput, Input, Select, Form, Modal, Empty, StatusBadge, ActionButton, Seg, Badge, ErrorBox, useToast, QR, Button, Field,
 } from '../shared/ui.jsx';
@@ -402,6 +403,7 @@ export function TransferPage() {
             <ActionButton action={async () => {
               setError(null);
               try {
+                await nativeConfirm(`Перевод ${formatMoney(preview.total)}`);
                 const r = await post('/bank/transfers', { from_account: fromId, amount, to, memo }, { idem });
                 setDone({ ...preview, held: !!r.held });
               } catch (e) { setError(e); }
@@ -450,7 +452,7 @@ export function PayInvoice({ number }) {
             {paid ? <div className="form-ok">{t('Оплачено. Квитанция погашена во ВлодУслугах.')}</div> : inv.status === 'unpaid' && (
               <>
                 <Select label={t('Счёт списания')} value={acc || ''} onChange={(e) => setAccount(Number(e.target.value))} options={accounts.map((a) => ({ value: a.id, label: `${t(a.name)} · ${formatMoney(a.balance)}` }))} />
-                <ActionButton action={async () => { await post(`/bank/invoices/${inv.number}/pay`, { account_id: acc }, { idem }); setPaid(true); }}>{t('Оплатить')} {formatMoney(inv.amount)}</ActionButton>
+                <ActionButton action={async () => { await nativeConfirm(`Оплата квитанции ${formatMoney(inv.amount)}`); await post(`/bank/invoices/${inv.number}/pay`, { account_id: acc }, { idem }); setPaid(true); }}>{t('Оплатить')} {formatMoney(inv.amount)}</ActionButton>
               </>
             )}
           </>

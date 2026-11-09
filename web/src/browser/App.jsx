@@ -16,7 +16,7 @@ import { checkSafe, isSafeBypassed, addSafeBypass, SafeBrowsingPage, reportPhish
 import { HSTS_PRELOAD } from '@bln/shared/balnet-url.js';
 import { CERT_ERRORS } from '@bln/shared/balnet-pki.js';
 import { TerminalPage } from './terminal.jsx';
-import { syncAll, createPhrase, unlock } from './sync.js';
+import { syncAll, createPhrase, unlock, remoteTabsByDevice } from './sync.js';
 import { PasswordPrompt } from './passwords.jsx';
 import { useBalnetPush, PermissionPrompt, PushToasts, NotificationsPage } from './push.jsx';
 import {
@@ -43,6 +43,28 @@ function titleFor(url) {
   }
   if (t.kind === 'web' && GOV_SITES[t.host]) return GOV_SITES[t.host].title;
   return displayUrl(url);
+}
+
+/** Синхронизация: что отдать из данных профиля в коллекцию. */
+export function syncRead(d, name, device) {
+  if (!d) return [];
+  if (name === 'tabs') {
+    // Метка времени с точностью до часа: открытые вкладки не перезаписываются на сервере каждую минуту.
+    const ts = Math.floor(Date.now() / 3600000) * 3600000;
+    return (d.tabs || []).filter((t) => /^https?:/.test(t.url)).map((t) => ({ device: device.id, deviceName: device.name, url: t.url, title: t.title || '', ts }));
+  }
+  if (name === 'settings') return [{ k: 'neverSave', v: d.settings?.neverSave || [] }, { k: 'home', v: d.settings?.home || NEW_TAB }];
+  return d[name] || [];
+}
+
+/** И обратно: данные коллекции после слияния → данные профиля. */
+export function syncWrite(d, name, list) {
+  if (name === 'tabs') return { ...d, remoteTabs: list };
+  if (name === 'settings') {
+    const m = Object.fromEntries(list.map((x) => [x.k, x.v]));
+    return { ...d, settings: { ...d.settings, ...(Array.isArray(m.neverSave) ? { neverSave: m.neverSave } : {}), ...(typeof m.home === 'string' ? { home: m.home } : {}) } };
+  }
+  return { ...d, [name]: list };
 }
 
 const makeTab = (url = NEW_TAB) => ({ id: newId(), url, title: titleFor(url), back: [], fwd: [], reloadKey: 0 });
@@ -684,10 +706,12 @@ export default function App() {
   }, [store, incognito, profileId]);
   const signOut = useCallback(async () => {
     if (account?.token) await apiPost('/mail/sync/signout', { token: account.token }).catch(() => {});
-    await Promise.all(['account', 'syncKey', 'syncBase:bookmarks', 'syncBase:history', 'syncBase:passwords'].map((k) => store.remove(k)));
+    await Promise.all(['account', 'syncKey', 'syncBase:bookmarks', 'syncBase:history', 'syncBase:passwords', 'syncBase:tabs', 'syncBase:settings'].map((k) => store.remove(k)));
+    update((d) => ({ ...d, remoteTabs: [] }));
     setAccount(null);
     setSyncState({ status: 'idle' });
-  }, [account, store]);
+  }, [account, store, update]);
+  const syncDevice = () => ({ id: dataRef.current?.settings?.net?.clientId || 'web', name: `ВлодБраузер · ${/Mobi/.test(navigator.userAgent) ? 'телефон' : 'компьютер'}` });
   const runSync = useCallback(async (acc = account) => {
     if (!acc?.key || !store) return;
     setSyncState((x) => ({ ...x, status: 'syncing' }));
@@ -695,10 +719,11 @@ export default function App() {
       const r = await syncAll({
         token: acc.token,
         key: acc.key,
-        read: async (name) => dataRef.current?.[name] || [],
-        write: async (name, list) => update((d) => ({ ...d, [name]: list })),
+        read: async (name) => syncRead(dataRef.current, name, syncDevice()),
+        write: async (name, list) => update((d) => syncWrite(d, name, list)),
         readBase: (name) => store.get(`syncBase:${name}`, null),
-        writeBase: (name, list) => store.set(`syncBase:${name}`, list),
+        // Снимок вкладок — только свои: чужие не считаются «удалёнными здесь».
+        writeBase: (name, list) => store.set(`syncBase:${name}`, name === 'tabs' ? list.filter((t) => t.device === syncDevice().id) : list),
       });
       setSyncState({ status: 'ok', at: Date.now(), result: r });
     } catch (e) {
@@ -737,7 +762,7 @@ export default function App() {
     if (!hasKey) return undefined;
     const t = setTimeout(() => syncRef.current(), 3000);
     return () => clearTimeout(t);
-  }, [hasKey, data?.bookmarks, data?.passwords]);
+  }, [hasKey, data?.bookmarks, data?.passwords, data?.settings?.neverSave]);
 
   // ——— Пароли ———
   const savePassword = useCallback((cred) => update((d) => ({
@@ -818,7 +843,7 @@ export default function App() {
   const deleteProfile = async (id) => {
     const list = profiles.filter((p) => p.id !== id);
     await saveProfiles(list);
-    await Promise.all(['history', 'bookmarks', 'settings', 'session', 'passwords', 'account', 'syncKey', 'syncBase:bookmarks', 'syncBase:history', 'syncBase:passwords'].map((k) => removeItem(`${id}:${k}`)));
+    await Promise.all(['history', 'bookmarks', 'settings', 'session', 'passwords', 'account', 'syncKey', 'syncBase:bookmarks', 'syncBase:history', 'syncBase:passwords', 'syncBase:tabs', 'syncBase:settings'].map((k) => removeItem(`${id}:${k}`)));
     setProfiles(list);
   };
 
@@ -865,6 +890,7 @@ export default function App() {
     toggleTheme,
     incognito,
     history: data.history,
+    remoteTabs: remoteTabsByDevice(data.remoteTabs, data.settings?.net?.clientId),
     bookmarks: data.bookmarks,
     settings: data.settings,
     setSettings: (s) => update((d) => ({ ...d, settings: s })),

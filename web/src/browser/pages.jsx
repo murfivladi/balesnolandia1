@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AccountSettings, PasswordSettings } from './passwords.jsx';
 import { CoatOfArms } from '../shared/brand.jsx';
-import { DISCLAIMER } from '../shared/ui.jsx';
+import { DISCLAIMER, QR } from '../shared/ui.jsx';
+import { buildExport, buildQr } from '@bln/shared/browser-export.js';
 import { GOV_SITES, NET_ERRORS, displayUrl, searchUrl, parseInput } from '@bln/shared/balnet-url.js';
 import { CourierGame } from './game.jsx';
 import { providers, lease, PUBLIC_DNS } from './net.js';
@@ -145,6 +146,18 @@ export function HistoryPage({ ctx }) {
         <button className="bp-btn" disabled={!ctx.history.length} onClick={() => { if (confirm('Очистить всю историю этого профиля?')) ctx.clearHistory(); }}>Очистить историю</button>
       </header>
       {ctx.incognito && <p className="bp-muted">В режиме инкогнито история не сохраняется.</p>}
+      {ctx.remoteTabs?.map((dev) => (
+        <section key={dev.device} className="bp-card">
+          <h2>Вкладки: {dev.name} · {dayLabel(dev.ts)}</h2>
+          {dev.tabs.map((t) => (
+            <div key={t.url} className="bp-row">
+              <Favicon url={t.url} />
+              <button className="bp-link" onClick={() => ctx.navigate(t.url)}>{t.title || displayUrl(t.url)}</button>
+              <span className="bp-muted bp-ellipsis">{displayUrl(t.url)}</span>
+            </div>
+          ))}
+        </section>
+      ))}
       {!groups.length && <p className="bp-muted">{q ? 'Ничего не найдено.' : 'История пуста.'}</p>}
       {groups.map((g) => (
         <section key={g.label} className="bp-card">
@@ -202,6 +215,36 @@ export function BookmarksPage({ ctx }) {
   );
 }
 
+/** Перенос во ВлодБраузер для iOS: QR с закладками или файл JSON (без паролей). */
+function ExportSettings({ ctx }) {
+  const [qr, setQr] = useState(false);
+  const q = useMemo(() => (qr ? buildQr(ctx.bookmarks) : null), [qr, ctx.bookmarks]);
+  const download = () => {
+    const data = buildExport({ bookmarks: ctx.bookmarks, history: ctx.history, settings: ctx.settings });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+    a.download = 'vlodbrowser-export.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  return (
+    <section className="bp-card">
+      <h2>Перенос во ВлодБраузер для iOS</h2>
+      <p>Закладки, история и настройки. Пароли переносятся только через аккаунт ВлодБраузера (синхронизация зашифрована).</p>
+      <div className="bp-row">
+        <button className="bp-btn" onClick={() => setQr((v) => !v)}>{qr ? 'Скрыть QR' : 'Показать QR с закладками'}</button>
+        <button className="bp-btn" onClick={download}>Скачать файл JSON</button>
+      </div>
+      {q && (
+        <div>
+          <QR value={q.text} size={260} />
+          <p className="bp-muted">В приложении: меню → Настройки → Импорт → «Сканировать QR». В QR {q.count} из {q.total} закладок{q.count < q.total ? ' — остальные перенесите файлом' : ''}.</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function SettingsPage({ ctx }) {
   const s = ctx.settings;
   const profile = ctx.profiles.find((p) => p.id === ctx.profileId);
@@ -226,6 +269,7 @@ export function SettingsPage({ ctx }) {
         <label className="bp-check"><input type="checkbox" checked={s.restoreSession} onChange={(e) => ctx.setSettings({ ...s, restoreSession: e.target.checked })} /> Восстанавливать вкладки при запуске</label>
       </section>
       <NetworkSettings ctx={ctx} />
+      <ExportSettings ctx={ctx} />
       <section className="bp-card">
         <h2>Уведомления</h2>
         <p>Сайты на https могут попросить разрешение показывать уведомления и подписаться на push. Разрешения хранятся в профиле.</p>

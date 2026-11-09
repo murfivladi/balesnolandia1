@@ -12,7 +12,8 @@
     "./balnet-dns.js": "./balnet-dns.js",
     "./balnet-pki.js": "./balnet-pki.js",
     "./balnet-safe.js": "./balnet-safe.js",
-    "./app-versions.js": "./app-versions.js"
+    "./app-versions.js": "./app-versions.js",
+    "./browser-export.js": "./browser-export.js"
   },
   "scripts": { "test": "node --test" }
 }

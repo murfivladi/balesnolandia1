@@ -14,6 +14,7 @@ import { SiteFooter, Hero, Section, Features } from '../shared/site.jsx';
 import { formatMoney } from '@bln/shared/money.js';
 import { PurchasesPage, CourierPage, StatusBadge, PAY_STATUS, ORDER_STATUS, SUB_STATUS, PHYSICAL } from './purchases.jsx';
 import { DocsPage } from './docs.jsx';
+import { nativeHasPin, nativePin, nativeOfferPin } from '../shared/native.js';
 
 /** Открыть адрес БалНета во вкладке ВлодБраузера (страница оплаты работает во фрейме браузера). */
 export function openInBrowser(url) {
@@ -184,13 +185,28 @@ function CardForm({ id, onDone }) {
   const [number, setNumber] = useState('');
   const [exp, setExp] = useState('');
   const [pin, setPin] = useState('');
+  const [faceId, setFaceId] = useState(false);
+  // ВлодБраузер для iOS: PIN этой карты сохранён в Keychain — можно подставить по Face ID.
+  useEffect(() => {
+    let alive = true;
+    const digits = number.replace(/\D/g, '');
+    if (digits.length < 12) { setFaceId(false); return undefined; }
+    nativeHasPin(digits).then((v) => { if (alive) setFaceId(v); });
+    return () => { alive = false; };
+  }, [number]);
+  const pay = async () => {
+    const r = await post(`/pay/checkout/${id}/card`, { number, exp, pin });
+    nativeOfferPin(number, pin);
+    onDone(r);
+  };
   return (
-    <Form submitLabel="Оплатить" onSubmit={async () => onDone(await post(`/pay/checkout/${id}/card`, { number, exp, pin }))}>
+    <Form submitLabel="Оплатить" onSubmit={pay}>
       <Input label="Номер карты" inputMode="numeric" autoComplete="cc-number" placeholder="77•• •••• ••••" value={number} onChange={(e) => setNumber(e.target.value.replace(/[^\d ]/g, '').slice(0, 15))} required />
       <div className="grid grid-2">
         <Input label="Срок (ММ/ГГ)" placeholder="12/29" autoComplete="cc-exp" value={exp} onChange={(e) => setExp(e.target.value.replace(/[^\d/]/g, '').slice(0, 5))} required />
         <Input label="PIN" type="password" inputMode="numeric" autoComplete="off" maxLength={3} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 3))} required />
       </div>
+      {faceId && <Button kind="secondary" type="button" onClick={async () => { const p = await nativePin(number); if (p) setPin(p); }}>Ввести PIN по Face ID</Button>}
     </Form>
   );
 }
