@@ -1,15 +1,12 @@
 import { q } from '../db.js';
 import { session } from '../lib/auth.js';
 import { unauthorized, bad } from '../lib/errors.js';
-import { getSettings, publicSettings, webUrl } from '../lib/settings.js';
-import { IOS_APP } from '@bln/shared/app-versions.js';
+import { getSettings, publicSettings } from '../lib/settings.js';
 import { clockState } from '../lib/clock.js';
 
 export async function commonRoutes(app) {
   app.get('/public/settings', async () => publicSettings(await getSettings()));
   app.get('/clock', async () => clockState());
-  // ВлодБраузер для iOS сверяет свою версию и показывает баннер «Доступна новая версия».
-  app.get('/app/ios', async () => ({ ...IOS_APP, url: `${await webUrl()}/ios/` }));
 
   async function who(req) {
     const kind = req.query.kind === 'gov' ? 'gov' : req.query.kind === 'bank' ? 'bank' : null;

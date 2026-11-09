@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { get, post, patch, onUnauthorized } from '../shared/api.js';
+import { get, post, patch, del, onUnauthorized } from '../shared/api.js';
 import { reconnect } from '../shared/ws.js';
 import { t, useLang, fmtDate, fmtBirth } from '../shared/i18n.js';
 import { useRoute, pick } from '../shared/router.js';
@@ -860,11 +860,12 @@ function SystemSection() {
   return (
     <div className="page">
       <h1>{t('Система')}</h1>
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'settings', label: t('Переключатели и логотипы') }, { value: 'server', label: t('Адреса и почта') }, { value: 'data', label: t('Экспорт / импорт / сброс') }, { value: 'audit', label: t('Журнал действий') }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'settings', label: t('Переключатели и логотипы') }, { value: 'server', label: t('Адреса и почта') }, { value: 'data', label: t('Экспорт / импорт / сброс') }, { value: 'audit', label: t('Журнал действий') }, { value: 'crashes', label: t('Сбои приложений') }]} />
       {tab === 'settings' && <SettingsForm keys={SYSTEM_KEYS} />}
       {tab === 'server' && <ServerSettings />}
       {tab === 'data' && <DataTools />}
       {tab === 'audit' && <Audit />}
+      {tab === 'crashes' && <AppCrashes />}
     </div>
   );
 }
@@ -974,6 +975,31 @@ function DataTools() {
           try { await post('/admin/reset', { confirm, keep_settings: keep }); toast(t('Игра сброшена'), 'ok'); setConfirm(''); } catch (e) { setError(e); }
         }}>{t('Сбросить')}</Button>
       </div>
+    </div>
+  );
+}
+
+/** Отчёты о сбоях ВлодБраузера для iOS: приходят при следующем запуске приложения. */
+function AppCrashes() {
+  const { data, loading, reload } = useAsync(() => get('/admin/app/crashes'), []);
+  const [open, setOpen] = useState(null);
+  if (loading && !data) return <Spinner />;
+  const clear = async () => { if (window.confirm(t('Удалить все отчёты?'))) { await del('/admin/app/crashes'); reload(); } };
+  return (
+    <div className="card table-wrap">
+      <p className="small muted">{data.versions.map((v) => `${v.platform} ${v.version}: ${v.n}`).join(' · ') || t('Сбоев нет')}</p>
+      {data.reports.length > 0 && <button className="btn secondary sm" onClick={clear}>{t('Очистить')}</button>}
+      <table className="table">
+        <thead><tr><th>{t('Время')}</th><th>{t('Версия')}</th><th>{t('Устройство')}</th><th>{t('Ошибка')}</th></tr></thead>
+        <tbody>{data.reports.map((r) => (
+          <tr key={r.id} onClick={() => setOpen(open === r.id ? null : r.id)} style={{ cursor: 'pointer' }}>
+            <td className="small nowrap">{fmtDate(r.happened_at || r.created_at)}</td>
+            <td className="small">{r.platform} {r.version} ({r.build})</td>
+            <td className="small">{r.device} · {r.os}</td>
+            <td className="small"><b>{r.kind}</b> {r.message}{open === r.id && r.stack && <pre className="small" style={{ whiteSpace: 'pre-wrap' }}>{r.stack}</pre>}</td>
+          </tr>
+        ))}</tbody>
+      </table>
     </div>
   );
 }

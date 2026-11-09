@@ -195,6 +195,10 @@ test('аккаунт ВлодБраузера: устройство, кодов�
   assert.equal(pulled.collections.bookmarks.blob, 'enc1');
   assert.equal((await shell.post('/api/mail/sync/push', { token: dev2.token, collection: 'bookmarks', base_rev: 1, blob: 'enc2' })).rev, 2);
   await assert.rejects(shell.post('/api/mail/sync/push', { token: dev1.token, collection: 'bookmarks', base_rev: 1, blob: 'enc-old' }), (e) => e.status === 409);
+  // Вкладки и настройки тоже синхронизируются (ВлодБраузер для iOS и веб).
+  assert.equal((await shell.post('/api/mail/sync/push', { token: dev1.token, collection: 'tabs', base_rev: 0, blob: 'tabs1' })).rev, 1);
+  assert.equal((await shell.post('/api/mail/sync/push', { token: dev1.token, collection: 'settings', base_rev: 0, blob: 'set1' })).rev, 1);
+  await assert.rejects(shell.post('/api/mail/sync/push', { token: dev1.token, collection: 'secrets', base_rev: 0, blob: 'x' }), /коллекц/i);
   const list = await boris.gov.get('/api/mail/sync/devices');
   assert.equal(list.devices.length, 2);
   await boris.gov.delete(`/api/mail/sync/devices/${list.devices.find((x) => x.name === 'Телефон').id}`);

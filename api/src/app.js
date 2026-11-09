@@ -10,6 +10,7 @@ import { VERSION } from './lib/version.js';
 import { wsRoutes } from './routes/ws.js';
 import { authRoutes } from './routes/auth.js';
 import { commonRoutes } from './routes/common.js';
+import { appRoutes } from './routes/app-native.js';
 import { govRoutes } from './routes/gov.js';
 import { bankRoutes } from './routes/bank.js';
 import { financeRoutes } from './routes/finance.js';
@@ -88,6 +89,7 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
   await app.register(wsRoutes);
   await app.register(authRoutes, { prefix: '/api' });
   await app.register(commonRoutes, { prefix: '/api' });
+  await app.register(appRoutes, { prefix: '/api/app' });
   await app.register(govRoutes, { prefix: '/api/gov' });
   await app.register(govExtRoutes, { prefix: '/api/gov' });
   await app.register(bankRoutes, { prefix: '/api/bank' });

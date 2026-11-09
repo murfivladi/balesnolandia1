@@ -444,6 +444,18 @@ export async function adminRoutes(app) {
     return { log: rows.map((r) => ({ ...r, data: json(r.data, null) })) };
   });
 
+  // Сбои нативных приложений (ВлодБраузер для iOS).
+  app.get('/app/crashes', async () => {
+    const reports = await q('SELECT * FROM app_crash_reports ORDER BY id DESC LIMIT 300');
+    const versions = await q('SELECT platform, version, COUNT(*) AS n FROM app_crash_reports GROUP BY platform, version ORDER BY MAX(id) DESC');
+    return { reports, versions: versions.map((v) => ({ ...v, n: Number(v.n) })) };
+  });
+  app.delete('/app/crashes', async (req) => {
+    await q('DELETE FROM app_crash_reports');
+    await audit(null, actor(req), 'app.crashes_clear', 'app_crash_reports', null);
+    return { ok: true };
+  });
+
   // ——— Система: экспорт / импорт / сброс ———
   app.get('/export', async (req, reply) => {
     const conn = await pool.getConnection();

@@ -5,7 +5,8 @@ import crypto from 'node:crypto';
 import { q, one } from '../../db.js';
 import { unauthorized, need, conflict } from '../errors.js';
 
-export const COLLECTIONS = ['bookmarks', 'history', 'passwords'];
+// tabs — открытые вкладки каждого устройства («Вкладки с других устройств»), settings — общие настройки браузера.
+export const COLLECTIONS = ['bookmarks', 'history', 'passwords', 'tabs', 'settings'];
 const MAX_BLOB = 2 * 1024 * 1024;
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 
