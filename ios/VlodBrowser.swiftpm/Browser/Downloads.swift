@@ -24,7 +24,7 @@ final class Downloads: NSObject, ObservableObject, WKDownloadDelegate {
     @Published var lastFinished: DownloadItem?
     private var active: [ObjectIdentifier: UUID] = [:]
 
-    static let dir: URL = {
+    nonisolated static let dir: URL = {
         let d = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Downloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
@@ -69,9 +69,9 @@ final class Downloads: NSObject, ObservableObject, WKDownloadDelegate {
     // MARK: WKDownloadDelegate
 
     nonisolated func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-        let source = download.originalRequest?.url?.absoluteString ?? ""
         let key = ObjectIdentifier(download)
         Task { @MainActor in
+            let source = download.originalRequest?.url?.absoluteString ?? ""
             let name = self.unique(suggestedFilename)
             let item = DownloadItem(name: name, source: source, date: Date())
             self.items.insert(item, at: 0)
