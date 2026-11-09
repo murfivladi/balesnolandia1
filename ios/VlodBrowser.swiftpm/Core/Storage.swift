@@ -15,6 +15,8 @@ struct Profile: Codable, Identifiable, Equatable {
     var home: String?
     /// Face ID при открытии ВлодБанка.
     var bankLock: Bool?
+    /// Обои новой вкладки: «preset:N» или «photo» (картинка из «Фото» в файле профиля).
+    var wallpaper: String?
 }
 
 struct HistoryItem: Codable, Identifiable, Equatable {

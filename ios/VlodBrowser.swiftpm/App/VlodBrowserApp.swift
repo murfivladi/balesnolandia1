@@ -5,6 +5,11 @@ struct VlodBrowserApp: App {
     @StateObject private var browser = Browser()
     @Environment(\.scenePhase) private var phase
 
+    init() {
+        CrashReporter.install()
+        CrashReporter.sendPending()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

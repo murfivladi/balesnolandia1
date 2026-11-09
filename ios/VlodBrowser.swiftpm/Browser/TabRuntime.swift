@@ -11,6 +11,8 @@ enum Phase: Equatable {
     case failed(code: String, host: String, ip: String?, dns: JSON?)
     case maintenance
     case certError(CertVerdict)
+    /// Сайт в списке Безопасного просмотра ВлодПоиска.
+    case unsafe(SafeBrowsing.Verdict)
     case done
 }
 
@@ -22,6 +24,7 @@ struct Conn: Equatable {
     var host: String
     var cert: CertVerdict?
     var tls: JSON?
+    var unsafe: SafeBrowsing.Verdict? = nil
 }
 
 /// Что загружено в WebView вкладки.

@@ -30,6 +30,11 @@ struct BrowserView: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .bottom) { PromptBar(downloads: browser.downloads) }
+                .overlay {
+                    if let q = browser.addressQuery, !q.isEmpty, q != browser.activeTab?.url {
+                        SuggestionsView(query: q).background(Color(uiColor: .systemBackground))
+                    }
+                }
             if !wide {
                 Divider()
                 if browser.settings.addressBarBottom { toolbarRow }
@@ -187,6 +192,7 @@ struct BrowserView: View {
                 }
                 ShareLink(item: t.url) { Label("Поделиться адресом", systemImage: "square.and.arrow.up") }
                 Button { browser.reload() } label: { Label("Обновить", systemImage: "arrow.clockwise") }
+                Button { Task { await SafeBrowsing.report(t.url) } } label: { Label("Сообщить о фишинге", systemImage: "exclamationmark.shield") }
             }
             Divider()
             Button { browser.navigate("balnet://history/", newTab: false) } label: { Label("История", systemImage: "clock") }

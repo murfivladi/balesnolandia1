@@ -25,6 +25,13 @@ struct TabContentView: View {
             CertErrorView(host: Balnet.split(tab.url)?.host ?? "", verdict: v, tls: runtime.conn?.tls,
                           onBack: { browser.navigate(Balnet.newTab, tabId: tab.id) },
                           onProceed: { browser.proceedUnsafe(tab.id, host: Balnet.split(tab.url)?.host ?? "", hash: v.hash) })
+        case .unsafe(let v):
+            SafeBrowsingView(host: Balnet.split(tab.url)?.host ?? "", url: tab.url, verdict: v,
+                             onBack: { browser.navigate(Balnet.newTab, tabId: tab.id) },
+                             onProceed: {
+                                 SafeBrowsing.bypass.insert(Balnet.split(tab.url)?.host ?? "")
+                                 browser.reload(tab.id)
+                             })
         case .done:
             WebContainer(runtime: runtime, generation: runtime.webGeneration)
                 .ignoresSafeArea(.container, edges: .bottom)
@@ -117,6 +124,10 @@ struct ErrorPageView: View {
                 }
                 Button("Перезагрузить", action: onReload)
                     .buttonStyle(.borderedProminent)
+                if code == "ERR_BALNET_UNREACHABLE" || code == "ERR_INTERNET_DISCONNECTED" {
+                    Text("Пока ждёте — сыграйте в «Курьера БалНета»").font(.subheadline).foregroundStyle(.secondary).padding(.top, 8)
+                    CourierGameView()
+                }
             }
             .padding(24)
             .frame(maxWidth: 560, alignment: .leading)
@@ -135,6 +146,7 @@ struct MaintenanceView: View {
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
             Button("Проверить снова", action: onReload).buttonStyle(.borderedProminent)
+            CourierGameView().padding(.top, 8)
         }
         .padding(24)
         .frame(maxWidth: 480)
@@ -259,5 +271,47 @@ struct SourceView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } }
             }
         }
+    }
+}
+
+/// Красная страница Безопасного просмотра.
+struct SafeBrowsingView: View {
+    let host: String
+    let url: String
+    let verdict: SafeBrowsing.Verdict
+    let onBack: () -> Void
+    let onProceed: () -> Void
+    @State private var advanced = false
+
+    var body: some View {
+        let t = SafeBrowsing.threats[verdict.threat] ?? SafeBrowsing.threats["phishing"]!
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Image(systemName: "xmark.octagon.fill").font(.system(size: 48)).foregroundStyle(.white)
+                Text(t.title).font(.title.bold())
+                Text(t.text)
+                Text("Сайт **\(host)** в списке Безопасного просмотра ВлодПоиска.")
+                HStack {
+                    Button(advanced ? "Скрыть подробности" : "Подробнее") { advanced.toggle() }
+                        .buttonStyle(.bordered)
+                        .tint(.white)
+                    Button("Вернуться к безопасной странице", action: onBack)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.white)
+                        .foregroundStyle(Theme.danger)
+                }
+                if advanced {
+                    Text("ВлодПоиск недавно обнаружил \(verdict.threat == "phishing" ? "фишинг" : "опасное содержимое") на этом сайте (запись «\(verdict.expr)»). Такие сайты выдают себя за другие — например, за ВлодБанк, — чтобы украсть пароли и данные карт.")
+                    Text("Владелец сайта может исправить проблему и запросить проверку в кабинете вебмастера ВлодПоиска.")
+                    Button("Перейти на этот небезопасный сайт", action: onProceed).underline()
+                    Text("Адрес: \(url)").font(.caption).opacity(0.8)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(24)
+            .frame(maxWidth: 560, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Theme.danger.ignoresSafeArea())
     }
 }

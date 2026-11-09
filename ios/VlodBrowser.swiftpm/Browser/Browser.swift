@@ -35,6 +35,8 @@ final class Browser: ObservableObject {
     @Published var prompt: BrowserPrompt?
     /// ВлодБанк разблокирован Face ID до ухода приложения в фон.
     @Published var bankUnlocked = false
+    /// Текст в адресной строке, пока её редактируют (nil — не редактируют): по нему — подсказки.
+    @Published var addressQuery: String?
 
     // Строка состояния
     @Published var lease: Lease?
@@ -422,8 +424,16 @@ final class Browser: ObservableObject {
             cert = await NetClient.shared.checkTLS(tls, host: host)
             guard rt.loadToken == token else { return }
         }
-        rt.conn = Conn(ok: ok, gov: d["gov"]?.bool ?? false, ip: d["ip"]?.string, host: host, cert: cert, tls: tls)
-        rt.log(NetEntry(url: url, host: host, total: total, data: d, cert: cert, lease: lease))
+        // Безопасный просмотр: префиксы хешей адреса против списка ВлодПоиска (госсайты не проверяются).
+        let gov = d["gov"]?.bool ?? false
+        let sb = ok && !gov ? await SafeBrowsing.check(url) : nil
+        guard rt.loadToken == token else { return }
+        rt.conn = Conn(ok: ok, gov: gov, ip: d["ip"]?.string, host: host, cert: cert, tls: tls, unsafe: sb)
+        rt.log(NetEntry(url: url, host: host, total: total, data: d, cert: cert, lease: lease, note: sb.map { "Безопасный просмотр: \($0.threat) (\($0.expr))" }))
+        if let sb, !SafeBrowsing.bypass.contains(host) {
+            rt.phase = .unsafe(sb)
+            return
+        }
         if let cert, !cert.ok, !certBypass.contains("\(host)|\(cert.hash ?? "")") {
             rt.phase = .certError(cert)
             return
@@ -627,6 +637,7 @@ final class Browser: ObservableObject {
         case .web(let scheme, let host, _):
             let c = runtimes[t.id]?.conn
             let mine = c?.host == host
+            if mine, c?.unsafe != nil { return .danger("Опасный сайт") }
             if mine, scheme == "https", let cert = c?.cert, !cert.ok { return .danger("Не защищено") }
             if mine, c?.gov == true, c?.cert?.ok == true { return .gov(owner: Balnet.govSites[host]?.owner ?? "Правительство БФ") }
             if mine, scheme == "https", c?.cert?.ok == true { return .secure }

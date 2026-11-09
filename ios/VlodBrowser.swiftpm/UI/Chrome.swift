@@ -163,6 +163,7 @@ struct AddressBar: View {
                     .autocorrectionDisabled()
                     .submitLabel(.go)
                     .onSubmit(submit)
+                    .onChange(of: text) { t in if focused { browser.addressQuery = t } }
                     .opacity(focused ? 1 : 0)
                 if !focused {
                     Text(shown.isEmpty ? "Поиск или адрес сайта БалНета" : shown)
@@ -197,6 +198,10 @@ struct AddressBar: View {
         }
         .onChange(of: focused) { f in
             if f { text = tab.url == Balnet.newTab ? "" : tab.url }
+            browser.addressQuery = f ? text : nil
+        }
+        .onChange(of: browser.addressQuery == nil) { closed in
+            if closed && focused { focused = false }
         }
     }
 
@@ -205,6 +210,7 @@ struct AddressBar: View {
     private func submit() {
         guard let url = Balnet.parseInput(text) else { return }
         focused = false
+        browser.addressQuery = nil
         browser.navigate(url, typed: true)
     }
 }
@@ -331,5 +337,64 @@ extension View {
     /// Страница под шторкой DevTools остаётся доступной (iOS 16.4+).
     @ViewBuilder func interactiveSheetBackground() -> some View {
         if #available(iOS 16.4, *) { presentationBackgroundInteraction(.enabled(upThrough: .medium)) } else { self }
+    }
+}
+
+/// Подсказки под адресной строкой: «Искать во ВлодПоиске», госсайты, закладки, история, популярные запросы.
+struct SuggestionsView: View {
+    @EnvironmentObject private var browser: Browser
+    let query: String
+    @State private var remote: [String] = []
+
+    private struct Item: Identifiable {
+        var id: String { url }
+        let url: String
+        let title: String
+        let icon: String
+    }
+
+    private var items: [Item] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty, let go = Balnet.parseInput(query) else { return [] }
+        let isSearch = Balnet.split(go)?.host == Balnet.searchHost && Balnet.searchQuery(Balnet.split(go)?.path ?? "") == query.trimmingCharacters(in: .whitespaces)
+        var out = [Item(url: go, title: isSearch ? "\(query.trimmingCharacters(in: .whitespaces)) — Искать во ВлодПоиске" : Balnet.display(go), icon: isSearch ? "magnifyingglass" : "globe")]
+        var seen: Set<String> = [go]
+        let pool = Balnet.govOrder.compactMap { h in Balnet.govSites[h].map { ("https://\(h)/", $0.title) } }
+            + browser.bookmarks.map { ($0.url, $0.title) }
+            + browser.history.prefix(500).map { ($0.url, $0.title) }
+        for (url, title) in pool where out.count < 7 {
+            if seen.contains(url) || url.hasPrefix("balnet://newtab") { continue }
+            if "\(title) \(url)".lowercased().contains(q) {
+                seen.insert(url)
+                out.append(Item(url: url, title: title.isEmpty ? Balnet.display(url) : "\(title) — \(Balnet.display(url))", icon: browser.isBookmarked(url) ? "star" : "clock"))
+            }
+        }
+        for s in remote where out.count < 10 {
+            let u = Balnet.searchURL(s)
+            if !seen.contains(u) { seen.insert(u); out.append(Item(url: u, title: s, icon: "magnifyingglass")) }
+        }
+        return out
+    }
+
+    var body: some View {
+        List(items) { item in
+            Button {
+                browser.addressQuery = nil
+                browser.navigate(item.url, typed: true)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: item.icon).foregroundStyle(.secondary).frame(width: 22)
+                    Text(item.title).lineLimit(1).foregroundStyle(.primary)
+                }
+            }
+        }
+        .listStyle(.plain)
+        .task(id: query) {
+            // Популярные запросы ВлодПоиска — с паузой, чтобы не спрашивать сервер на каждую букву.
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled, query.count >= 2, !query.contains("."),
+                  let r = try? await API.get("/search/suggest?q=\(Balnet.encodeComponent(query))") else { return }
+            remote = (r["suggestions"]?.array ?? []).compactMap { $0.string }
+        }
     }
 }

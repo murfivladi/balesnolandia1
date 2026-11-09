@@ -4,6 +4,7 @@ import SwiftUI
 struct NewTabView: View {
     @EnvironmentObject private var browser: Browser
     @State private var query = ""
+    @State private var showWallpapers = false
 
     private struct Tile: Identifiable { var id: String { url }; let url: String; let title: String }
 
@@ -73,6 +74,10 @@ struct NewTabView: View {
                 }
                 .padding(.horizontal, 16)
 
+                if !browser.incognito {
+                    SponsoredTile()
+                    NewsFeed()
+                }
                 if let m = browser.clockMonth {
                     HStack {
                         Image(systemName: "calendar")
@@ -87,6 +92,15 @@ struct NewTabView: View {
             .padding(.bottom, 30)
         }
         .scrollDismissesKeyboard(.interactively)
+        .background(WallpaperView(value: browser.incognito ? nil : browser.profile.wallpaper, profileId: browser.profile.id).ignoresSafeArea())
+        .overlay(alignment: .topTrailing) {
+            if !browser.incognito {
+                Button { showWallpapers = true } label: { Image(systemName: "paintpalette").padding(10).background(Circle().fill(.regularMaterial)) }
+                    .padding(10)
+                    .accessibilityLabel("Обои")
+            }
+        }
+        .sheet(isPresented: $showWallpapers) { WallpaperPicker().environmentObject(browser) }
     }
 }
 
