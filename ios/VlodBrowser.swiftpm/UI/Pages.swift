@@ -105,6 +105,7 @@ struct HistoryView: View {
             if browser.incognito {
                 Text("В режиме инкогнито история не сохраняется.").foregroundStyle(.secondary)
             }
+            RemoteTabsSection()
             ForEach(items) { h in
                 Button { browser.navigate(h.url) } label: {
                     HStack(spacing: 10) {
@@ -195,6 +196,20 @@ struct SettingsView: View {
                 Button("Сохранить подключение") { browser.updateNet(net) }
                     .disabled(net == browser.profile.net || (net.dnsMode == "custom" && !Balnet.isIP(net.dns)))
             }
+            AccountSection(sync: browser.sync)
+            Section {
+                Toggle("\(OwnerAuth.biometryName) при входе во ВлодБанк", isOn: Binding(get: { browser.bankLockEnabled }, set: { browser.setBankLock($0) }))
+                Button("Пароли сайтов") { browser.navigate("balnet://passwords/") }
+                Button("Скачанные файлы") { browser.navigate("balnet://downloads/") }
+                if !browser.savedPins.isEmpty {
+                    Button("Забыть сохранённые PIN карт (\(browser.savedPins.count))", role: .destructive) { browser.forgetPins(); browser.objectWillChange.send() }
+                }
+            } header: {
+                Text("Безопасность")
+            } footer: {
+                Text("PIN карт хранится в связке ключей iPhone/iPad и подставляется на pay.bank.bln и в банкомате только после \(OwnerAuth.biometryName).")
+            }
+            ImportSection()
             Section("Вид") {
                 Picker("Тема", selection: $browser.settings.theme) {
                     ForEach(ThemeMode.allCases) { Text($0.label).tag($0) }

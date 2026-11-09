@@ -27,8 +27,9 @@ enum API {
         try await send(URLRequest(url: url(path)))
     }
 
-    static func post(_ path: String, _ body: [String: Any] = [:]) async throws -> JSON {
+    static func post(_ path: String, _ body: [String: Any] = [:], headers: [String: String] = [:]) async throws -> JSON {
         var req = URLRequest(url: url(path))
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)

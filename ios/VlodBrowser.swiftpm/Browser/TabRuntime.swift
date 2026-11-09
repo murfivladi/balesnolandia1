@@ -109,6 +109,7 @@ final class TabRuntime: ObservableObject {
         webView?.stopLoading()
         if let wv = webView {
             for name in ["balnetConsole", "balnetGov"] { wv.configuration.userContentController.removeScriptMessageHandler(forName: name) }
+            wv.configuration.userContentController.removeScriptMessageHandler(forName: "balnetNative", contentWorld: .page)
             wv.configuration.userContentController.removeScriptMessageHandler(forName: "balnet", contentWorld: .defaultClient)
         }
         coordinator?.observations.removeAll()

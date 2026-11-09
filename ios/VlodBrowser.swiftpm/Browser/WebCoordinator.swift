@@ -13,6 +13,21 @@ final class WeakHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// Ответы госсайту на window.__balnetNative (Face ID, PIN карты) — с обещанием в JS.
+final class WeakReplyHandler: NSObject, WKScriptMessageHandlerWithReply {
+    weak var target: WebCoordinator?
+    init(_ target: WebCoordinator) { self.target = target }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        let body = JSON.from(any: message.body)
+        Task { @MainActor [weak target] in
+            guard let co = target, let browser = co.browser else { replyHandler(nil, nil); return }
+            let r = await browser.nativeRequest(tabId: co.tabId, body)
+            replyHandler(r.isNull ? nil : r.any, nil)
+        }
+    }
+}
+
 /// Делегат WebView одной вкладки: какие переходы разрешены, адрес и заголовок, сообщения страниц.
 @MainActor
 final class WebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
@@ -42,6 +57,8 @@ final class WebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         switch kind {
         case .gov:
             ucc.add(handler, name: "balnetGov")
+            ucc.addScriptMessageHandler(WeakReplyHandler(co), contentWorld: .page, name: "balnetNative")
+            ucc.addUserScript(WKUserScript(source: Scripts.native, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             ucc.addUserScript(WKUserScript(source: Scripts.theme(theme), injectionTime: .atDocumentStart, forMainFrameOnly: true))
             ucc.addUserScript(WKUserScript(source: Scripts.govOpen, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         case .site:
@@ -124,14 +141,33 @@ final class WebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }
         let main = action.targetFrame?.isMainFrame ?? true
+        // <a download>, blob: и data: — загрузка файла (чек, выписка), а не переход.
+        if action.shouldPerformDownload { return .download }
+        // Госсайт открыл файл с API игры (картинка чека, PDF) — тоже загрузка.
+        if main, kind == .gov, url.host?.lowercased() == Config.apiHost { return .allow }
         if allowed(url, mainFrame: main) { return .allow }
-        // Ссылка госсайта на API (файл, чек) — откроем как загрузку позже (И2); остальное — не БалНет.
-        if main, kind == .gov, url.host?.lowercased() == Config.apiHost {
-            browser?.runtimes[tabId]?.addConsole("warn", "Загрузки файлов появятся в следующей версии: \(url.absoluteString)")
-        } else if main {
+        if main {
             browser?.runtimes[tabId]?.addConsole("warn", "Переход заблокирован (только БалНет): \(url.absoluteString)")
         }
         return .cancel
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse) async -> WKNavigationResponsePolicy {
+        guard response.isForMainFrame else { return .allow }
+        let host = response.response.url?.host?.lowercased()
+        if kind == .gov && host == Config.apiHost { return .download }
+        let http = response.response as? HTTPURLResponse
+        let disposition = (http?.value(forHTTPHeaderField: "Content-Disposition") ?? "").lowercased()
+        if !response.canShowMIMEType || disposition.hasPrefix("attachment") { return .download }
+        return .allow
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        browser?.downloads.start(download)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        browser?.downloads.start(download)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

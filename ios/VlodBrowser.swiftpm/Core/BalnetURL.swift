@@ -28,6 +28,8 @@ enum Balnet {
         "settings": "Настройки",
         "about": "О ВлодБраузере",
         "terminal": "Терминал",
+        "downloads": "Скачанные файлы",
+        "passwords": "Пароли",
     ]
 
     static let govSites: [String: GovSite] = [

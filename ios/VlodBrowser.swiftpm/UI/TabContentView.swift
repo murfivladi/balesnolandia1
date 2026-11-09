@@ -28,6 +28,9 @@ struct TabContentView: View {
         case .done:
             WebContainer(runtime: runtime, generation: runtime.webGeneration)
                 .ignoresSafeArea(.container, edges: .bottom)
+                .overlay {
+                    if browser.isBank(tab) && browser.bankLockEnabled && !browser.bankUnlocked && !browser.incognito { BankLockView() }
+                }
         }
     }
 
@@ -41,6 +44,8 @@ struct TabContentView: View {
             case "settings": SettingsView()
             case "about": AboutView()
             case "terminal": TerminalView(engine: runtime.terminal)
+            case "downloads": DownloadsView(downloads: browser.downloads)
+            case "passwords": PasswordsView()
             default: ErrorPageView(code: "ERR_INVALID_URL", host: "", ip: nil, dns: nil) {}
             }
         default:

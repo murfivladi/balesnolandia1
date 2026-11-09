@@ -1,7 +1,7 @@
 // Версии нативных приложений. Сервер сообщает их приложениям (GET /api/app/ios), и те показывают
 // баннер «Доступна новая версия». Меняется вместе с версией в ios/VlodBrowser.swiftpm (Package.swift и Config.swift).
 
-export const IOS_APP = { version: '0.2.0', build: 2 };
+export const IOS_APP = { version: '0.3.0', build: 3 };
 
 /** Новее ли версия a, чем b (числа через точку). */
 export function isNewer(a, b) {

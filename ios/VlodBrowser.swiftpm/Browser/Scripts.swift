@@ -45,6 +45,20 @@ enum Scripts {
     })();
     """#
 
+    /// Мост ВлодБраузера для госсайтов (web/src/shared/native.js): Face ID и PIN карт из Keychain.
+    static let native = #"""
+    (function () {
+      var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.balnetNative;
+      if (!h || window.__balnetNative) return;
+      window.__balnetNative = {
+        confirm: function (reason) { return h.postMessage({ op: 'confirm', reason: String(reason || '') }); },
+        hasPin: function (number) { return h.postMessage({ op: 'hasPin', number: String(number || '') }); },
+        pin: function (number) { return h.postMessage({ op: 'pin', number: String(number || '') }); },
+        offerPin: function (number, pin) { h.postMessage({ op: 'offerPin', number: String(number || ''), pin: String(pin || '') }); }
+      };
+    })();
+    """#
+
     /// Мост shim шлюза → приложение. Работает в отдельном мире WebKit: сайт игрока не может вызвать приложение напрямую,
     /// только через postMessage, как во фрейме веб-ВлодБраузера. На верхнем уровне parent === window, поэтому
     /// сообщения shim приходят в это же окно. Запросы уведомлений и push пока отклоняются (этап И3).

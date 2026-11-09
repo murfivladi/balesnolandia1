@@ -10,8 +10,8 @@ enum Config {
     static let apiHost = "vps.vladislavb.qzz.io"
 
     /// Версия приложения — та же, что displayVersion в Package.swift. Сервер сообщает последнюю (GET /api/app/ios).
-    static let version = "0.2.0"
-    static let build = 2
+    static let version = "0.3.0"
+    static let build = 3
 
     static let disclaimer = "Игровой сервис. Не является банком, госорганом, платёжным средством или удостоверением личности."
 }

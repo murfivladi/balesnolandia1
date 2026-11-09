@@ -9,6 +9,12 @@ struct Profile: Codable, Identifiable, Equatable {
     var net = NetSettings()
     /// Хранилище WebKit госсайтов профиля (cookies входа ВлодУслуг).
     var dataStoreId: UUID = UUID()
+    /// Сайты, для которых не предлагать сохранить пароль (синхронизируется).
+    var neverSave: [String]?
+    /// Домашняя страница (синхронизируется с веб-версией).
+    var home: String?
+    /// Face ID при открытии ВлодБанка.
+    var bankLock: Bool?
 }
 
 struct HistoryItem: Codable, Identifiable, Equatable {

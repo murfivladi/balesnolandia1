@@ -17,8 +17,8 @@ let package = Package(
             targets: ["AppModule"],
             bundleIdentifier: "io.qzz.vladislavb.vlodbrowser",
             teamIdentifier: "",
-            displayVersion: "0.2.0",
-            bundleVersion: "2",
+            displayVersion: "0.3.0",
+            bundleVersion: "3",
             appIcon: .asset("AppIcon"),
             accentColor: .presetColor(.blue),
             supportedDeviceFamilies: [
@@ -30,6 +30,11 @@ let package = Package(
                 .landscapeRight,
                 .landscapeLeft,
                 .portraitUpsideDown(.when(deviceFamilies: [.pad]))
+            ],
+            capabilities: [
+                .faceID(purposeString: "ВлодБраузер подтверждает Face ID вход во ВлодБанк, переводы и подстановку паролей и PIN карт."),
+                .camera(purposeString: "Камера нужна, чтобы сканировать QR-коды: перенос закладок, оплата и проверка документов."),
+                .photoLibraryAdd(purposeString: "ВлодБраузер сохраняет скачанные чеки и документы в «Фото» по вашей просьбе.")
             ],
             appCategory: .utilities
         )

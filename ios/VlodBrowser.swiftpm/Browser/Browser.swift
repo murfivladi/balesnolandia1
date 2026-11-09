@@ -24,6 +24,18 @@ final class Browser: ObservableObject {
     @Published var runtimes: [String: TabRuntime] = [:]
     let dialogs = Dialogs()
 
+    // И2: аккаунт и синхронизация, пароли, загрузки, Face ID
+    let sync = SyncManager()
+    let downloads = Downloads()
+    /// Пароли сайтов профиля (Keychain). Показ и подстановка — после Face ID.
+    @Published var passwords: [SavedPassword] = []
+    /// Открытые вкладки других устройств (из синхронизации).
+    @Published var remoteTabs: [JSON] = []
+    /// Предложения браузера поверх страницы: сохранить пароль, подставить пароль, сохранить PIN карты.
+    @Published var prompt: BrowserPrompt?
+    /// ВлодБанк разблокирован Face ID до ухода приложения в фон.
+    @Published var bankUnlocked = false
+
     // Строка состояния
     @Published var lease: Lease?
     @Published var clockMonth: Int?
@@ -61,6 +73,10 @@ final class Browser: ObservableObject {
         bookmarks = Storage.load([Bookmark].self, "\(pid)-bookmarks") ?? []
         jars = Storage.load([String: JSON].self, "\(pid)-jars") ?? [:]
         runtimes = rts
+        passwords = Browser.loadPasswords(pid)
+        sync.browser = self
+        sync.load(profileId: pid)
+        downloads.load()
     }
 
     // MARK: Профиль и сессия
@@ -109,6 +125,7 @@ final class Browser: ObservableObject {
             try? await Task.sleep(nanoseconds: 600_000_000)
             guard let self, !Task.isCancelled else { return }
             self.saveNow()
+            self.sync.syncSoon()
         }
     }
 
@@ -142,6 +159,10 @@ final class Browser: ObservableObject {
         history = Storage.load([HistoryItem].self, "\(id)-history") ?? []
         bookmarks = Storage.load([Bookmark].self, "\(id)-bookmarks") ?? []
         jars = Storage.load([String: JSON].self, "\(id)-jars") ?? [:]
+        passwords = Browser.loadPasswords(id)
+        remoteTabs = []
+        bankUnlocked = false
+        sync.load(profileId: id)
         for t in normal.tabs { runtimes[t.id] = TabRuntime(id: t.id) }
         lease = nil
         saveSettings()
@@ -272,7 +293,7 @@ final class Browser: ObservableObject {
 
     private func addHistory(_ url: String, _ title: String) {
         guard !incognito, url != Balnet.newTab else { return }
-        history.insert(HistoryItem(url: url, title: title, ts: Date()), at: 0)
+        history.insert(HistoryItem(url: url, title: title, ts: Date(timeIntervalSince1970: (Date().timeIntervalSince1970 * 1000).rounded() / 1000)), at: 0)
         if history.count > Self.historyLimit { history.removeLast(history.count - Self.historyLimit) }
         scheduleSave()
     }
@@ -506,6 +527,10 @@ final class Browser: ObservableObject {
             let jar: JSON = .object(["cookies": m["cookies"] ?? .object([:]), "local": m["local"] ?? .object([:])])
             if incognito { incognitoJars[origin] = jar } else { jars[origin] = jar; scheduleSave() }
             Task { _ = try? await API.post("/net/jar", ["ticket": ticket, "cookies": (m["cookies"] ?? .object([:])).any, "local": (m["local"] ?? .object([:])).any]) }
+        case "credential":
+            if let p = m["password"]?.string, !p.isEmpty { offerPassword(origin: origin, username: m["username"]?.string ?? "", password: p) }
+        case "login-form":
+            offerFill(tabId: tabId, origin: origin, ticket: ticket)
         case "notify":
             rt.addConsole("info", "Уведомление сайта: \(m["title"]?.string ?? "") — уведомления появятся в следующей версии")
         default:

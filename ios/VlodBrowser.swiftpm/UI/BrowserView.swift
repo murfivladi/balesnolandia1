@@ -8,6 +8,8 @@ struct BrowserView: View {
     @State private var showDevTools = false
     @State private var sourceText: String?
     @State private var showProfiles = false
+    @State private var screenshotWarning = false
+    @Environment(\.scenePhase) private var scenePhase
 
     private var wide: Bool { hSize == .regular }
 
@@ -27,6 +29,7 @@ struct BrowserView: View {
             }
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .bottom) { PromptBar(downloads: browser.downloads) }
             if !wide {
                 Divider()
                 if browser.settings.addressBarBottom { toolbarRow }
@@ -65,6 +68,21 @@ struct BrowserView: View {
             }
         }
         .onChange(of: browser.settings.theme) { _ in browser.applyTheme() }
+        // Приватность банка: в переключателе приложений — размытие, после возврата — снова Face ID.
+        .overlay {
+            if scenePhase != .active && browser.isBank(browser.activeTab) { PrivacyCover() }
+        }
+        .onChange(of: scenePhase) { p in
+            if p == .background { browser.bankUnlocked = false }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
+            if browser.isBank(browser.activeTab) { screenshotWarning = true }
+        }
+        .alert("Снимок экрана с банком", isPresented: $screenshotWarning) {
+            Button("Понятно", role: .cancel) {}
+        } message: {
+            Text("На снимке могут быть номер карты и баланс. Не пересылайте его и удалите из «Фото», если он не нужен.")
+        }
     }
 
     // MARK: Содержимое активной вкладки
@@ -173,6 +191,8 @@ struct BrowserView: View {
             Divider()
             Button { browser.navigate("balnet://history/", newTab: false) } label: { Label("История", systemImage: "clock") }
             Button { browser.navigate("balnet://bookmarks/") } label: { Label("Закладки", systemImage: "book") }
+            Button { browser.navigate("balnet://downloads/") } label: { Label("Скачанные файлы", systemImage: "arrow.down.circle") }
+            Button { browser.navigate("balnet://passwords/") } label: { Label("Пароли", systemImage: "key") }
             Button { browser.navigate("balnet://terminal/") } label: { Label("Терминал", systemImage: "terminal") }
             Menu {
                 Button { showDevTools = true } label: { Label("Инструменты разработчика", systemImage: "hammer") }
