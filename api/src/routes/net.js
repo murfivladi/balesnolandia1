@@ -8,8 +8,19 @@ import { isIP, normalizeIP } from '@bln/shared/balnet-ip.js';
 import { splitUrl } from '@bln/shared/balnet-url.js';
 import { fqdn } from '@bln/shared/balnet-dns.js';
 import { whoisDomain } from '../lib/domains.js';
+import { createTicket, cleanJar } from '../lib/gateway.js';
+import { tlsFor, trustStore } from '../lib/pki.js';
+import { one } from '../db.js';
+import { verifyHash } from '../lib/auth.js';
+import { newSession, getSession, endSession, shell, saveFile, prompt } from '../lib/vhost/ssh.js';
 
 const limited = (max) => ({ config: { rateLimit: { max, timeWindow: '1 minute' } } });
+
+/** Разрешение сайта на уведомления (решает ВлодБраузер). На http Push и уведомления недоступны — как в Chrome. */
+function notifPermission(v, scheme) {
+  if (scheme !== 'https') return 'denied';
+  return v === 'granted' || v === 'denied' ? v : 'default';
+}
 
 async function online() {
   if (await isPaused()) throw new HttpError(503, 'balnet_maintenance', 'БалНет на обслуживании: игровое время на паузе');
@@ -22,7 +33,7 @@ function ipParam(v, what) {
 }
 
 /** Клиент и его резолвер: свой (настройка браузера) или резолвер провайдера. */
-async function clientCtx(body) {
+export async function clientCtx(body) {
   const c = await clientOf(body.client_id);
   const resolverIp = ipParam(body.resolver, 'DNS-сервер') || c.provider.resolver_ip;
   return { ...c, resolverIp };
@@ -44,12 +55,30 @@ async function hostToIp(c, host) {
   return { ip, dns };
 }
 
+/** Referer как у браузера (strict-origin-when-cross-origin): только origin страницы, откуда перешли. */
+function refOrigin(v) {
+  try { const u = new URL(String(v || '')); return /^https?:$/.test(u.protocol) ? u.origin : null; } catch { return null; }
+}
+
 /** Ошибка резолва → код как в Chrome. */
 export function dnsErrorCode(dns) {
   if (dns.rcode === 'NXDOMAIN') return 'DNS_PROBE_FINISHED_NXDOMAIN';
   if (dns.rcode === 'NOERROR') return 'ERR_NAME_NOT_RESOLVED'; // имя есть, но адресов (A/AAAA) у него нет
   if (dns.rcode === 'TIMEOUT') return 'DNS_PROBE_FINISHED_BAD_CONFIG';
   return 'ERR_NAME_RESOLUTION_FAILED';
+}
+
+/** Открыть адрес от имени устройства: { ok, ip, target, gov, server, code, dns, timing }. */
+export async function openFor(c, url) {
+  const p = splitUrl(url);
+  if (!p || (p.scheme !== 'https' && p.scheme !== 'http')) throw bad('invalid_url', 'Неверный адрес');
+  const started = Date.now();
+  const { ip, dns } = await hostToIp(c, p.host);
+  const base = { url, host: p.host, client_ip: c.ip, resolver_ip: c.resolverIp, dns };
+  if (!ip) return { ...base, ok: false, code: dnsErrorCode(dns), timing: { dns: dns?.ms || 0 } };
+  const snap = await netSnapshot();
+  const conn = connect(snap, c.ip, ip, p.host);
+  return { ...base, ...conn, ok: conn.ok, timing: { dns: dns?.ms || 0, connect: conn.ms || 0, server: Date.now() - started } };
 }
 
 export async function netRoutes(app) {
@@ -73,7 +102,7 @@ export async function netRoutes(app) {
   app.post('/resolve', limited(240), async (req) => {
     await online();
     const c = await clientCtx(req.body || {});
-    return resolve({ resolverIp: c.resolverIp, clientIp: c.ip, clientProviderId: c.provider.id, name: req.body.name, type: req.body.type || 'A' });
+    return resolve({ resolverIp: c.resolverIp, clientIp: c.ip, clientProviderId: c.provider.id, name: req.body.name, type: req.body.type || 'A', dnssec: !!req.body.dnssec, cd: !!req.body.cd });
   });
 
   app.post('/query', limited(240), async (req) => {
@@ -81,23 +110,28 @@ export async function netRoutes(app) {
     const b = req.body || {};
     const c = await clientCtx(b);
     const server = ipParam(b.server, 'Сервер') || c.resolverIp;
-    return queryServer({ serverIp: server, clientIp: c.ip, clientProviderId: c.provider.id, name: b.name, type: b.type || 'A', recurse: b.recurse !== false });
+    return queryServer({ serverIp: server, clientIp: c.ip, clientProviderId: c.provider.id, name: b.name, type: b.type || 'A', recurse: b.recurse !== false, dnssec: !!b.dnssec, cd: !!b.cd });
   });
 
-  // Открытие адреса браузером: DNS → подключение к серверу → что показать.
+  /** Хранилище доверия ВлодБраузера: корневые УЦ, журналы прозрачности, отозванные УЦ. */
+  app.get('/trust', async () => trustStore());
+
+  // Открытие адреса браузером: DNS → подключение к серверу → TLS (для https) → что показать.
+  // tls: { chain, sct, ocsp, time } — браузер сам проверяет подписи; null — на сервере нет сертификата (порт 443 закрыт).
+  // Для сайта игрока выдаётся билет шлюза (адрес песочницы) с хранилищами сайта от браузера.
   app.post('/open', limited(240), async (req) => {
     await online();
     const b = req.body || {};
     const c = await clientCtx(b);
-    const p = splitUrl(String(b.url || ''));
-    if (!p || (p.scheme !== 'https' && p.scheme !== 'http')) throw bad('invalid_url', 'Неверный адрес');
-    const started = Date.now();
-    const { ip, dns } = await hostToIp(c, p.host);
-    const base = { url: b.url, host: p.host, client_ip: c.ip, resolver_ip: c.resolverIp, dns };
-    if (!ip) return { ...base, ok: false, code: dnsErrorCode(dns), timing: { dns: dns?.ms || 0 } };
-    const snap = await netSnapshot();
-    const conn = connect(snap, c.ip, ip, p.host);
-    return { ...base, ...conn, ok: conn.ok, timing: { dns: dns?.ms || 0, connect: conn.ms || 0, server: Date.now() - started } };
+    const r = await openFor(c, String(b.url || ''));
+    if (!r.ok) return r;
+    const p = splitUrl(r.url);
+    if (p.scheme === 'https') r.tls = await tlsFor({ target: r.target, host: p.host });
+    if (r.target?.startsWith('site:') && !(p.scheme === 'https' && !r.tls)) {
+      const jar = cleanJar(b.jar);
+      r.ticket = createTicket({ clientId: b.client_id, clientIp: c.ip, referrer: refOrigin(b.referrer), resolver: c.resolverIp, target: r.target, host: p.host, scheme: p.scheme, origin: `${p.scheme}://${p.host}`, notif: notifPermission(b.notifications, p.scheme), ...jar });
+    }
+    return r;
   });
 
   app.post('/ping', limited(60), async (req) => {
@@ -117,6 +151,42 @@ export async function netRoutes(app) {
     const { ip, dns } = await hostToIp(c, b.host);
     if (!ip) return { host: b.host, error: dnsErrorCode(dns), dns };
     return { host: b.host, ...traceroute(await netSnapshot(), c.ip, ip) };
+  });
+
+  // ——— SSH на сервер хостинга: ssh u<номер>@<сервер> из терминала ВлодБраузера ———
+  app.post('/ssh/login', limited(10), async (req) => {
+    await online();
+    const b = req.body || {};
+    const c = await clientCtx(b);
+    const { ip, dns } = await hostToIp(c, b.host);
+    if (!ip) return { error: `ssh: Could not resolve hostname ${b.host}: ${dnsErrorCode(dns)}` };
+    const snap = await netSnapshot();
+    const reach = ping(snap, c.ip, ip, 1);
+    if (!reach.reachable || reach.replies[0].lost) return { error: `ssh: connect to host ${b.host} port 22: Connection timed out` };
+    const server = await one("SELECT * FROM hosting_servers WHERE ip = ? AND status = 'active'", [ip]);
+    if (!server) return { error: `ssh: connect to host ${b.host} port 22: Connection refused` };
+    const m = /^u(\d+)$/.exec(String(b.user || ''));
+    const acc = m ? await one("SELECT * FROM hosting_accounts WHERE id = ? AND server_id = ? AND status IN ('active','suspended')", [Number(m[1]), server.id]) : null;
+    if (!acc || !acc.ssh_hash || !(await verifyHash(String(b.password || ''), acc.ssh_hash))) return { error: `${b.user}@${b.host}: Permission denied (password).` };
+    const name = String(server.name).replace(/\.$/, '').split('.')[0];
+    const id = newSession(acc, name, ip);
+    const s = getSession(id);
+    return { session: id, prompt: prompt(s), motd: [`Добро пожаловать на ${String(server.name).replace(/\.$/, '')} (${ip}) — хостинг БалНета.`, 'help — список команд, exit — выход.', acc.status === 'suspended' ? 'Внимание: хостинг приостановлен за неуплату.' : ''].filter(Boolean) };
+  });
+
+  app.post('/ssh/exec', limited(600), async (req) => {
+    await online();
+    const s = getSession(req.body?.session);
+    if (!s) return { error: 'Connection closed by remote host (сессия истекла)', closed: true };
+    const r = await shell(s, req.body?.line);
+    if (r.exit) endSession(req.body.session);
+    return { ...r, prompt: prompt(s) };
+  });
+
+  app.post('/ssh/save', limited(120), async (req) => {
+    const s = getSession(req.body?.session);
+    if (!s) return { error: 'Сессия истекла', closed: true };
+    return saveFile(s, req.body?.path, req.body?.content);
   });
 
   app.get('/whois', limited(60), async (req) => {

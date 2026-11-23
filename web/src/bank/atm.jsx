@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { post, newIdemKey } from '../shared/api.js';
 import { t, tServer } from '../shared/i18n.js';
 import { Topbar, Money, PinPad, Scanner, Button, MoneyInput } from '../shared/ui.jsx';
+import { nativeHasPin, nativePin, nativeOfferPin } from '../shared/native.js';
 import { parseCardScan } from '../shared/cards.jsx';
 import { sound } from '../shared/sounds.js';
 import { changeBreakdown, denominationLabel, formatMoney } from '@bln/shared/money.js';
@@ -28,6 +29,7 @@ export function Atm({ brand }) {
     setError(null);
     try {
       const s = await post('/bank/atm/session', { number, pin });
+      nativeOfferPin(number, pin);
       setSession(s);
       setStep('menu');
       sound.approve();
@@ -78,6 +80,7 @@ export function Atm({ brand }) {
               <h2 className="center">{t('Введите PIN')}</h2>
               <p className="center mono muted">•••• {number.replace(/\D/g, '').slice(-4)}</p>
               <PinPad length={3} onComplete={login} disabled={busy} />
+              <FaceIdPin number={number} onPin={login} disabled={busy} />
               {error && <div className="form-error">{error}</div>}
               <Button kind="ghost" onClick={reset}>{t('Вернуть карту')}</Button>
             </>
@@ -139,4 +142,16 @@ export function Atm({ brand }) {
       {scan && <Scanner onClose={() => setScan(false)} onScan={(text) => { const n = parseCardScan(text); setScan(false); if (n) { setNumber(n); setStep('pin'); sound.beep(); } }} />}
     </>
   );
+}
+
+/** ВлодБраузер для iOS: PIN карты сохранён в Keychain — вход в банкомат по Face ID. */
+function FaceIdPin({ number, onPin, disabled }) {
+  const [has, setHas] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    nativeHasPin(number).then((v) => { if (alive) setHas(v); });
+    return () => { alive = false; };
+  }, [number]);
+  if (!has) return null;
+  return <Button kind="secondary" disabled={disabled} onClick={async () => { const p = await nativePin(number); if (p) onPin(p); }}>{t('PIN по Face ID')}</Button>;
 }

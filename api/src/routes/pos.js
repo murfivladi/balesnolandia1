@@ -36,6 +36,7 @@ export function productView(p, extras = {}) {
   return {
     id: p.id, name: p.name, category: p.category, barcode: p.barcode, price: Number(p.price), cost: Number(p.cost), b2b_price: p.b2b_price === null || p.b2b_price === undefined ? null : Number(p.b2b_price),
     unit: p.unit, age_limit: p.age_limit, photo: p.photo, track_stock: !!p.track_stock, to_kitchen: !!p.to_kitchen, stock_milli: Number(p.stock_milli), active: !!p.active, sort: p.sort, deleted_at: p.deleted_at || null,
+    online: !!p.online, digital_content: p.digital_content ?? null,
     variants: extras.variants?.get(p.id) || [], modifiers: extras.modifiers?.get(p.id) || [],
   };
 }
@@ -236,13 +237,16 @@ export async function posRoutes(app) {
       track_stock: val('track_stock', (v) => (v ? 1 : 0)) ?? 1,
       sort: val('sort', (v) => int(Number(v) || 0, 'порядок')) ?? 0,
       active: val('active', (v) => (v ? 1 : 0)) ?? 1,
+      // Интернет-магазин (Н9): товар виден в каталоге сайта; цифровой товар выдаётся покупателю сразу после оплаты.
+      online: val('online', (v) => (v ? 1 : 0)) ?? 0,
+      digital_content: val('digital_content', (v) => (v ? String(v).slice(0, 5000) : null)) ?? null,
     };
   }
 
   app.post('/products', owner, async (req) => {
     const f = productFields(req.body || {});
     need(f.name && f.price, 'Укажите название и цену');
-    const res = await q('INSERT INTO products (shop_id, name, category, barcode, price, cost, b2b_price, unit, age_limit, photo, track_stock, to_kitchen, sort, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [req.pos.shopId, f.name, f.category, f.barcode, f.price, f.cost, f.b2b_price, f.unit, f.age_limit, f.photo, f.track_stock, f.to_kitchen, f.sort, f.active]);
+    const res = await q('INSERT INTO products (shop_id, name, category, barcode, price, cost, b2b_price, unit, age_limit, photo, track_stock, to_kitchen, sort, active, online, digital_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [req.pos.shopId, f.name, f.category, f.barcode, f.price, f.cost, f.b2b_price, f.unit, f.age_limit, f.photo, f.track_stock, f.to_kitchen, f.sort, f.active, f.online, f.digital_content]);
     const initial = Number(req.body?.stock_milli || 0);
     if (initial > 0) {
       await q('UPDATE products SET stock_milli = ? WHERE id = ?', [Math.round(initial), res.insertId]);
@@ -255,7 +259,7 @@ export async function posRoutes(app) {
     const p = await one('SELECT * FROM products WHERE id = ? AND shop_id = ? AND deleted_at IS NULL', [int(req.params.id, 'id'), req.pos.shopId]);
     if (!p) throw notFound('Товар не найден');
     const f = productFields(req.body || {}, { ...p, price: Number(p.price), cost: Number(p.cost), b2b_price: p.b2b_price === null ? null : Number(p.b2b_price) });
-    await q('UPDATE products SET name = ?, category = ?, barcode = ?, price = ?, cost = ?, b2b_price = ?, unit = ?, age_limit = ?, photo = ?, track_stock = ?, to_kitchen = ?, sort = ?, active = ? WHERE id = ?', [f.name, f.category, f.barcode, f.price, f.cost, f.b2b_price, f.unit, f.age_limit, f.photo, f.track_stock, f.to_kitchen, f.sort, f.active, p.id]);
+    await q('UPDATE products SET name = ?, category = ?, barcode = ?, price = ?, cost = ?, b2b_price = ?, unit = ?, age_limit = ?, photo = ?, track_stock = ?, to_kitchen = ?, sort = ?, active = ?, online = ?, digital_content = ? WHERE id = ?', [f.name, f.category, f.barcode, f.price, f.cost, f.b2b_price, f.unit, f.age_limit, f.photo, f.track_stock, f.to_kitchen, f.sort, f.active, f.online, f.digital_content, p.id]);
     return { product: await oneProduct(p.id) };
   });
 

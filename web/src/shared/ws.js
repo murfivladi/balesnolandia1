@@ -30,7 +30,7 @@ function connect() {
   socket.onopen = () => {
     retry = 0;
     setConnected(true);
-    for (const [ch, set] of handlers) if (set.size) send({ op: 'sub', channel: ch, role: set.role });
+    for (const [ch, set] of handlers) if (set.size) send({ op: 'sub', channel: ch, role: set.role, token: set.token });
     clearInterval(pingTimer);
     pingTimer = setInterval(() => send({ op: 'ping' }), 20000);
   };
@@ -53,14 +53,15 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(connect, 500 * 2 ** retry);
 }
 
-/** Подписаться на канал. role — для терминала покупателя. Возвращает отписку. */
-export function subscribe(channel, fn, role) {
+/** Подписаться на канал. role — для терминала покупателя, token — секрет канала (push:<устройство>). Возвращает отписку. */
+export function subscribe(channel, fn, role, token) {
   if (!handlers.has(channel)) handlers.set(channel, new Set());
   const set = handlers.get(channel);
   if (role) set.role = role;
+  if (token) set.token = token;
   set.add(fn);
   if (!socket) connect();
-  else if (set.size === 1) send({ op: 'sub', channel, role });
+  else if (set.size === 1) send({ op: 'sub', channel, role, token });
   return () => {
     set.delete(fn);
     if (!set.size) {

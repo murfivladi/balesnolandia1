@@ -74,7 +74,7 @@ function Products({ session }) {
                 <tr key={p.id} style={{ opacity: p.deleted_at ? 0.7 : p.active ? 1 : 0.5 }}>
                   <td style={{ width: 48 }}>{p.photo ? <img src={p.photo} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6 }} /> : null}</td>
                   <td>
-                    {p.name} {p.age_limit > 0 && <Badge kind="err">{p.age_limit}+</Badge>} {p.deleted_at && <Badge kind="err">{t('Удалён')}</Badge>} {p.to_kitchen && <Badge kind="brand">{t('кухня')}</Badge>}
+                    {p.name} {p.age_limit > 0 && <Badge kind="err">{p.age_limit}+</Badge>} {p.deleted_at && <Badge kind="err">{t('Удалён')}</Badge>} {p.to_kitchen && <Badge kind="brand">{t('кухня')}</Badge>} {p.online && <Badge kind="ok">{p.digital_content ? t('онлайн, цифровой') : t('онлайн')}</Badge>}
                     <div className="tiny muted mono">{p.barcode}</div>
                     <div className="tiny muted">{p.category}</div>
                   </td>
@@ -144,6 +144,7 @@ function ProductModal({ product, kitchen, onClose, onSaved }) {
             name: f.name, category: f.category, barcode: f.barcode, price: f.price, cost: f.cost || 0,
             b2b_price: f.b2b_price || null, unit: f.unit, age_limit: Number(f.age_limit) || 0,
             photo: f.photo || null, track_stock: !!f.track_stock, to_kitchen: !!f.to_kitchen, active: !!f.active,
+            online: !!f.online, digital_content: f.digital_content?.trim() || null,
           };
           let id = product.id;
           if (id) await patch(`/pos/products/${id}`, body);
@@ -174,7 +175,13 @@ function ProductModal({ product, kitchen, onClose, onSaved }) {
           <label className="check"><input type="checkbox" checked={!!f.track_stock} onChange={set('track_stock')} /> {t('Учитывать остаток')}</label>
           <label className="check"><input type="checkbox" checked={!!f.active} onChange={set('active')} /> {t('В продаже')}</label>
           {kitchen && <label className="check"><input type="checkbox" checked={!!f.to_kitchen} onChange={set('to_kitchen')} /> {t('Готовится на кухне')}</label>}
+          <label className="check"><input type="checkbox" checked={!!f.online} onChange={set('online')} /> {t('Продаётся онлайн')}</label>
         </div>
+        {f.online && (
+          <Field label={t('Цифровой товар (необязательно)')} hint={t('Ключ, ссылка или код — покупатель увидит их сразу после онлайн-оплаты. Пусто — обычный товар.')}>
+            <textarea className="input" rows={2} value={f.digital_content || ''} onChange={set('digital_content')} />
+          </Field>
+        )}
         <hr className="sep" />
         <VariantEditor title={t('Варианты')} hint={t('Например: размер, молоко, сироп. Надбавка прибавляется к цене товара.')} rows={variants} setRows={setVariants} priceKey="price_delta" />
         <ModifierEditor rows={modifiers} setRows={setModifiers} />

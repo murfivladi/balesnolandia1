@@ -8,17 +8,26 @@ import {
   NEW_TAB, INTERNAL_PAGES, GOV_SITES, SEARCH_HOST, parseInput, resolveTarget, appPath, govUrlFromApp, displayUrl, searchQuery,
 } from '@bln/shared/balnet-url.js';
 import { DEFAULT_NET, newClientId, openUrl } from './net.js';
+import { apiBase, post as apiPost } from '../shared/api.js';
+import { splitUrl } from '@bln/shared/balnet-url.js';
 import { DevTools } from './devtools.jsx';
+import { checkTls, isBypassed, addBypass, CertErrorPage, CertViewer } from './certs.jsx';
+import { checkSafe, isSafeBypassed, addSafeBypass, SafeBrowsingPage, reportPhishing } from './safe.jsx';
+import { HSTS_PRELOAD } from '@bln/shared/balnet-url.js';
+import { CERT_ERRORS } from '@bln/shared/balnet-pki.js';
 import { TerminalPage } from './terminal.jsx';
+import { syncAll, createPhrase, unlock, remoteTabsByDevice } from './sync.js';
+import { PasswordPrompt } from './passwords.jsx';
+import { useBalnetPush, PermissionPrompt, PushToasts, NotificationsPage } from './push.jsx';
 import {
   profileStore, loadProfiles, saveProfiles, loadActiveProfile, saveActiveProfile, removeItem, PROFILE_COLORS, HISTORY_LIMIT,
 } from './store.js';
 import {
-  NewTabPage, HistoryPage, BookmarksPage, SettingsPage, AboutPage, GamePage, SearchPage, ErrorPage, MaintenancePage, Favicon,
+  NewTabPage, HistoryPage, BookmarksPage, SettingsPage, AboutPage, GamePage, ErrorPage, MaintenancePage, Favicon,
 } from './pages.jsx';
 
 const BASE = import.meta.env.BASE_URL;
-const DEFAULT_SETTINGS = { home: NEW_TAB, bookmarksBar: true, restoreSession: true, net: DEFAULT_NET };
+const DEFAULT_SETTINGS = { home: NEW_TAB, bookmarksBar: true, restoreSession: true, net: DEFAULT_NET, notifPerms: {} };
 const NET_LOG_LIMIT = 200;
 const MAX_BACK = 50;
 
@@ -34,6 +43,28 @@ function titleFor(url) {
   }
   if (t.kind === 'web' && GOV_SITES[t.host]) return GOV_SITES[t.host].title;
   return displayUrl(url);
+}
+
+/** Синхронизация: что отдать из данных профиля в коллекцию. */
+export function syncRead(d, name, device) {
+  if (!d) return [];
+  if (name === 'tabs') {
+    // Метка времени с точностью до часа: открытые вкладки не перезаписываются на сервере каждую минуту.
+    const ts = Math.floor(Date.now() / 3600000) * 3600000;
+    return (d.tabs || []).filter((t) => /^https?:/.test(t.url)).map((t) => ({ device: device.id, deviceName: device.name, url: t.url, title: t.title || '', ts }));
+  }
+  if (name === 'settings') return [{ k: 'neverSave', v: d.settings?.neverSave || [] }, { k: 'home', v: d.settings?.home || NEW_TAB }];
+  return d[name] || [];
+}
+
+/** И обратно: данные коллекции после слияния → данные профиля. */
+export function syncWrite(d, name, list) {
+  if (name === 'tabs') return { ...d, remoteTabs: list };
+  if (name === 'settings') {
+    const m = Object.fromEntries(list.map((x) => [x.k, x.v]));
+    return { ...d, settings: { ...d.settings, ...(Array.isArray(m.neverSave) ? { neverSave: m.neverSave } : {}), ...(typeof m.home === 'string' ? { home: m.home } : {}) } };
+  }
+  return { ...d, [name]: list };
 }
 
 const makeTab = (url = NEW_TAB) => ({ id: newId(), url, title: titleFor(url), back: [], fwd: [], reloadKey: 0 });
@@ -54,9 +85,14 @@ function securityOf(tab) {
   const t = resolveTarget(tab.url);
   if (t.kind === 'internal') return { kind: 'internal', label: 'ВлодБраузер' };
   const c = tab.conn;
-  if (t.kind === 'web' && c?.gov && c.host === t.host) {
-    return { kind: 'gov', label: 'Госсайт БФ', owner: GOV_SITES[t.host]?.owner || 'Правительство БФ', host: t.host, ip: c.ip };
+  const mine = t.kind === 'web' && c?.host === t.host;
+  // https: решает проверка сертификата браузером. Ошибка (пропущенная вручную) — красное «Не защищено».
+  if (mine && c.unsafe) return { kind: 'danger', label: 'Опасный сайт', host: t.host, ip: c.ip, cert: c.cert, tls: c.tls, unsafe: c.unsafe };
+  if (mine && t.scheme === 'https' && c.cert && !c.cert.ok) return { kind: 'danger', label: 'Не защищено', host: t.host, ip: c.ip, cert: c.cert, tls: c.tls };
+  if (mine && c.gov && c.cert?.ok) {
+    return { kind: 'gov', label: 'Госсайт БФ', owner: GOV_SITES[t.host]?.owner || 'Правительство БФ', host: t.host, ip: c.ip, cert: c.cert, tls: c.tls };
   }
+  if (mine && t.scheme === 'https' && c.cert?.ok) return { kind: 'secure', label: '', host: t.host, ip: c.ip, cert: c.cert, tls: c.tls };
   if (t.kind === 'web' && t.scheme === 'http') return { kind: 'insecure', label: 'Не защищено', host: t.host, ip: c?.ip };
   return { kind: 'none', label: '', host: t.host, ip: c?.ip };
 }
@@ -75,10 +111,10 @@ function frameUrl(loc, app, host) {
 
 // ——— Госсайт во фрейме ———
 
-function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle }) {
+function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle, onOpen, onSignIn }) {
   const ref = useRef(null);
-  const cb = useRef({ onFrameNav, onTitle });
-  useEffect(() => { cb.current = { onFrameNav, onTitle }; });
+  const cb = useRef({ onFrameNav, onTitle, onOpen, onSignIn, app, host });
+  useEffect(() => { cb.current = { onFrameNav, onTitle, onOpen, onSignIn, app, host }; });
   const src = BASE + appPath(app, path);
 
   useEffect(() => {
@@ -99,8 +135,16 @@ function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle }) {
     try {
       const w = ref.current.contentWindow;
       w.document.documentElement.dataset.theme = theme;
+      // Госсайт (ВлодПоиск и др.) открывает адреса БалНета во вкладке браузера.
+      w.__balnetOpen = (url, newTab) => {
+        const u = parseInput(String(url || ''));
+        if (u && !u.startsWith('balnet://')) cb.current.onOpen(u, !!newTab);
+      };
+      // ВлодПочта может подключить этот браузер к аккаунту (вход во ВлодБраузер). Только настоящий mail.bln.
+      if (cb.current.app === 'mail' && cb.current.onSignIn) w.__balnetBrowserSignIn = () => cb.current.onSignIn();
+      // Приложение и хост берём текущие, а не из момента загрузки фрейма: вкладка могла уйти на другой сайт.
       const sync = () => {
-        const url = frameUrl(w.location, app, host);
+        const url = frameUrl(w.location, cb.current.app, cb.current.host);
         if (url) cb.current.onFrameNav(url);
         if (w.document.title) cb.current.onTitle(w.document.title);
       };
@@ -109,7 +153,85 @@ function GovFrame({ tab, app, host, path, theme, onFrameNav, onTitle }) {
     } catch { /* ignore */ }
   };
 
-  return <iframe key={tab.reloadKey} ref={ref} className="bb-frame" src={src} title={tab.title} onLoad={onLoad} />;
+  return <iframe key={`${tab.reloadKey}|${app}|${host}`} ref={ref} className="bb-frame" src={src} title={tab.title} onLoad={onLoad} />;
+}
+
+// ——— Сайт игрока: песочница шлюза ———
+
+const SANDBOX = 'allow-scripts allow-forms allow-popups allow-modals allow-downloads';
+const siteFrames = new Map(); // id вкладки → { win(), ticket, origin }
+
+/** Заполнить форму входа на сайте игрока сохранённым паролем. */
+function fillPassword(tabId, cred) {
+  const f = siteFrames.get(tabId);
+  const w = f?.win();
+  if (!w || f.origin !== cred.origin) return false;
+  w.postMessage({ __balnet: 1, ticket: f.ticket, type: 'fill', username: cred.username, password: cred.password }, '*');
+  return true;
+}
+
+/**
+ * Сайт игрока во фрейме-песочнице (непрозрачный origin, CSP sandbox от шлюза).
+ * Shim внутри сообщает адрес, заголовок, переходы и хранилища. Сообщения принимаются только от этого фрейма
+ * и только с адресами этого же сайта — подделать адресную строку на другой домен сайт не может.
+ */
+function SiteFrame({ tab, ticket, origin, path, ctx }) {
+  const ref = useRef(null);
+  const lastUrl = useRef(tab.url);
+  const cb = useRef(ctx);
+  useEffect(() => { cb.current = ctx; });
+  const gateway = (p) => `${apiBase()}/api/net/web/${ticket}${p.startsWith('/') ? p : `/${p}`}`;
+  const [src] = useState(() => gateway(path));
+  // Окно сайта — для автозаполнения паролей (сообщение уходит только в этот фрейм).
+  useEffect(() => {
+    siteFrames.set(tab.id, { win: () => ref.current?.contentWindow, ticket, origin });
+    return () => { if (siteFrames.get(tab.id)?.ticket === ticket) siteFrames.delete(tab.id); };
+  }, [tab.id, ticket, origin]);
+
+  useEffect(() => {
+    if (tab.url === lastUrl.current) return;
+    lastUrl.current = tab.url;
+    const p = splitUrl(tab.url);
+    if (p && ref.current) ref.current.src = gateway(p.path);
+  }, [tab.url]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const sameSite = (u) => {
+      try { return new URL(u).origin === origin; } catch { return false; }
+    };
+    const on = (e) => {
+      if (!ref.current || e.source !== ref.current.contentWindow) return;
+      const m = e.data;
+      if (!m || m.__balnet !== 1 || m.ticket !== ticket) return;
+      const c = cb.current;
+      // Оболочка знает открытые фреймы сайта: им приходит новое разрешение на уведомления.
+      c.push.seenFrame(tab.id, { win: e.source, origin, ticket });
+      // Служебная страница переадресации шлюза — не адрес сайта: её nav не должен перебить переход.
+      if (m.type === 'nav' && typeof m.url === 'string' && sameSite(m.url) && !new URL(m.url).pathname.startsWith('/__balnet_redirect')) {
+        lastUrl.current = m.url;
+        c.navigate(m.url, { tabId: tab.id });
+        if (m.title) c.setTitle(tab.id, String(m.title).slice(0, 200));
+      } else if (m.type === 'open' && typeof m.url === 'string') {
+        const url = parseInput(m.url);
+        if (url && !url.startsWith('balnet://')) c.navigate(url, m.newTab ? { newTab: true, referrer: lastUrl.current } : { tabId: tab.id });
+      } else if (m.type === 'login-form') {
+        c.patchConn(tab.id, { loginForm: true });
+      } else if (m.type === 'credential' && typeof m.password === 'string' && m.password) {
+        c.offerPassword({ origin, username: String(m.username || '').slice(0, 200), password: m.password.slice(0, 500), tabId: tab.id });
+      } else if (m.type === 'jar') {
+        const jar = { cookies: m.cookies || {}, local: m.local || {} };
+        c.saveJar(origin, jar);
+        apiPost('/net/jar', { ticket, ...jar }).catch(() => {});
+      } else if (typeof m.type === 'string') {
+        // Уведомления и Push API сайта решает оболочка (разрешение по сайту, показ, подписка в push.bln).
+        c.push.onFrameMessage(m, { tabId: tab.id, origin, ticket, win: e.source });
+      }
+    };
+    window.addEventListener('message', on);
+    return () => { window.removeEventListener('message', on); cb.current.push.dropFrame(tab.id); };
+  }, [ticket, origin, tab.id]);
+
+  return <iframe ref={ref} className="bb-frame" sandbox={SANDBOX} src={src} title={tab.title} referrerPolicy="no-referrer" />;
 }
 
 // ——— Сайт БалНета: DNS → подключение к серверу → содержимое ———
@@ -118,43 +240,101 @@ function WebTab({ tab, target, ctx }) {
   const [st, setSt] = useState({ phase: 'loading' });
   const latest = useRef(null);
   latest.current = { tab, ctx };
-  // Новый запрос — только при смене хоста или перезагрузке: переходы внутри сайта DNS не трогают.
-  const key = `${target.host}|${tab.reloadKey}`;
+  // Новый запрос — только при смене хоста, схемы или перезагрузке: переходы внутри сайта DNS не трогают.
+  const key = `${target.scheme}|${target.host}|${tab.reloadKey}`;
   useEffect(() => {
     let alive = true;
     const { tab: tb, ctx: c } = latest.current;
-    setSt({ phase: 'loading' });
+    setSt({ phase: 'loading', key });
     const t0 = performance.now();
-    openUrl(tb.url, c.net).then((r) => {
+    const origin = `${target.scheme}://${target.host}`;
+    c.loadJar(origin).then((jar) => openUrl(tb.url, c.net, jar, tb.ref, c.push.permOf(origin))).then(async (r) => {
       if (!alive) return;
       const total = Math.round(performance.now() - t0);
       if (r.failed) {
         const code = r.failed === 'maintenance' ? 'maintenance' : r.failed === 'error' ? 'ERR_BALNET_UNREACHABLE' : r.failed;
-        setSt({ phase: 'failed', code });
+        setSt({ phase: 'failed', code, key });
         c.setConn(tb.id, null);
         c.logNet(tb.id, { url: tb.url, host: target.host, failed: code, message: r.message, total });
         return;
       }
       const d = r.data;
-      setSt({ phase: 'done', d });
-      c.setConn(tb.id, { ok: d.ok, gov: !!d.gov, ip: d.ip, host: target.host });
-      c.logNet(tb.id, { ...d, lease: r.lease, total });
+      if (d.ok && target.scheme === 'https' && !d.tls) {
+        // На сервере нет сертификата (порт 443 закрыт). Как Chrome с автопереходом на HTTPS: откат на http —
+        // кроме сайтов из списка HSTS, им http запрещён.
+        if (HSTS_PRELOAD.has(target.host)) {
+          setSt({ phase: 'done', d: { ...d, ok: false, code: 'ERR_CONNECTION_REFUSED' }, key });
+          c.logNet(tb.id, { ...d, ok: false, code: 'ERR_CONNECTION_REFUSED', lease: r.lease, total });
+          return;
+        }
+        c.logNet(tb.id, { ...d, lease: r.lease, total, note: 'https на сервере нет — переход на http' });
+        c.replaceUrl(tb.id, tb.url.replace(/^https:/, 'http:'));
+        return;
+      }
+      let cert = null;
+      if (d.ok && d.tls) {
+        try { cert = await checkTls(d.tls, target.host); } catch (e) { cert = { ok: false, code: 'ERR_CERT_INVALID', message: e.message }; }
+        if (!alive) return;
+      }
+      // Безопасный просмотр: префиксы хешей адреса против списка ВлодПоиска (госсайты не проверяются).
+      const sb = d.ok && !d.gov ? await checkSafe(tb.url) : null;
+      if (!alive) return;
+      const conn = { ok: d.ok, gov: !!d.gov, ip: d.ip, host: target.host, cert, tls: d.tls || null, unsafe: sb };
+      c.setConn(tb.id, conn);
+      c.logNet(tb.id, { ...d, lease: r.lease, total, cert, safe: sb });
+      if (sb && !isSafeBypassed(target.host)) {
+        setSt({ phase: 'unsafe', d, sb, key });
+        return;
+      }
+      if (cert && !cert.ok && !isBypassed(target.host, cert.hash)) {
+        setSt({ phase: 'certerror', d, cert, key });
+        return;
+      }
+      setSt({ phase: 'done', d, key });
     });
     return () => { alive = false; };
-  }, [key, target.host]);
+  }, [key, target.host, target.scheme]);
 
   const reload = () => ctx.reload(tab.id);
   if (!ctx.online) return <ErrorPage code="ERR_INTERNET_DISCONNECTED" onReload={reload} ctx={ctx} />;
-  if (st.phase === 'loading') {
+  // Ответ, полученный для другого сайта (до смены адреса), не показываем — иначе старый фрейм получит новый путь.
+  if (st.phase === 'loading' || st.key !== key) {
     return <div className="bp-page bp-connecting"><span className="bp-spinner" aria-hidden /> Подключение к {target.host}…</div>;
   }
   if (st.phase === 'failed') {
     if (st.code === 'maintenance') return <MaintenancePage onReload={() => { ctx.refreshClock(); reload(); }} />;
     return <ErrorPage code={st.code} host={target.host} onReload={reload} ctx={ctx} />;
   }
+  if (st.phase === 'unsafe') {
+    return (
+      <SafeBrowsingPage
+        host={target.host}
+        url={tab.url}
+        verdict={st.sb}
+        onBack={() => ctx.navigate(NEW_TAB, { tabId: tab.id })}
+        onProceed={() => { addSafeBypass(target.host); ctx.reload(tab.id); }}
+      />
+    );
+  }
+  if (st.phase === 'certerror') {
+    return (
+      <>
+        <CertErrorPage
+          host={target.host}
+          cert={st.cert}
+          onBack={() => ctx.navigate(NEW_TAB, { tabId: tab.id })}
+          onProceed={() => { addBypass(target.host, st.cert.hash); ctx.reload(tab.id); }}
+          onShowCert={() => setSt((v) => ({ ...v, viewer: true }))}
+        />
+        {st.viewer && <CertViewer tls={st.d.tls} verdict={st.cert} host={target.host} onClose={() => setSt((v) => ({ ...v, viewer: false }))} />}
+      </>
+    );
+  }
   const d = st.d;
-  if (!d.ok) return <ErrorPage code={d.code} host={target.host} onReload={reload} ctx={ctx} ip={d.ip} />;
-  if (d.target === 'poisk') return <SearchPage ctx={ctx} query={searchQuery(target.path)} />;
+  if (!d.ok) return <ErrorPage code={d.code} host={target.host} onReload={reload} ctx={ctx} ip={d.ip} dns={d.dns} />;
+  if (d.target?.startsWith('site:') && d.ticket) {
+    return <SiteFrame tab={tab} ticket={d.ticket} origin={`${target.scheme}://${target.host}`} path={target.path} ctx={ctx} />;
+  }
   if (d.target?.startsWith('app:')) {
     return (
       <GovFrame
@@ -165,6 +345,8 @@ function WebTab({ tab, target, ctx }) {
         theme={ctx.theme}
         onFrameNav={(url) => ctx.navigate(url, { tabId: tab.id })}
         onTitle={(title) => ctx.setTitle(tab.id, title)}
+        onOpen={(url, newTab) => ctx.navigate(url, newTab ? { newTab: true, referrer: tab.url } : { tabId: tab.id })}
+        onSignIn={ctx.incognito ? null : ctx.signIn}
       />
     );
   }
@@ -184,6 +366,7 @@ function TabContent({ tab, ctx }) {
       if (t.page === 'settings') return <SettingsPage key={tab.reloadKey} ctx={ctx} />;
       if (t.page === 'about') return <AboutPage key={tab.reloadKey} />;
       if (t.page === 'terminal') return <TerminalPage key={tab.reloadKey} ctx={ctx} />;
+      if (t.page === 'notifications') return <NotificationsPage key={tab.reloadKey} ctx={ctx} />;
       return <GamePage key={tab.reloadKey} />;
     case 'web':
       return <WebTab tab={tab} target={t} ctx={ctx} />;
@@ -199,7 +382,11 @@ function AddressBar({ tab, inputRef, ctx }) {
   const [focus, setFocus] = useState(false);
   const [sel, setSel] = useState(0);
   const [info, setInfo] = useState(false);
+  const [viewer, setViewer] = useState(false);
+  const [keys, setKeys] = useState(false);
   const sec = securityOf(tab);
+  const tabOrigin = (() => { const t = resolveTarget(tab.url); return t.kind === 'web' ? `${t.scheme}://${t.host}` : null; })();
+  const saved = tabOrigin && tab.conn?.loginForm ? ctx.passwords.filter((p) => p.origin === tabOrigin) : [];
 
   useEffect(() => { if (!focus) setText(displayUrl(tab.url)); }, [tab.url, focus]);
 
@@ -230,7 +417,7 @@ function AddressBar({ tab, inputRef, ctx }) {
 
   const submit = (url) => {
     if (!url) return;
-    ctx.navigate(url);
+    ctx.navigate(url, { typed: true }); // набран вручную — без Referer, прямой заход
     setFocus(false);
     inputRef.current?.blur();
   };
@@ -246,7 +433,10 @@ function AddressBar({ tab, inputRef, ctx }) {
         title={sec.kind === 'gov' ? 'Сведения о сайте' : 'Сведения'}
         aria-label="Сведения о сайте"
       >
-        {sec.kind === 'gov' ? <>🛡<span className="bb-chip-text">{sec.label}</span></> : sec.kind === 'internal' ? <CoatOfArms size={14} /> : sec.kind === 'insecure' ? <>⚠<span className="bb-chip-text">{sec.label}</span></> : 'ⓘ'}
+        {sec.kind === 'gov' ? <>🛡<span className="bb-chip-text">{sec.label}</span></>
+          : sec.kind === 'internal' ? <CoatOfArms size={14} />
+            : sec.kind === 'secure' ? <span aria-label="Подключение защищено">🔒</span>
+              : sec.kind === 'insecure' || sec.kind === 'danger' ? <>⚠<span className="bb-chip-text">{sec.label}</span></> : 'ⓘ'}
       </button>
       {info && (
         <>
@@ -257,15 +447,36 @@ function AddressBar({ tab, inputRef, ctx }) {
                 <b className="bb-ok">🛡 Проверенный госсайт БФ</b>
                 <p>{sec.host} — официальный сайт. Владелец: {sec.owner}.</p>
                 <p>Сервер: {sec.ip} (госдата-центр).</p>
-                <p className="bp-muted">Этот значок рисует ВлодБраузер по ответу госсервера, а не сайт. Копия сайта по другому адресу или подменённый DNS значка не получат.</p>
+                <p className="bp-muted">Значок ставит ВлодБраузер: сервер — госсервер, сертификат {sec.cert.ev ? 'EV ' : ''}выдан «{sec.cert.issuer}» для «{sec.cert.org}». Копия сайта по другому адресу значка не получит.</p>
               </>
             )}
+            {sec.kind === 'secure' && (
+              <>
+                <b className="bb-ok">🔒 Подключение защищено</b>
+                <p>Данные (пароли, номера карт) передаются на {sec.host} в зашифрованном виде.</p>
+                <p>Сертификат действителен. Выдан: {sec.cert.issuer}.{sec.cert.org ? ` Владелец: ${sec.cert.org}${sec.cert.ev ? ' (EV)' : ''}.` : ' Проверен только домен (DV) — кто владелец, неизвестно.'}</p>
+              </>
+            )}
+            {sec.kind === 'danger' && sec.unsafe && (
+              <>
+                <b className="bb-bad">⛔ Опасный сайт</b>
+                <p>Сайт в списке Безопасного просмотра ВлодПоиска ({sec.unsafe.threat === 'phishing' ? 'фишинг' : 'вредоносное ПО'}). Вы перешли на него, несмотря на предупреждение. Не вводите здесь пароли и данные карт.</p>
+              </>
+            )}
+            {sec.kind === 'danger' && !sec.unsafe && (
+              <>
+                <b className="bb-bad">⚠ Подключение не защищено</b>
+                <p>{CERT_ERRORS[sec.cert.code] || 'Сертификат недействителен'} ({sec.cert.code}). Вы перешли на сайт, несмотря на предупреждение. Не вводите здесь пароли и данные карт.</p>
+              </>
+            )}
+            {sec.tls && <p><button className="bp-link" onClick={() => { setInfo(false); setViewer(true); }}>📄 Сертификат</button>{sec.cert?.ocsp ? ` · статус: ${sec.cert.ocsp === 'good' ? 'не отозван' : 'отозван'}` : ''}</p>}
             {sec.kind === 'internal' && <p>Это страница ВлодБраузера.</p>}
-            {sec.kind === 'insecure' && <p><b>Соединение не защищено.</b> Сайт {sec.host} открыт по http. Не вводите здесь пароли.</p>}
-            {sec.kind === 'none' && <p>{sec.host ? `Сайт ${sec.host}${sec.ip ? `, сервер ${sec.ip}` : ''}. Сертификатов HTTPS в БалНете пока нет — они появятся на этапе Н5.` : `Сайт не открыт: ${displayUrl(tab.url) || 'пустая вкладка'}.`}</p>}
+            {sec.kind === 'insecure' && <p><b>Соединение не защищено.</b> Сайт {sec.host} открыт по http: всё, что вы вводите, видно провайдеру и любому на пути. Не вводите здесь пароли.</p>}
+            {sec.kind === 'none' && <p>{sec.host ? `Сайт ${sec.host}${sec.ip ? `, сервер ${sec.ip}` : ''}.` : `Сайт не открыт: ${displayUrl(tab.url) || 'пустая вкладка'}.`}</p>}
           </div>
         </>
       )}
+      {viewer && sec.tls && <CertViewer tls={sec.tls} verdict={sec.cert} host={sec.host} onClose={() => setViewer(false)} />}
       <input
         ref={inputRef}
         className="bb-url"
@@ -285,6 +496,22 @@ function AddressBar({ tab, inputRef, ctx }) {
           else if (e.key === 'Escape') { setText(displayUrl(tab.url)); e.target.blur(); }
         }}
       />
+      {saved.length > 0 && (
+        <button className="bb-icon" title="Заполнить сохранённым паролем" aria-label="Пароли" onClick={() => setKeys((v) => !v)}>🔑</button>
+      )}
+      {keys && (
+        <>
+          <div className="bb-backdrop" onClick={() => setKeys(false)} />
+          <div className="bb-popover bb-menu bb-keys" role="menu">
+            <p className="bb-menu-note">Сохранённые пароли для {sec.host}</p>
+            {saved.map((p) => (
+              <button key={p.username} role="menuitem" onClick={() => { setKeys(false); if (!fillPassword(tab.id, p)) window.alert('На странице нет формы входа'); }}>
+                <span>👤 {p.username || '(без имени)'}</span><span className="bp-muted">••••••</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       {canBookmark && (
         <button
           className={`bb-icon ${bookmarked ? 'is-on' : ''}`}
@@ -323,6 +550,9 @@ export default function App() {
   const [grid, setGrid] = useState(false);
   const [devtools, setDevtools] = useState(false);
   const [netLog, setNetLog] = useState({}); // id вкладки → записи журнала сети
+  const [account, setAccount] = useState(null); // аккаунт ВлодБраузера: { token, login, address, name, key? }
+  const [syncState, setSyncState] = useState({ status: 'idle' });
+  const [pwPrompt, setPwPrompt] = useState(null);
   const inputRef = useRef(null);
 
   const storeKey = profileId ? `${profileId}:${incognito ? 'incognito' : 'main'}` : null;
@@ -344,9 +574,11 @@ export default function App() {
     let alive = true;
     setData(null);
     (async () => {
-      const [history, bookmarks, settings, session] = await Promise.all([
+      const [history, bookmarks, settings, session, passwords, acc, syncKey] = await Promise.all([
         store.get('history', []), store.get('bookmarks', []), store.get('settings', {}), store.get('session', null),
+        store.get('passwords', []), store.get('account', null), store.get('syncKey', null),
       ]);
+      if (alive) setAccount(acc && !incognito ? { ...acc, key: syncKey || null } : null);
       const s = { ...DEFAULT_SETTINGS, ...settings, net: { ...DEFAULT_NET, ...(settings.net || {}) } };
       if (!s.net.clientId) s.net.clientId = newClientId(); // «устройство» профиля: ему провайдер выдаёт IP
       let tabs;
@@ -365,7 +597,7 @@ export default function App() {
         tabs = tabs.length === 1 && tabs[0].url === NEW_TAB ? [t] : [...tabs, t];
         activeId = t.id;
       }
-      if (alive) setData({ owner: storeKey, tabs, activeId, history, bookmarks, settings: s });
+      if (alive) setData({ owner: storeKey, tabs, activeId, history, bookmarks, passwords, settings: s });
     })();
     return () => { alive = false; };
   }, [store, storeKey, incognito]);
@@ -375,6 +607,7 @@ export default function App() {
   useEffect(() => { if (own) store.set('history', data.history); }, [own, store, data?.history]);
   useEffect(() => { if (own) store.set('bookmarks', data.bookmarks); }, [own, store, data?.bookmarks]);
   useEffect(() => { if (own) store.set('settings', data.settings); }, [own, store, data?.settings]);
+  useEffect(() => { if (own) store.set('passwords', data.passwords); }, [own, store, data?.passwords]);
   useEffect(() => {
     if (!own) return;
     const tabs = data.tabs.map(({ id, url, title, back, fwd }) => ({ id, url, title, back, fwd }));
@@ -399,7 +632,7 @@ export default function App() {
 
   const update = useCallback((fn) => setData((d) => (d ? fn(d) : d)), []);
 
-  const navigate = useCallback((input, { tabId, newTab } = {}) => {
+  const navigate = useCallback((input, { tabId, newTab, typed = false, referrer = null } = {}) => {
     let url = input;
     if (!url) return;
     const target = resolveTarget(url);
@@ -408,14 +641,16 @@ export default function App() {
     update((d) => {
       let { tabs, activeId, history } = d;
       if (newTab) {
-        const t = makeTab(url);
+        const t = { ...makeTab(url), ref: /^https?:/.test(referrer || '') ? referrer : null };
         tabs = [...tabs, t];
         activeId = t.id;
       } else {
         const id = tabId || activeId;
         const cur = tabs.find((t) => t.id === id);
         if (!cur || cur.url === url) return d;
-        tabs = tabs.map((t) => (t.id !== id ? t : { ...t, back: [...t.back, t.url].slice(-MAX_BACK), fwd: [], url, title }));
+        // Откуда пришли (для Referer): страница вкладки, если переход по ссылке, а не набран вручную.
+        const ref = typed ? null : referrer || (/^https?:/.test(cur.url) ? cur.url : null);
+        tabs = tabs.map((t) => (t.id !== id ? t : { ...t, back: [...t.back, t.url].slice(-MAX_BACK), fwd: [], url, title, ref }));
       }
       if (!incognito && url !== NEW_TAB) history = [{ url, title, ts: Date.now() }, ...history].slice(0, HISTORY_LIMIT);
       return { ...d, tabs, activeId, history };
@@ -423,6 +658,27 @@ export default function App() {
     setMenu(null);
     setGrid(false);
   }, [update, incognito]);
+
+  // Уведомления и push сайтов (этап Н10): разрешения — в настройках профиля.
+  const selectRef = useRef(null);
+  const setPerms = useCallback((perms) => update((d) => ({ ...d, settings: { ...d.settings, notifPerms: perms } })), [update]);
+  const selectById = useCallback((id) => selectRef.current?.(id), []);
+  const push = useBalnetPush({
+    store: data && data.owner === storeKey ? store : null,
+    incognito,
+    perms: data?.settings.notifPerms,
+    setPerms,
+    navigate,
+    selectTab: selectById,
+    label: profiles?.find((p) => p.id === profileId)?.name,
+  });
+
+  // Клик по системному уведомлению открывает /#<адрес> — открываем его в новой вкладке.
+  useEffect(() => {
+    const on = () => { const u = takeUrlFromHash(); if (u) navigate(u, { newTab: true }); };
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, [navigate]);
 
   const setTitle = useCallback((tabId, title) => update((d) => {
     const tab = d.tabs.find((t) => t.id === tabId);
@@ -433,6 +689,102 @@ export default function App() {
   }), [update]);
 
   const setConn = useCallback((tabId, conn) => update((d) => ({ ...d, tabs: d.tabs.map((t) => (t.id === tabId ? { ...t, conn } : t)) })), [update]);
+  const patchConn = useCallback((tabId, p) => update((d) => ({ ...d, tabs: d.tabs.map((t) => (t.id === tabId && t.conn ? { ...t, conn: { ...t.conn, ...p } } : t)) })), [update]);
+
+  // ——— Аккаунт ВлодБраузера и синхронизация ———
+  const dataRef = useRef(null);
+  dataRef.current = data;
+  const signIn = useCallback(async () => {
+    if (!store || incognito) throw new Error('В инкогнито вход в аккаунт браузера недоступен');
+    const prof = (await loadProfiles()).find((p) => p.id === profileId);
+    const r = await apiPost('/mail/sync/devices', { name: `ВлодБраузер · ${prof?.name || 'профиль'} · ${/Mobi/.test(navigator.userAgent) ? 'телефон' : 'компьютер'}` });
+    const acc = { token: r.token, login: r.account.login, address: r.account.address, name: r.account.name, keyInfo: r.key };
+    await store.set('account', acc);
+    await store.remove('syncKey');
+    setAccount({ ...acc, key: null });
+    return acc;
+  }, [store, incognito, profileId]);
+  const signOut = useCallback(async () => {
+    if (account?.token) await apiPost('/mail/sync/signout', { token: account.token }).catch(() => {});
+    await Promise.all(['account', 'syncKey', 'syncBase:bookmarks', 'syncBase:history', 'syncBase:passwords', 'syncBase:tabs', 'syncBase:settings'].map((k) => store.remove(k)));
+    update((d) => ({ ...d, remoteTabs: [] }));
+    setAccount(null);
+    setSyncState({ status: 'idle' });
+  }, [account, store, update]);
+  const syncDevice = () => ({ id: dataRef.current?.settings?.net?.clientId || 'web', name: `ВлодБраузер · ${/Mobi/.test(navigator.userAgent) ? 'телефон' : 'компьютер'}` });
+  const runSync = useCallback(async (acc = account) => {
+    if (!acc?.key || !store) return;
+    setSyncState((x) => ({ ...x, status: 'syncing' }));
+    try {
+      const r = await syncAll({
+        token: acc.token,
+        key: acc.key,
+        read: async (name) => syncRead(dataRef.current, name, syncDevice()),
+        write: async (name, list) => update((d) => syncWrite(d, name, list)),
+        readBase: (name) => store.get(`syncBase:${name}`, null),
+        // Снимок вкладок — только свои: чужие не считаются «удалёнными здесь».
+        writeBase: (name, list) => store.set(`syncBase:${name}`, name === 'tabs' ? list.filter((t) => t.device === syncDevice().id) : list),
+      });
+      setSyncState({ status: 'ok', at: Date.now(), result: r });
+    } catch (e) {
+      if (e.status === 401) { await Promise.all(['account', 'syncKey'].map((k) => store.remove(k))); setAccount(null); }
+      setSyncState({ status: 'error', at: Date.now(), error: e.message });
+    }
+  }, [account, store, update]);
+  /** Кодовая фраза: задать новую (первое устройство) или ввести существующую. */
+  const setPhrase = useCallback(async (phrase) => {
+    const st = await apiPost('/mail/sync/status', { token: account.token });
+    let key;
+    if (st.key) {
+      key = await unlock(phrase, st.key);
+      if (!key) throw new Error('Неверная кодовая фраза');
+    } else {
+      const made = await createPhrase(phrase);
+      await apiPost('/mail/sync/key', { token: account.token, salt: made.salt, iterations: made.iterations, check: made.check });
+      key = made.key;
+    }
+    await store.set('syncKey', key);
+    const acc = { ...account, key, keyInfo: st.key };
+    setAccount(acc);
+    await runSync(acc);
+  }, [account, store, runSync]);
+  // Синхронизация при запуске, раз в минуту и вскоре после правки закладок и паролей.
+  const syncRef = useRef(runSync);
+  syncRef.current = runSync;
+  const hasKey = !!account?.key;
+  useEffect(() => {
+    if (!hasKey) return undefined;
+    syncRef.current();
+    const id = setInterval(() => syncRef.current(), 60000);
+    return () => clearInterval(id);
+  }, [hasKey]);
+  useEffect(() => {
+    if (!hasKey) return undefined;
+    const t = setTimeout(() => syncRef.current(), 3000);
+    return () => clearTimeout(t);
+  }, [hasKey, data?.bookmarks, data?.passwords, data?.settings?.neverSave]);
+
+  // ——— Пароли ———
+  const savePassword = useCallback((cred) => update((d) => ({
+    ...d, passwords: [{ origin: cred.origin, username: cred.username, password: cred.password, updated: Date.now() }, ...(d.passwords || []).filter((p) => !(p.origin === cred.origin && p.username === cred.username))],
+  })), [update]);
+  const offerPassword = useCallback((cred) => {
+    if (incognito) return;
+    const d = dataRef.current;
+    const never = d?.settings?.neverSave || [];
+    if (never.includes(cred.origin)) return;
+    if ((d?.passwords || []).some((p) => p.origin === cred.origin && p.username === cred.username && p.password === cred.password)) return;
+    setPwPrompt(cred);
+  }, [incognito]);
+  // Сменить адрес вкладки без новой записи в истории «Назад» (переход https → http у сайтов без сертификата).
+  const replaceUrl = useCallback((tabId, url) => update((d) => ({
+    ...d,
+    tabs: d.tabs.map((t) => (t.id === tabId ? { ...t, url, title: titleFor(url) } : t)),
+    history: d.history[0] && d.history[0].url.replace(/^https:/, 'http:') === url ? [{ ...d.history[0], url }, ...d.history.slice(1)] : d.history,
+  })), [update]);
+  // Cookies и localStorage сайтов игроков — в хранилище профиля (в инкогнито — только в памяти).
+  const loadJar = useCallback((origin) => (store ? store.get(`site:${origin}`, {}) : Promise.resolve({})), [store]);
+  const saveJar = useCallback((origin, jar) => { if (store) store.set(`site:${origin}`, jar); }, [store]);
   const logNet = useCallback((tabId, entry) => setNetLog((m) => ({
     ...m, [tabId]: [...(m[tabId] || []), { id: `${Date.now()}-${Math.random()}`, ts: Date.now(), ...entry }].slice(-NET_LOG_LIMIT),
   })), []);
@@ -468,6 +820,7 @@ export default function App() {
   });
 
   const selectTab = (tabId) => { update((d) => ({ ...d, activeId: tabId })); setGrid(false); };
+  selectRef.current = selectTab;
 
   // Закладки
   const setBookmarks = (fn) => update((d) => ({ ...d, bookmarks: fn(d.bookmarks) }));
@@ -490,7 +843,7 @@ export default function App() {
   const deleteProfile = async (id) => {
     const list = profiles.filter((p) => p.id !== id);
     await saveProfiles(list);
-    await Promise.all(['history', 'bookmarks', 'settings', 'session'].map((k) => removeItem(`${id}:${k}`)));
+    await Promise.all(['history', 'bookmarks', 'settings', 'session', 'passwords', 'account', 'syncKey', 'syncBase:bookmarks', 'syncBase:history', 'syncBase:passwords', 'syncBase:tabs', 'syncBase:settings'].map((k) => removeItem(`${id}:${k}`)));
     setProfiles(list);
   };
 
@@ -537,12 +890,27 @@ export default function App() {
     toggleTheme,
     incognito,
     history: data.history,
+    remoteTabs: remoteTabsByDevice(data.remoteTabs, data.settings?.net?.clientId),
     bookmarks: data.bookmarks,
     settings: data.settings,
     setSettings: (s) => update((d) => ({ ...d, settings: s })),
     net: data.settings.net,
     setNet: (n) => update((d) => ({ ...d, settings: { ...d.settings, net: { ...d.settings.net, ...n } } })),
     setConn,
+    patchConn,
+    offerPassword,
+    replaceUrl,
+    account,
+    syncState,
+    signIn,
+    signOut,
+    setPhrase,
+    syncNow: () => runSync(),
+    passwords: data.passwords || [],
+    removePassword: (p) => update((d) => ({ ...d, passwords: d.passwords.filter((x) => !(x.origin === p.origin && x.username === p.username)) })),
+    savePassword,
+    loadJar,
+    saveJar,
     logNet,
     clearHistory: () => update((d) => ({ ...d, history: [] })),
     removeHistory: (h) => update((d) => ({ ...d, history: d.history.filter((x) => x !== h && !(x.ts === h.ts && x.url === h.url)) })),
@@ -558,6 +926,8 @@ export default function App() {
       [c[i], c[j]] = [c[j], c[i]];
       return c;
     }),
+    push,
+    selectTab,
     profiles,
     profileId,
     switchProfile,
@@ -577,9 +947,18 @@ export default function App() {
     ['История', 'Ctrl+H', () => navigate('balnet://history/', { newTab: true })],
     ['Закладки', '', () => navigate('balnet://bookmarks/', { newTab: true })],
     ['Терминал', '', () => navigate('balnet://terminal/', { newTab: true })],
+    ['Уведомления', push.unread ? <span className="bb-menu-badge">{push.unread}</span> : '', () => navigate('balnet://notifications/', { newTab: true })],
     [devtools ? 'Закрыть инструменты разработчика' : 'Инструменты разработчика', 'F12', () => { setDevtools((v) => !v); setMenu(null); }],
     ['Курьер БалНета', '', () => navigate('balnet://game/', { newTab: true })],
     null,
+    ['Сообщить об обманном сайте', '', () => {
+      setMenu(null);
+      const t = resolveTarget(active?.url || '');
+      if (t.kind !== 'web') { window.alert('Откройте сайт, о котором хотите сообщить.'); return; }
+      const comment = window.prompt(`Сообщить ВлодПоиску, что ${t.host} — обманный сайт (фишинг)? Можно добавить комментарий:`, '');
+      if (comment === null) return;
+      reportPhishing(active.url, comment).then(() => window.alert('Спасибо! Сайт проверит администрация БалНета.'), (e) => window.alert(e.message));
+    }],
     [theme === 'dark' ? 'Светлая тема' : 'Тёмная тема', '', () => { toggleTheme(); setMenu(null); }],
     ['Настройки', '', () => navigate('balnet://settings/', { newTab: true })],
     ['Все приложения (без браузера)', '', () => { location.href = `${BASE}apps/`; }],
@@ -630,6 +1009,15 @@ export default function App() {
         </div>
       )}
 
+      {pwPrompt && (
+        <PasswordPrompt
+          cred={pwPrompt}
+          onSave={() => { savePassword(pwPrompt); setPwPrompt(null); }}
+          onNever={() => { update((d) => ({ ...d, settings: { ...d.settings, neverSave: [...(d.settings.neverSave || []), pwPrompt.origin] } })); setPwPrompt(null); }}
+          onClose={() => setPwPrompt(null)}
+        />
+      )}
+
       <div className={`bb-main ${devtools ? 'with-devtools' : ''}`}>
         <div className="bb-views">
           {data.tabs.map((t) => (
@@ -649,6 +1037,12 @@ export default function App() {
         <button className="bb-icon" onClick={() => setMenu('main')} aria-label="Меню">⋮</button>
       </nav>
 
+      {(() => {
+        const pr = push.prompts.find((x) => x.tabId === active.id);
+        return pr ? <PermissionPrompt prompt={pr} onAnswer={push.answerPrompt} /> : null;
+      })()}
+      <PushToasts items={push.toasts} onClick={push.clickToast} onClose={push.dropToast} />
+
       {menu && <div className="bb-backdrop" onClick={() => setMenu(null)} />}
       {menu === 'main' && (
         <div className="bb-popover bb-menu" role="menu">
@@ -659,7 +1053,8 @@ export default function App() {
       )}
       {menu === 'profile' && (
         <div className="bb-popover bb-menu bb-profile-menu" role="menu">
-          {incognito ? <p className="bb-menu-note">🕶 Режим инкогнито</p> : <p className="bb-menu-note">Профиль: <b>{profile?.name}</b></p>}
+          {incognito ? <p className="bb-menu-note">🕶 Режим инкогнито</p> : <p className="bb-menu-note">Профиль: <b>{profile?.name}</b><br />{account ? <>✉ {account.address}{account.key ? (syncState.status === 'error' ? ' · ⚠ ошибка синхронизации' : ' · синхронизация включена') : ' · нужна кодовая фраза'}</> : 'Вход в аккаунт не выполнен'}</p>}
+          {!incognito && !account && <button role="menuitem" onClick={() => navigate('balnet://settings/', { newTab: true })}>Войти через ВлодПочту</button>}
           {profiles.map((p) => (
             <button key={p.id} role="menuitem" onClick={() => switchProfile(p.id)}>
               <span><span className="bp-avatar bp-avatar-sm" style={{ background: p.color }}>{p.name[0]}</span> {p.name}</span>

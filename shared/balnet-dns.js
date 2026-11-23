@@ -1,7 +1,9 @@
 // DNS БалНета: имена, типы записей, проверка и нормализация данных записей (RDATA), вывод в стиле dig.
 import { isIPv4, isIPv6, normalizeIP } from './balnet-ip.js';
 
-export const RR_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA', 'SRV', 'CAA', 'PTR'];
+export const RR_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SOA', 'SRV', 'CAA', 'PTR', 'DS'];
+/** Типы вопросов: ещё DNSKEY, RRSIG и NSEC — их синтезирует подписанная зона, вручную не добавляются. */
+export const QUERY_TYPES = [...RR_TYPES, 'DNSKEY', 'RRSIG', 'NSEC'];
 /** Типы, которые нельзя ставить рядом с CNAME на одном имени. */
 export const CNAME_EXCLUSIVE = true;
 
@@ -128,6 +130,10 @@ export function normalizeRdata(type, data) {
     }
     case 'TXT':
       return normalizeTxt(s);
+    case 'DS': {
+      if (parts.length !== 4 || !/^[0-9a-f]{64}$/i.test(parts[3]) || parts[1] !== '13' || parts[2] !== '2') fail('DS: «тег 13 2 sha256», например 41733 13 2 9f86d0…');
+      return `${u16(parts[0], 'DS тег')} 13 2 ${parts[3].toLowerCase()}`;
+    }
     case 'SOA': {
       if (parts.length !== 7) fail('SOA: «первичный_NS почта_админа serial refresh retry expire minimum»');
       return [host(parts[0], 'SOA mname'), host(parts[1], 'SOA rname'), ...parts.slice(2).map((p, i) => u32(p, `SOA поле ${i + 3}`))].join(' ');

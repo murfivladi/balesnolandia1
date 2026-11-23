@@ -11,6 +11,8 @@ export const ORG_KINDS = { llc: 'ООО', jsc: 'АО', gov: 'Госучрежд�
 export const LICENSE_KINDS = {
   registrar: { title: 'Регистратор доменов', applicable: true },
   registry: { title: 'Администратор доменной зоны', applicable: false },
+  hosting: { title: 'Хостинг-провайдер', applicable: true },
+  ca: { title: 'Удостоверяющий центр', applicable: true },
 };
 
 export async function createOrg(conn, { kind, name, directorGovUserId = null, month }) {

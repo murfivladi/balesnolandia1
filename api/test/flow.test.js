@@ -271,4 +271,20 @@ test('admin: addresses and SMTP live in settings, secrets are hidden', async () 
   await assert.rejects(admin.patch('/api/admin/settings', { public_web_url: 'not a url' }), /invalid/);
   const srv = await admin.get('/api/admin/server');
   assert.equal(srv.web_url, 'https://example.bf/game');
+  // ВлодБраузер для iOS узнаёт последнюю версию и где её скачать — без входа.
+  const { IOS_APP } = await import('@bln/shared/app-versions.js');
+  const ios = await client(app).get('/api/app/ios');
+  assert.equal(ios.version, IOS_APP.version);
+  assert.equal(ios.build, IOS_APP.build);
+  assert.equal(ios.url, 'https://example.bf/game/ios/');
+  // Отчёт о сбое приложения — без входа; админ видит его и может очистить список.
+  const anon = client(app);
+  await anon.post('/api/app/crash', { platform: 'ios', version: '0.3.0', build: 3, device: 'iPad13,1', os: 'iOS 16.7', kind: 'SIGTRAP', message: 'Fatal error: Index out of range', stack: 'frame 0', at: Date.now() });
+  await assert.rejects(anon.post('/api/app/crash', { platform: 'android', version: '1', kind: 'x', message: 'y' }), /invalid/);
+  await assert.rejects(anon.get('/api/admin/app/crashes'), (e) => e.status === 401 || e.status === 403);
+  const crashes = await admin.get('/api/admin/app/crashes');
+  assert.equal(crashes.reports[0].message, 'Fatal error: Index out of range');
+  assert.equal(crashes.versions[0].n, 1);
+  await admin.delete('/api/admin/app/crashes');
+  assert.equal((await admin.get('/api/admin/app/crashes')).reports.length, 0);
 });

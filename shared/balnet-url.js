@@ -13,6 +13,7 @@ export const INTERNAL_PAGES = {
   about: 'О ВлодБраузере',
   game: 'Курьер БалНета',
   terminal: 'Терминал',
+  notifications: 'Уведомления',
 };
 
 /**
@@ -23,6 +24,16 @@ export const GOV_SITES = {
   'bank.bln': { app: 'bank', title: 'ВлодБанк', owner: 'ВлодБанк (госбанк БФ)' },
   'gosuslugi.gov.bln': { app: 'services', title: 'ВлодУслуги', owner: 'Правительство БФ' },
   'kassa.bln': { app: 'pos', title: 'Касса', owner: 'Министерство торговли БФ' },
+  'reg.bln': { app: 'reg', title: 'БалРег', owner: 'Координационный центр БалНета' },
+  'hosting.bln': { app: 'hosting', title: 'БалХост', owner: 'Координационный центр БалНета' },
+  'nalog.gov.bln': { app: 'nalog', title: 'Налоговая служба БФ', owner: 'Правительство БФ' },
+  'ca.gov.bln': { app: 'ca', title: 'БалСерт', owner: 'Координационный центр БалНета' },
+  'poisk.bln': { app: 'poisk', title: 'ВлодПоиск', owner: 'Правительство БФ' },
+  'vlodhub.bln': { app: 'hub', title: 'ВлодХаб', owner: 'Координационный центр БалНета' },
+  'mail.bln': { app: 'mail', title: 'ВлодПочта', owner: 'Координационный центр БалНета' },
+  'pay.bank.bln': { app: 'pay', title: 'ВлодБанк Оплата', owner: 'ВлодБанк (госбанк БФ)' },
+  'push.bln': { app: 'push', title: 'БалПуш', owner: 'Координационный центр БалНета' },
+  'novosti.bln': { app: 'news', title: 'БалНовости', owner: 'Правительство БФ' },
 };
 
 const SCHEME_RE = /^([a-z][a-z0-9+.-]*):\/\//i;
@@ -142,7 +153,10 @@ export function displayUrl(url) {
   const p = splitUrl(url);
   if (!p) return url;
   if (p.scheme === 'balnet') return url.replace(/\/$/, '');
-  const shown = p.path === '/' ? p.host : `${p.host}${p.path}`;
+  let path = p.path;
+  // Как Chrome: русские буквы и пробелы в адресе показываем как есть, а не %D0%BA…
+  try { path = decodeURI(path); } catch { /* битое кодирование — показываем как есть */ }
+  const shown = path === '/' ? p.host : `${p.host}${path}`;
   return p.scheme === 'https' ? shown : `http://${shown}`;
 }
 

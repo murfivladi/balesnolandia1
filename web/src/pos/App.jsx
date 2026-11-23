@@ -11,6 +11,7 @@ import { Manage } from './manage.jsx';
 import { Terminal } from './terminal.jsx';
 import { Tables } from './tables.jsx';
 import { Kitchen } from './kitchen.jsx';
+import { OnlineOrders } from './online.jsx';
 import { QueueBoard } from './queue.jsx';
 import { Kiosk } from './kiosk.jsx';
 
@@ -189,6 +190,7 @@ function PosShell({ onLogout, route }) {
   const root = route.path === '/';
   const tables = route.path.startsWith('/tables');
   const kitchen = route.path.startsWith('/kitchen');
+  const online = route.path.startsWith('/online');
 
   if (kiosk) {
     return (
@@ -210,6 +212,7 @@ function PosShell({ onLogout, route }) {
             {session.shop.type === 'cafe' && <a href="#/tables" className={tables ? 'active' : ''}>{t('Столы')}</a>}
             {session.shop.kitchen_enabled && <a href="#/kitchen" className={kitchen ? 'active' : ''}>{t('Кухня')}</a>}
             {session.shop.kitchen_enabled && <a href={`#/queue?shop=${session.shop.id}`}>{t('Очередь')}</a>}
+            <a href="#/online" className={online ? 'active' : ''}>{t('Онлайн')}</a>
             {isOwner && <a href="#/manage" className={manage ? 'active' : ''}>{t('Управление')}</a>}
           </>
         )}
@@ -223,7 +226,8 @@ function PosShell({ onLogout, route }) {
       {manage && isOwner ? <Manage session={session} route={route} onChange={reload} />
         : tables ? <Tables session={session} onSession={reload} />
           : kitchen ? <Kitchen session={session} />
-            : <Register session={session} onSession={reload} />}
+            : online ? <OnlineOrders session={session} />
+              : <Register session={session} onSession={reload} />}
       {offline && <OfflineScreen />}
       <DisclaimerBar />
     </>

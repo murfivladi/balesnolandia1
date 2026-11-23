@@ -390,7 +390,7 @@ function vatShare(sale, goods) {
   return Math.round((Number(sale.vat) * goods) / total);
 }
 
-async function finalize(conn, sale, shop) {
+export async function finalize(conn, sale, shop) {
   const fresh = await one('SELECT * FROM sales WHERE id = ?', [sale.id], conn);
   if (Number(fresh.paid) < Number(fresh.total) + Number(fresh.tip)) return false;
   const sh = await one('SELECT next_sale_no FROM shops WHERE id = ? FOR UPDATE', [shop.id], conn);
@@ -420,7 +420,7 @@ async function finalize(conn, sale, shop) {
     const list = cook.filter((i) => kitchenIds.has(i.product_id));
     if (list.length) {
       const table = fresh.table_id ? await one('SELECT name FROM shop_tables WHERE id = ?', [fresh.table_id], conn) : null;
-      const order = await createKitchenOrder(conn, shop.id, { saleId: sale.id, label: table?.name || (fresh.source === 'kiosk' ? 'Киоск' : null), items: list, queueNo: fresh.queue_no });
+      const order = await createKitchenOrder(conn, shop.id, { saleId: sale.id, label: table?.name || (fresh.source === 'kiosk' ? 'Киоск' : fresh.source === 'online' ? 'Онлайн-заказ' : null), items: list, queueNo: fresh.queue_no });
       await q('UPDATE sales SET queue_no = ? WHERE id = ?', [order.queue_no, sale.id], conn);
       await q(`UPDATE sale_items SET sent_to_kitchen = 1 WHERE id IN (${list.map(() => '?').join(',')})`, list.map((i) => i.id), conn);
     }
@@ -770,7 +770,7 @@ export async function receiptData(saleId) {
   };
 }
 
-const METHOD = { cash: 'Наличные', card: 'Карта', qr: 'QR', debt: 'В долг' };
+const METHOD = { cash: 'Наличные', card: 'Карта', qr: 'QR', debt: 'В долг', online: 'Онлайн (ВлодБанк)' };
 export function receiptText(r) {
   const lines = [
     r.shop.name,

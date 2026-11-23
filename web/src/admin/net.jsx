@@ -1,15 +1,21 @@
 // Админка → БалНет: провайдеры, IP-блоки и серверы, сайты на серверах, DNS-зоны и записи.
 import { useState } from 'react';
+import { PkiAdmin } from './pki.jsx';
+import { SearchAdmin } from './search.jsx';
+import { MailAdmin } from './mail.jsx';
+import { PayAdmin } from './pay.jsx';
+import { NewsAdmin } from './news.jsx';
 import { get, post, patch, del } from '../shared/api.js';
 import {
   Spinner, useAsync, Input, Select, Form, Modal, Empty, Badge, ActionButton, Tabs, ErrorBox, Button, useToast,
 } from '../shared/ui.jsx';
 import { relativeName, humanTtl } from '@bln/shared/balnet-dns.js';
 import { RegistryAdmin } from './registry.jsx';
+import { HostingAdmin } from './hosting.jsx';
 
 const KIND_LABEL = { router: 'маршрутизатор', auth: 'DNS-сервер зон', resolver: 'резолвер', web: 'веб-сервер' };
 const PURPOSE_LABEL = { infra: 'инфраструктура', datacenter: 'дата-центр', provider: 'провайдер', ix: 'точка обмена', hosting: 'хостинг' };
-const TARGET_LABEL = { 'app:bank': 'ВлодБанк', 'app:services': 'ВлодУслуги', 'app:pos': 'Касса', poisk: 'ВлодПоиск' };
+const TARGET_LABEL = { 'app:bank': 'ВлодБанк', 'app:services': 'ВлодУслуги', 'app:pos': 'Касса', 'app:reg': 'БалРег', 'app:hosting': 'БалХост', 'app:nalog': 'Налоговая служба', 'app:ca': 'БалСерт', 'app:poisk': 'ВлодПоиск', 'app:hub': 'ВлодХаб', 'app:news': 'БалНовости' };
 const strip = (n) => String(n || '').replace(/\.$/, '');
 
 export function NetSection() {
@@ -17,11 +23,17 @@ export function NetSection() {
   const ov = useAsync(() => get('/admin/net/overview'), []);
   return (
     <div className="page">
-      <h1>БалНет</h1>
+      <div className="row"><h1 style={{ flex: 1 }}>БалНет</h1><RestoreGov /></div>
       <p className="muted">Сеть ВлодБраузера: провайдеры выдают игрокам IP-адреса, DNS идёт по цепочке корень → зона верхнего уровня → серверы имён домена. TTL считается в игровых секундах (в игровом месяце 30 игровых суток).</p>
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'registry', label: 'Домены и организации' }, { value: 'zones', label: 'Зоны DNS' }, { value: 'hosts', label: 'Адреса и серверы' }, { value: 'providers', label: 'Провайдеры' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'registry', label: 'Домены и организации' }, { value: 'hosting', label: 'Хостинг' }, { value: 'pki', label: 'Сертификаты' }, { value: 'search', label: 'ВлодПоиск' }, { value: 'mail', label: 'Почта' }, { value: 'pay', label: 'Эквайринг' }, { value: 'news', label: 'Новости' }, { value: 'zones', label: 'Зоны DNS' }, { value: 'hosts', label: 'Адреса и серверы' }, { value: 'providers', label: 'Провайдеры' }]} />
       <ErrorBox error={ov.error} />
       {tab === 'registry' && <RegistryAdmin />}
+      {tab === 'hosting' && <HostingAdmin />}
+      {tab === 'pki' && <PkiAdmin />}
+      {tab === 'search' && <SearchAdmin />}
+      {tab === 'mail' && <MailAdmin />}
+      {tab === 'pay' && <PayAdmin />}
+      {tab === 'news' && <NewsAdmin />}
       {!ov.data ? <Spinner /> : (
         <>
           {tab === 'zones' && <Zones ov={ov.data} reload={ov.reload} />}
@@ -189,7 +201,7 @@ function Zones({ ov, reload }) {
         <h2>Зоны</h2>
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Зона</th><th>Серверы</th><th>Записей</th><th>Serial</th></tr></thead>
+            <thead><tr><th>Зона</th><th>Серверы</th><th>Записей</th><th>Serial</th><th>DNSSEC</th></tr></thead>
             <tbody>
               {ov.zones.map((z) => (
                 <tr key={z.id} style={{ cursor: 'pointer' }} onClick={() => setOpen(z.id)}>
@@ -197,6 +209,13 @@ function Zones({ ov, reload }) {
                   <td className="mono small">{z.servers.join(', ')}</td>
                   <td>{z.records}</td>
                   <td className="mono small">{z.serial}</td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    {z.kind === 'domain' && !z.dnssec ? <span className="muted small">—</span> : (
+                      <ActionButton size="sm" kind="ghost" confirm={z.dnssec ? `Выключить DNSSEC зоны ${z.name}? DS у родителя будет удалена.` : null} action={async () => { await patch(`/admin/net/zones/${z.id}/dnssec`, { enabled: !z.dnssec }); reload(); }}>
+                        {z.dnssec ? `🔏 ${z.key_tag ?? ''}` : 'выкл'}
+                      </ActionButton>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -286,5 +305,27 @@ function ZoneEditor({ id, types, onBack }) {
         </Modal>
       )}
     </div>
+  );
+}
+
+/** Одна кнопка: вернуть DNS, vhost, доверие и сертификаты всех госсервисов и госсайтов. */
+function RestoreGov() {
+  const toast = useToast();
+  const [res, setRes] = useState(null);
+  return (
+    <>
+      <ActionButton kind="danger" confirm="Восстановить DNS-зоны и записи, привязки серверов, доверие корневому УЦ и сертификаты всех госсайтов? Чужие записи на именах госсайтов будут удалены." action={async () => {
+        const r = await post('/admin/pki/gov-restore');
+        setRes(r);
+        toast(r.problems.length ? `Остались проблемы: ${r.problems.length}` : r.changes.length ? `Исправлено: ${r.changes.length}` : 'Всё уже в порядке', r.problems.length ? 'err' : 'ok');
+      }}>Восстановить госсервисы</ActionButton>
+      {res && (
+        <Modal title="Восстановление госсервисов" onClose={() => setRes(null)} footer={<Button onClick={() => setRes(null)}>Закрыть</Button>}>
+          {res.changes.length ? <ul className="small mono">{res.changes.map((x, i) => <li key={i}>{x}</li>)}</ul> : <p>Ничего чинить не пришлось.</p>}
+          <h3>Проверка: госсайты через ВлодDNS</h3>
+          {res.problems.length ? <ul className="small mono form-error">{res.problems.map((x, i) => <li key={i}>{x}</li>)}</ul> : <p className="form-ok">Все госсайты резолвятся, DNSSEC проверен.</p>}
+        </Modal>
+      )}
+    </>
   );
 }

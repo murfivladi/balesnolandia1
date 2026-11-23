@@ -134,7 +134,7 @@ test('покупка домена у регистратора: деньги де
   await assert.rejects(vera.gov.post(`/api/gov/domains/${borisDomain.id}/records`, { name: 'x', type: 'A', data: '1.2.3.4' }), /forbidden/);
   const a = await resolve('www.boris.bln');
   assert.deepEqual(a.answer.map((x) => `${x.type} ${x.data}`), ['CNAME boris.bln.', 'A 50.1.0.20']);
-  assert.deepEqual(a.trace.map((t) => t.server_name), ['a.root.bln.', 'a.nic.bln.', 'ns1.dns.bln.']);
+  assert.deepEqual(a.trace.filter((t) => !t.dnssec).map((t) => t.server_name), ['a.root.bln.', 'a.nic.bln.', 'ns1.dns.bln.']);
 
   const w = await devClient.get('/api/net/whois?q=boris.bln');
   assert.equal(w.registrar, 'ДоменКо');

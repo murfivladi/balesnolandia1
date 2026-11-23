@@ -10,6 +10,7 @@ import { VERSION } from './lib/version.js';
 import { wsRoutes } from './routes/ws.js';
 import { authRoutes } from './routes/auth.js';
 import { commonRoutes } from './routes/common.js';
+import { appRoutes } from './routes/app-native.js';
 import { govRoutes } from './routes/gov.js';
 import { bankRoutes } from './routes/bank.js';
 import { financeRoutes } from './routes/finance.js';
@@ -25,6 +26,15 @@ import { netRoutes } from './routes/net.js';
 import { adminNetRoutes } from './routes/admin-net.js';
 import { domainRoutes } from './routes/domains.js';
 import { adminDomainRoutes } from './routes/admin-domains.js';
+import { webRoutes } from './routes/web.js';
+import { hostingRoutes, adminHostingRoutes } from './routes/hosting.js';
+import { certRoutes, adminPkiRoutes } from './routes/certs.js';
+import { searchRoutes, adminSearchRoutes } from './routes/search.js';
+import { hubRoutes } from './routes/hub.js';
+import { mailRoutes, adminMailRoutes } from './routes/mail.js';
+import { payRoutes, posOnlineRoutes, oauthRoutes, adminPayRoutes } from './routes/pay.js';
+import { pushRoutes, netPushRoutes } from './routes/push.js';
+import { newsRoutes, adminNewsRoutes } from './routes/news.js';
 
 export async function buildApp({ logger = config.env !== 'test' } = {}) {
   const app = Fastify({
@@ -64,11 +74,22 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
     return reply.status(500).send({ error: 'server_error', message: 'Ошибка сервера' });
   });
 
+  // Сайты игроков работают в песочнице (Origin: null). Им открыт только шлюз БалНета —
+  // остальной API (банк, услуги, касса) на такие запросы не отвечает.
+  const SANDBOX_OK = ['/api/net/web/', '/api/net/xfetch', '/api/net/shim.js', '/api/net/sock/', '/api/net/jar/', '/api/search/adnet/'];
+  app.addHook('onRequest', async (req, reply) => {
+    if (req.headers.origin === 'null' && !SANDBOX_OK.some((p) => req.url.startsWith(p))) {
+      return reply.code(403).send({ error: 'sandbox_origin', message: 'Запросы со страниц сайтов БалНета к этому API запрещены' });
+    }
+    return undefined;
+  });
+
   app.get('/api/health', async () => ({ ok: true, version: VERSION, time: new Date().toISOString() }));
 
   await app.register(wsRoutes);
   await app.register(authRoutes, { prefix: '/api' });
   await app.register(commonRoutes, { prefix: '/api' });
+  await app.register(appRoutes, { prefix: '/api/app' });
   await app.register(govRoutes, { prefix: '/api/gov' });
   await app.register(govExtRoutes, { prefix: '/api/gov' });
   await app.register(bankRoutes, { prefix: '/api/bank' });
@@ -85,6 +106,26 @@ export async function buildApp({ logger = config.env !== 'test' } = {}) {
   await app.register(adminNetRoutes, { prefix: '/api/admin/net' });
   await app.register(domainRoutes, { prefix: '/api/gov' });
   await app.register(adminDomainRoutes, { prefix: '/api/admin/net' });
+  await app.register(webRoutes, { prefix: '/api/net' });
+  await app.register(hostingRoutes, { prefix: '/api/gov' });
+  await app.register(adminHostingRoutes, { prefix: '/api/admin/net' });
+  await app.register(certRoutes, { prefix: '/api/gov' });
+  await app.register(adminPkiRoutes, { prefix: '/api/admin/pki' });
+  await app.register(searchRoutes, { prefix: '/api/search' });
+  await app.register(hubRoutes, { prefix: '/api/hub' });
+  await app.register(mailRoutes, { prefix: '/api/mail' });
+  await app.register(adminMailRoutes, { prefix: '/api/admin/mail' });
+  await app.register(pushRoutes, { prefix: '/api/push' });
+  await app.register(netPushRoutes, { prefix: '/api/net/push' });
+  await app.register(newsRoutes, { prefix: '/api/news' });
+  await app.register(adminNewsRoutes, { prefix: '/api/admin/news' });
+  await app.register(adminSearchRoutes, { prefix: '/api/admin/search' });
+  await app.register(payRoutes, { prefix: '/api/pay' });
+  await app.register(posOnlineRoutes, { prefix: '/api/pos' });
+  await app.register(oauthRoutes, { prefix: '/api/oauth' });
+  await app.register(adminPayRoutes, { prefix: '/api/admin/pay' });
+
+  (await import('./lib/pay/api.js')).setGovInjector((opts) => app.inject(opts));
 
   return app;
 }

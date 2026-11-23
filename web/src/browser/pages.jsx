@@ -1,12 +1,15 @@
 // Внутренние страницы ВлодБраузера: новая вкладка, история, закладки, настройки, о браузере,
-// временный ВлодПоиск, страницы ошибок и «БалНет на обслуживании».
+// страницы ошибок и «БалНет на обслуживании».
 import { useEffect, useMemo, useState } from 'react';
+import { AccountSettings, PasswordSettings } from './passwords.jsx';
 import { CoatOfArms } from '../shared/brand.jsx';
-import { DISCLAIMER } from '../shared/ui.jsx';
+import { DISCLAIMER, QR } from '../shared/ui.jsx';
+import { buildExport, buildQr } from '@bln/shared/browser-export.js';
 import { GOV_SITES, NET_ERRORS, displayUrl, searchUrl, parseInput } from '@bln/shared/balnet-url.js';
 import { CourierGame } from './game.jsx';
 import { providers, lease, PUBLIC_DNS } from './net.js';
 import { isIP } from '@bln/shared/balnet-ip.js';
+import { get, post } from '../shared/api.js';
 
 export function Disclaimer() {
   return <p className="bp-disclaimer">{DISCLAIMER}</p>;
@@ -60,7 +63,7 @@ export function NewTabPage({ ctx }) {
       c.n += 1;
       counts.set(key, c);
     }
-    const top = [...counts.values()].sort((a, b) => b.n - a.n).slice(0, 8 - gov.length);
+    const top = [...counts.values()].sort((a, b) => b.n - a.n).slice(0, Math.max(2, 10 - gov.length));
     return [...gov, ...top];
   }, [ctx.history]);
   const clock = ctx.clock;
@@ -86,6 +89,7 @@ export function NewTabPage({ ctx }) {
           </button>
         ))}
       </div>
+      {!ctx.incognito && <SponsoredTile ctx={ctx} />}
       {clock && (
         <div className="bp-widget">
           <b>Игровое время БФ:</b>{' '}
@@ -94,6 +98,25 @@ export function NewTabPage({ ctx }) {
       )}
       <Disclaimer />
     </div>
+  );
+}
+
+/** Рекламная плитка рекламной сети ВлодПоиска (помечена «Реклама»). */
+function SponsoredTile({ ctx }) {
+  const [ad, setAd] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    get('/search/ads/newtab').then((r) => { if (alive) setAd(r.ad); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  if (!ad) return null;
+  const open = () => post('/search/ads/click', { token: ad.token }).then((r) => ctx.navigate(r.url), () => ctx.navigate(ad.url));
+  return (
+    <button className="bp-ad" onClick={open}>
+      <span className="bp-muted"><b>Реклама</b> · {ad.display}</span>
+      <b className="bp-ad-title">{ad.title}</b>
+      <span>{ad.text}</span>
+    </button>
   );
 }
 
@@ -123,6 +146,18 @@ export function HistoryPage({ ctx }) {
         <button className="bp-btn" disabled={!ctx.history.length} onClick={() => { if (confirm('Очистить всю историю этого профиля?')) ctx.clearHistory(); }}>Очистить историю</button>
       </header>
       {ctx.incognito && <p className="bp-muted">В режиме инкогнито история не сохраняется.</p>}
+      {ctx.remoteTabs?.map((dev) => (
+        <section key={dev.device} className="bp-card">
+          <h2>Вкладки: {dev.name} · {dayLabel(dev.ts)}</h2>
+          {dev.tabs.map((t) => (
+            <div key={t.url} className="bp-row">
+              <Favicon url={t.url} />
+              <button className="bp-link" onClick={() => ctx.navigate(t.url)}>{t.title || displayUrl(t.url)}</button>
+              <span className="bp-muted bp-ellipsis">{displayUrl(t.url)}</span>
+            </div>
+          ))}
+        </section>
+      ))}
       {!groups.length && <p className="bp-muted">{q ? 'Ничего не найдено.' : 'История пуста.'}</p>}
       {groups.map((g) => (
         <section key={g.label} className="bp-card">
@@ -180,6 +215,36 @@ export function BookmarksPage({ ctx }) {
   );
 }
 
+/** Перенос во ВлодБраузер для iOS: QR с закладками или файл JSON (без паролей). */
+function ExportSettings({ ctx }) {
+  const [qr, setQr] = useState(false);
+  const q = useMemo(() => (qr ? buildQr(ctx.bookmarks) : null), [qr, ctx.bookmarks]);
+  const download = () => {
+    const data = buildExport({ bookmarks: ctx.bookmarks, history: ctx.history, settings: ctx.settings });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+    a.download = 'vlodbrowser-export.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  return (
+    <section className="bp-card">
+      <h2>Перенос во ВлодБраузер для iOS</h2>
+      <p>Закладки, история и настройки. Пароли переносятся только через аккаунт ВлодБраузера (синхронизация зашифрована).</p>
+      <div className="bp-row">
+        <button className="bp-btn" onClick={() => setQr((v) => !v)}>{qr ? 'Скрыть QR' : 'Показать QR с закладками'}</button>
+        <button className="bp-btn" onClick={download}>Скачать файл JSON</button>
+      </div>
+      {q && (
+        <div>
+          <QR value={q.text} size={260} />
+          <p className="bp-muted">В приложении: меню → Настройки → Импорт → «Сканировать QR». В QR {q.count} из {q.total} закладок{q.count < q.total ? ' — остальные перенесите файлом' : ''}.</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function SettingsPage({ ctx }) {
   const s = ctx.settings;
   const profile = ctx.profiles.find((p) => p.id === ctx.profileId);
@@ -204,6 +269,12 @@ export function SettingsPage({ ctx }) {
         <label className="bp-check"><input type="checkbox" checked={s.restoreSession} onChange={(e) => ctx.setSettings({ ...s, restoreSession: e.target.checked })} /> Восстанавливать вкладки при запуске</label>
       </section>
       <NetworkSettings ctx={ctx} />
+      <ExportSettings ctx={ctx} />
+      <section className="bp-card">
+        <h2>Уведомления</h2>
+        <p>Сайты на https могут попросить разрешение показывать уведомления и подписаться на push. Разрешения хранятся в профиле.</p>
+        <button className="bp-btn" onClick={() => ctx.navigate('balnet://notifications/')}>Уведомления и push…</button>
+      </section>
       <section className="bp-card">
         <h2>Поисковая система</h2>
         <p>ВлодПоиск (poisk.bln) — официальный поисковик БФ.</p>
@@ -221,11 +292,13 @@ export function SettingsPage({ ctx }) {
           </div>
         ))}
         <button className="bp-btn" onClick={ctx.addProfile}>Добавить профиль</button>
-        <p className="bp-muted">Синхронизация профиля между устройствами появится вместе с аккаунтом на ВлодПочте.</p>
+        <p className="bp-muted">У каждого профиля свой аккаунт ВлодБраузера и своя синхронизация.</p>
       </section>
+      <AccountSettings ctx={ctx} />
+      <PasswordSettings ctx={ctx} />
       <section className="bp-card">
         <h2>Конфиденциальность</h2>
-        <p>Данные профиля «{profile?.name}» хранятся только в этом браузере.</p>
+        <p>Данные профиля «{profile?.name}» хранятся в этом браузере{ctx.account?.key ? ' и в зашифрованном виде — в аккаунте ВлодБраузера' : ''}.</p>
         <button className="bp-btn" onClick={() => { if (confirm('Удалить историю этого профиля?')) ctx.clearHistory(); }}>Удалить историю</button>
       </section>
     </div>
@@ -238,7 +311,7 @@ export function AboutPage() {
       <header className="bp-page-head"><CoatOfArms size={40} /><h1>О ВлодБраузере</h1></header>
       <section className="bp-card">
         <p><b>ВлодБраузер</b> — браузер БалНета, вымышленного интернета Балесноландской Федерации.</p>
-        <p>Версия Н2: вкладки, история, закладки, профили, инкогнито; настоящий DNS БалНета (корень → TLD → серверы имён), выбор провайдера и DNS-сервера, терминал и DevTools → Network.</p>
+        <p>Версия Н8: вкладки, история, закладки, профили, инкогнито; настоящий DNS БалНета, HTTPS с проверкой сертификатов, Безопасный просмотр, терминал и DevTools → Network; аккаунт ВлодБраузера на ВлодПочте с зашифрованной синхронизацией и менеджер паролей.</p>
         <p>Значок «Госсайт БФ» в адресной строке рисует сам браузер. Сайт не может его подделать: если значка нет — это не госсайт, даже если страница выглядит так же.</p>
         <p>Горячие клавиши: Ctrl+L — адресная строка, Ctrl+D — закладка, Ctrl+H — история, Alt+← и Alt+→ — назад и вперёд, Alt+T — новая вкладка, Ctrl+R — перезагрузить, Alt+W — закрыть вкладку.</p>
       </section>
@@ -247,52 +320,7 @@ export function AboutPage() {
   );
 }
 
-/** Временный ВлодПоиск (до этапа Н6): ищет по госсайтам, закладкам и истории. */
-export function SearchPage({ ctx, query }) {
-  const results = useMemo(() => {
-    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-    const pool = new Map();
-    const add = (url, title, text, w) => {
-      const prev = pool.get(url);
-      if (!prev || prev.w < w) pool.set(url, { url, title, text, w });
-    };
-    for (const [host, s] of Object.entries(GOV_SITES)) add(`https://${host}/`, s.title, `${s.owner}. Официальный сайт.`, 3);
-    for (const b of ctx.bookmarks) add(b.url, b.title, 'Из ваших закладок', 2);
-    for (const h of ctx.history) if (!h.url.startsWith('balnet://') && !h.url.includes('poisk.bln')) add(h.url, h.title, 'Вы посещали эту страницу', 1);
-    const scored = [...pool.values()].map((r) => {
-      const hay = `${r.title} ${r.url} ${r.text}`.toLowerCase();
-      const hits = words.filter((w) => hay.includes(w)).length;
-      return { ...r, score: hits * 10 + r.w };
-    }).filter((r) => r.score >= 10);
-    return scored.sort((a, b) => b.score - a.score).slice(0, 20);
-  }, [query, ctx.bookmarks, ctx.history]);
-  return (
-    <div className="bp-page bp-serp">
-      <header className="bp-serp-head">
-        <button className="bp-plain" onClick={() => ctx.navigate('https://poisk.bln/')} aria-label="ВлодПоиск"><VlodPoiskLogo size={24} /></button>
-        <SearchBox key={query} initial={query} onSearch={(q) => ctx.navigate(searchUrl(q))} />
-      </header>
-      {!query && <div className="bp-serp-empty"><VlodPoiskLogo size={48} /><p className="bp-muted">Введите запрос.</p></div>}
-      {!!query && (
-        <main>
-          <p className="bp-muted">Найдено: {results.length}</p>
-          {results.map((r) => (
-            <article key={r.url} className="bp-result">
-              <div className="bp-result-url"><Favicon url={r.url} /> {displayUrl(r.url)}</div>
-              <button className="bp-result-title" onClick={() => ctx.navigate(r.url)}>{r.title || displayUrl(r.url)}</button>
-              <p>{r.text}</p>
-            </article>
-          ))}
-          {!results.length && <p>По запросу «{query}» ничего не найдено. Проверьте написание или поищите по-другому.</p>}
-          <p className="bp-muted bp-serp-note">Пока ВлодПоиск знает госсайты, ваши закладки и историю. Полный индекс БалНета с краулером появится на этапе Н6.</p>
-        </main>
-      )}
-      <Disclaimer />
-    </div>
-  );
-}
-
-export function ErrorPage({ code, host, onReload, ctx, ip }) {
+export function ErrorPage({ code, host, onReload, ctx, ip, dns }) {
   const e = NET_ERRORS[code] || NET_ERRORS.ERR_INVALID_URL;
   const [game, setGame] = useState(code === 'ERR_INTERNET_DISCONNECTED');
   return (
@@ -302,6 +330,13 @@ export function ErrorPage({ code, host, onReload, ctx, ip }) {
       <p>{e.text(host || '')}</p>
       <ul>{e.tips.map((t) => <li key={t}>{t}</li>)}</ul>
       {ip && <p className="bp-muted">IP-адрес сервера: {ip}</p>}
+      {dns && dns.rcode && dns.rcode !== 'NOERROR' && (
+        <p className="bp-muted">
+          Ответ DNS: <b>{dns.rcode}</b>{dns.resolver ? ` от ${dns.resolver.name ? `${dns.resolver.name.replace(/\.$/, '')} ` : ''}(${dns.resolver.ip})` : ''}
+          {dns.rcode === 'REFUSED' && ' — этот резолвер не обслуживает ваш адрес. В настройках выберите «DNS провайдера» или ВлодDNS 50.0.0.53.'}
+          {dns.ede && <><br />{dns.ede}</>}
+        </p>
+      )}
       <p className="bp-code">{code}</p>
       <div className="bp-error-actions">
         <button className="bp-btn bp-btn-primary" onClick={onReload}>Перезагрузить</button>

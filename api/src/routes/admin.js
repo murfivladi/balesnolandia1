@@ -1,3 +1,7 @@
+import fs from 'node:fs/promises';
+import { resetPkiCache } from '../lib/pki.js';
+import { resetSearch } from './search.js';
+import { closeAll } from '../lib/vhost/store.js';
 import { tx, q, one, pool, json } from '../db.js';
 import { bad, notFound, int, str, need } from '../lib/errors.js';
 import { needAdmin, actorOf, rolesOf } from '../lib/auth.js';
@@ -54,14 +58,16 @@ function cleanSettings(body) {
   if (out.public_web_url) need(/^https?:\/\/[^\s]+$/.test(out.public_web_url), 'Адрес сайта: https://…');
   if (out.smtp_port !== undefined) need(out.smtp_port >= 1 && out.smtp_port <= 65535, 'Порт SMTP: от 1 до 65535');
   if ('idle_minutes' in out) need(out.idle_minutes >= 1 && out.idle_minutes <= 240, 'Автовыход: от 1 до 240 минут');
-  if ('game_month_minutes' in out) need(out.game_month_minutes >= 1 && out.game_month_minutes <= 1440, 'Игровой месяц: от 1 до 1440 минут');
+  if ('game_month_minutes' in out) need(out.game_month_minutes >= 1 && out.game_month_minutes <= 44640, 'Игровой месяц: от 1 минуты до 31 реальных суток (44640 минут)');
   return out;
 }
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const KEEP_ON_RESET = new Set(['schema_migrations', 'settings', 'cashback_categories', 'wholesale_items', 'fine_articles', 'countries',
   // Инфраструктура БалНета — настройка админа, а не игровые данные. Аренды адресов (net_leases) сбрасываются.
-  'net_providers', 'net_ip_blocks', 'net_hosts', 'net_vhosts', 'dns_zones', 'dns_zone_servers', 'dns_records', 'tlds']);
+  'net_providers', 'net_ip_blocks', 'net_hosts', 'net_vhosts', 'dns_zones', 'dns_zone_servers', 'dns_records', 'tlds',
+  // Госхостинг (серверы и тарифы без организации) — настройка админа; хостеров убираем отдельно.
+  'hosting_servers', 'hosting_plans']);
 
 async function tableNames(conn) {
   const rows = await q('SHOW TABLES', [], conn);
@@ -438,6 +444,18 @@ export async function adminRoutes(app) {
     return { log: rows.map((r) => ({ ...r, data: json(r.data, null) })) };
   });
 
+  // Сбои нативных приложений (ВлодБраузер для iOS).
+  app.get('/app/crashes', async () => {
+    const reports = await q('SELECT * FROM app_crash_reports ORDER BY id DESC LIMIT 300');
+    const versions = await q('SELECT platform, version, COUNT(*) AS n FROM app_crash_reports GROUP BY platform, version ORDER BY MAX(id) DESC');
+    return { reports, versions: versions.map((v) => ({ ...v, n: Number(v.n) })) };
+  });
+  app.delete('/app/crashes', async (req) => {
+    await q('DELETE FROM app_crash_reports');
+    await audit(null, actor(req), 'app.crashes_clear', 'app_crash_reports', null);
+    return { ok: true };
+  });
+
   // ——— Система: экспорт / импорт / сброс ———
   app.get('/export', async (req, reply) => {
     const conn = await pool.getConnection();
@@ -533,7 +551,16 @@ export async function adminRoutes(app) {
           await conn.query(`DELETE FROM \`${t}\``);
         }
       }
-      await conn.query("INSERT INTO accounts (number, owner_kind, type, name, allow_negative, system_code) VALUES ('BF00000000000001','system','system','Эмиссия',1,'EMISSION'),('BF00000000000002','system','system','Казна ВлодБанка',1,'TREASURY'),('BF00000000000003','system','system','Госбюджет БФ',1,'BUDGET'),('BF00000000000004','system','system','Наличные в обороте',1,'CASH'),('BF00000000000005','system','system','Оптовая база БФ',1,'WHOLESALE')");
+      await conn.query("INSERT INTO accounts (number, owner_kind, type, name, allow_negative, system_code) VALUES ('BF00000000000001','system','system','Эмиссия',1,'EMISSION'),('BF00000000000002','system','system','Казна ВлодБанка',1,'TREASURY'),('BF00000000000003','system','system','Госбюджет БФ',1,'BUDGET'),('BF00000000000004','system','system','Наличные в обороте',1,'CASH'),('BF00000000000005','system','system','Оптовая база БФ',1,'WHOLESALE'),('BF00000000000006','system','system','Рекламные балансы ВлодПоиска',1,'ADS')");
+      // Хостинг игроков: арендованные серверы и их адреса, сайты на серверах, тарифы хостеров.
+      const rented = (await q('SELECT ip FROM hosting_servers WHERE org_id IS NOT NULL', [], conn)).map((r) => r.ip);
+      await conn.query("DELETE FROM net_vhosts WHERE target LIKE 'site:%'");
+      for (const ip of rented) {
+        await conn.query('DELETE FROM net_hosts WHERE ip = ?', [ip]);
+        await conn.query("DELETE FROM dns_records WHERE type = 'PTR' AND name = ?", [`${ip.split('.').reverse().join('.')}.in-addr.arpa.`]);
+      }
+      await conn.query('DELETE FROM hosting_plans WHERE org_id IS NOT NULL');
+      await conn.query('DELETE FROM hosting_servers WHERE org_id IS NOT NULL');
       // DNS доменов игроков живёт в сохраняемых таблицах сети — убираем его отдельно.
       await conn.query('DELETE FROM dns_records WHERE domain_id IS NOT NULL');
       await conn.query('DELETE FROM dns_zones WHERE domain_id IS NOT NULL');
@@ -543,6 +570,10 @@ export async function adminRoutes(app) {
       await conn.commit();
       invalidateNet();
       flushResolverCache();
+      resetPkiCache();
+      resetSearch();
+      closeAll();
+      await fs.rm(config.sitesDir, { recursive: true, force: true }).catch(() => {});
     } catch (err) {
       await conn.rollback().catch(() => {});
       throw err;

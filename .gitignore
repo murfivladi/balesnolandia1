@@ -6,3 +6,8 @@ dist/
 coverage/
 uploads/
 release-version/
+balnet-sites/
+.build-ios/
+ios/**/build.log
+ios/**/.build/
+ios/**/.swiftpm/

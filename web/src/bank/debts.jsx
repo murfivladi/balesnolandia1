@@ -6,6 +6,7 @@ import { t, fmtDate } from '../shared/i18n.js';
 import { Spinner, useAsync, Money, MoneyInput, Select, Modal, Empty, Button, Badge, ErrorBox, useToast } from '../shared/ui.jsx';
 import { formatMoney } from '@bln/shared/money.js';
 import { spendable } from './finance.jsx';
+import { nativeConfirm } from '../shared/native.js';
 
 export function DebtsPage({ tick }) {
   const { data, loading, reload } = useAsync(() => get('/bank/debts'), [tick]);
@@ -79,6 +80,7 @@ function PayDebt({ debt, accounts, onClose, onDone }) {
     setBusy(true);
     setError(null);
     try {
+      await nativeConfirm('Погашение долга');
       await post(`/bank/debts/${debt.id}/pay`, { account_id: Number(accountId), amount }, { idem });
       onDone();
     } catch (e) { setError(e); } finally { setBusy(false); }

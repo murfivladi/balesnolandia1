@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { get, post, patch, onUnauthorized } from '../shared/api.js';
+import { get, post, patch, del, onUnauthorized } from '../shared/api.js';
 import { reconnect } from '../shared/ws.js';
 import { t, useLang, fmtDate, fmtBirth } from '../shared/i18n.js';
 import { useRoute, pick } from '../shared/router.js';
@@ -109,9 +109,14 @@ function ClockCard({ clock, onChange }) {
       <div style={{ fontSize: '1.3rem', fontWeight: 700 }}>{gameDateLabel(clock.month, lang)}</div>
       <div className="small muted">{t('Месяц №{n}', { n: clock.month })}{clock.next_tick_at ? ` · ${t('следующий')}: ${fmtDate(clock.next_tick_at)}` : ''}</div>
       <div className="row">
-        <input className="input" style={{ width: 90 }} type="number" min={1} max={1440} value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+        <input className="input" style={{ width: 100 }} type="number" min={1} max={44640} value={minutes} onChange={(e) => setMinutes(e.target.value)} />
         <span className="small muted">{t('минут = 1 игровой месяц')}</span>
         <ActionButton size="sm" kind="secondary" action={async () => { await post('/admin/clock', { minutes: Number(minutes) }); onChange(); }}>{t('Сохранить')}</ActionButton>
+      </div>
+      <div className="row small">
+        {[[60, t('час')], [1440, t('сутки')], [10080, t('неделя')], [43200, t('30 суток')]].map(([m, label]) => (
+          <button key={m} type="button" className="chip" onClick={() => setMinutes(m)}>{label}</button>
+        ))}
       </div>
       <div className="row">
         <ActionButton kind="secondary" action={async () => { await post('/admin/clock', { paused: !clock.paused }); onChange(); }}>{clock.paused ? t('Продолжить') : t('Пауза')}</ActionButton>
@@ -390,7 +395,7 @@ const SETTING_LABELS = {
   passport_approval: ['Выдача паспорта только после одобрения', 'bool'],
   start_balance: ['Стартовый баланс нового клиента', 'money'],
   idle_minutes: ['Автовыход после бездействия, минут', 'int'],
-  game_month_minutes: ['Длина игрового месяца, минут', 'int'],
+  game_month_minutes: ['Длина игрового месяца, минут (до 44640 — реальный месяц; 1440 = сутки)', 'int'],
   vat_bp: ['НДС, %', 'pct'],
   transfer_fee_bp: ['Комиссия за перевод, %', 'pct'],
   transfer_fee_min: ['Минимальная комиссия за перевод', 'money'],
@@ -855,11 +860,12 @@ function SystemSection() {
   return (
     <div className="page">
       <h1>{t('Система')}</h1>
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'settings', label: t('Переключатели и логотипы') }, { value: 'server', label: t('Адреса и почта') }, { value: 'data', label: t('Экспорт / импорт / сброс') }, { value: 'audit', label: t('Журнал действий') }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'settings', label: t('Переключатели и логотипы') }, { value: 'server', label: t('Адреса и почта') }, { value: 'data', label: t('Экспорт / импорт / сброс') }, { value: 'audit', label: t('Журнал действий') }, { value: 'crashes', label: t('Сбои приложений') }]} />
       {tab === 'settings' && <SettingsForm keys={SYSTEM_KEYS} />}
       {tab === 'server' && <ServerSettings />}
       {tab === 'data' && <DataTools />}
       {tab === 'audit' && <Audit />}
+      {tab === 'crashes' && <AppCrashes />}
     </div>
   );
 }
@@ -969,6 +975,31 @@ function DataTools() {
           try { await post('/admin/reset', { confirm, keep_settings: keep }); toast(t('Игра сброшена'), 'ok'); setConfirm(''); } catch (e) { setError(e); }
         }}>{t('Сбросить')}</Button>
       </div>
+    </div>
+  );
+}
+
+/** Отчёты о сбоях ВлодБраузера для iOS: приходят при следующем запуске приложения. */
+function AppCrashes() {
+  const { data, loading, reload } = useAsync(() => get('/admin/app/crashes'), []);
+  const [open, setOpen] = useState(null);
+  if (loading && !data) return <Spinner />;
+  const clear = async () => { if (window.confirm(t('Удалить все отчёты?'))) { await del('/admin/app/crashes'); reload(); } };
+  return (
+    <div className="card table-wrap">
+      <p className="small muted">{data.versions.map((v) => `${v.platform} ${v.version}: ${v.n}`).join(' · ') || t('Сбоев нет')}</p>
+      {data.reports.length > 0 && <button className="btn secondary sm" onClick={clear}>{t('Очистить')}</button>}
+      <table className="table">
+        <thead><tr><th>{t('Время')}</th><th>{t('Версия')}</th><th>{t('Устройство')}</th><th>{t('Ошибка')}</th></tr></thead>
+        <tbody>{data.reports.map((r) => (
+          <tr key={r.id} onClick={() => setOpen(open === r.id ? null : r.id)} style={{ cursor: 'pointer' }}>
+            <td className="small nowrap">{fmtDate(r.happened_at || r.created_at)}</td>
+            <td className="small">{r.platform} {r.version} ({r.build})</td>
+            <td className="small">{r.device} · {r.os}</td>
+            <td className="small"><b>{r.kind}</b> {r.message}{open === r.id && r.stack && <pre className="small" style={{ whiteSpace: 'pre-wrap' }}>{r.stack}</pre>}</td>
+          </tr>
+        ))}</tbody>
+      </table>
     </div>
   );
 }

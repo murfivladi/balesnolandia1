@@ -37,7 +37,10 @@ async function resolveRecipient(conn, to, userId) {
     return one('SELECT * FROM accounts WHERE id = ?', [c.account_id], conn);
   }
   if (type === 'account' || type === 'own') {
-    const a = await one("SELECT * FROM accounts WHERE (number = ? OR id = ?) AND owner_kind = 'bank_user'", [value.toUpperCase(), type === 'own' ? Number(value) || 0 : 0], conn);
+    // По номеру — счёт человека или организации (бизнес-счёт ООО, АО, госучреждения); «свой» — только свой.
+    const a = type === 'own'
+      ? await one("SELECT * FROM accounts WHERE (number = ? OR id = ?) AND owner_kind = 'bank_user'", [value.toUpperCase(), Number(value) || 0], conn)
+      : await one("SELECT * FROM accounts WHERE number = ? AND owner_kind IN ('bank_user','org')", [value.toUpperCase()], conn);
     if (!a || a.status === 'closed') throw bad('recipient_not_found', 'Счёт получателя не найден');
     if (type === 'own' && a.owner_id !== userId) throw forbidden();
     if (a.type === 'loan') throw bad('recipient_loan', 'Кредит погашается по графику или досрочно в разделе «Кредиты»');
@@ -268,8 +271,10 @@ export async function bankRoutes(app) {
     const b = req.body || {};
     const amount = amountOf(b.amount);
     const to = await resolveRecipient(null, b.to, req.bank.id);
-    const owner = to.owner_id ? await one('SELECT full_name FROM bank_users WHERE id = ?', [to.owner_id]) : null;
-    const own = to.owner_id === req.bank.id;
+    const owner = to.owner_kind === 'org'
+      ? await one('SELECT name AS full_name FROM organizations WHERE id = ?', [to.owner_id])
+      : to.owner_id ? await one('SELECT full_name FROM bank_users WHERE id = ?', [to.owner_id]) : null;
+    const own = to.owner_kind === 'bank_user' && to.owner_id === req.bank.id;
     const fee = own ? 0 : transferFee(amount, await getSettings());
     return { recipient: { name: owner?.full_name || to.name, account_tail: to.number.slice(-4), own }, amount, fee, total: amount + fee };
   });
@@ -289,7 +294,7 @@ export async function bankRoutes(app) {
       const to = await resolveRecipient(conn, b.to, u.id);
       if (to.id === from.id) throw bad('same_account', 'Нельзя перевести на тот же счёт');
       // Антифрод: подозрительный перевод чужому получателю ждёт решения админа.
-      if (to.owner_id !== u.id) {
+      if (!(to.owner_kind === 'bank_user' && to.owner_id === u.id)) {
         if (idem) {
           const held = await one("SELECT id FROM fraud_queue WHERE bank_user_id = ? AND status = 'pending' AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.idem')) = ?", [u.id, idem], conn);
           if (held) return { held: true, fraud_id: held.id };

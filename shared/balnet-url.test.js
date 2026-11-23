@@ -64,4 +64,6 @@ test('displayUrl', () => {
   assert.equal(displayUrl('https://bank.bln/cards'), 'bank.bln/cards');
   assert.equal(displayUrl('http://x.bln/'), 'http://x.bln');
   assert.equal(displayUrl('balnet://history/'), 'balnet://history');
+  assert.equal(displayUrl(searchUrl('купить хлеб')), 'poisk.bln/?q=купить хлеб');
+  assert.equal(displayUrl('https://x.bln/%E0%A4%A'), 'x.bln/%E0%A4%A');
 });

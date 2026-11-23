@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 
-// Multi-page сборка: / (ВлодБраузер), /apps/ (выбор приложения), /bank/, /pos/, /services/, /admin/.
+// Multi-page сборка: / (ВлодБраузер), /apps/ (выбор приложения), /ios/ (скачать ВлодБраузер для iOS), /bank/, /pos/, /services/, /admin/.
 // Cloudflare Pages: сайт в корне bln.vladislavb.qzz.io; другой путь — через BASE_PATH.
 // Маршрутизация внутри приложений по hash (#/...), поэтому перенаправления не нужны.
 export default defineConfig({
@@ -15,6 +15,17 @@ export default defineConfig({
       input: {
         index: resolve(import.meta.dirname, 'index.html'),
         apps: resolve(import.meta.dirname, 'apps/index.html'),
+        ios: resolve(import.meta.dirname, 'ios/index.html'),
+        reg: resolve(import.meta.dirname, 'reg/index.html'),
+        hosting: resolve(import.meta.dirname, 'hosting/index.html'),
+        ca: resolve(import.meta.dirname, 'ca/index.html'),
+        poisk: resolve(import.meta.dirname, 'poisk/index.html'),
+        hub: resolve(import.meta.dirname, 'hub/index.html'),
+        mail: resolve(import.meta.dirname, 'mail/index.html'),
+        pay: resolve(import.meta.dirname, 'pay/index.html'),
+        push: resolve(import.meta.dirname, 'push/index.html'),
+        news: resolve(import.meta.dirname, 'news/index.html'),
+        nalog: resolve(import.meta.dirname, 'nalog/index.html'),
         bank: resolve(import.meta.dirname, 'bank/index.html'),
         pos: resolve(import.meta.dirname, 'pos/index.html'),
         services: resolve(import.meta.dirname, 'services/index.html'),
